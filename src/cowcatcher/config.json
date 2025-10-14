@@ -1,0 +1,81 @@
+{
+    "app": {
+        "naam": "CowCatcherAI",
+        "versie": "0.1.0"
+    },
+    "detection_settings": {
+        "cooldown_period":  40,
+        "collection_time":  50, 
+        "save_threshold":  0.7,  
+        "frame_capture_interval_seconds": 2.0,
+        "save_folder": "mount_detections",
+        "send_annotated_images": true,
+        "show_life_feed": true,
+        "notify_threshold":  0.84, 
+        "peak_detection_threshold":  0.89,
+        "max_screenshots": 2,  
+        "min_collection_time":  4,  
+        "inactivity_stop_time":  6,  
+        "min_high_confidence_detections":  3, 
+        "frame_count":  0,
+        "process_every_n_frames":  1,   
+        "sound_every_n_notifications":  5  
+
+    },
+    "notifier": {
+        "broker": "telegram",
+        "_example_broker": "homeassistant"
+    },
+    "telegram": {
+        "_api_key": "",
+        "api_key": "<vul hier waardein>",
+        "_comment_chat_id": ["<vul hier waardein>","<vul hier waardein>"],
+        "chat_id": ["<vul hier waardein>"],
+        "timeout": 30,
+        "disable_notification": false
+    },
+    "homeassistant": {
+		    "comment": "Not implemented yet",
+        "url": "",
+        "long_acces_token": "<vul hier waardein>",
+        "_comment_receipients": ["<vul hier waardein>","<vul hier waardein>"],
+        "receipients": ["<vul hier waardein>"],
+        "timeout": 30,
+        "disable_notification": false
+    },
+    "_ipcamera1": {
+      "camera_name": "Unifi G5pro-AchterMelkstal-HIGH",
+      "ip_address": "rtsp://192.168.34.2:7447/A8dJEpCF7kvY1Fsy",
+      "ai_model": "cowcatcherV14.pt"
+    },
+    "_comment_ipcamera2": {
+      "camera_name": "Unifi G5pro-AchterMelkstal-Medium",
+      "ip_address": "rtsp://192.168.34.2:7447/qWg6AQUIHmVzn116",
+      "ai_model": "cowcatcherV14.pt"
+    },
+    "_comment_ipcamera3": {
+      "camera_name": "Unifi G5pro-AchterMelkstal-Low",
+      "ip_address": "rtsp://192.168.34.2:7447/zUrRdLXZiuZ95H92",
+      "ai_model": "cowcatcherV14.pt"
+    },
+    "_comment_ipcamera4": {
+      "camera_name": "Unifi G3-Afkalfstal",
+      "ip_address":"rtsp://192.168.34.2:7447/JhKrCdGMOLaUiXTX",
+      "ai_model": "cowcalvingV1.pt"
+    },
+    "_comment_ipcamera5": {
+      "camera_name": "Unifi G3Pro-Voerstations",
+      "ip_address":"rtsp://192.168.34.2:7447/JhKrCdGMOLaUiXTX",
+      "ai_model": "sheeplambingV1.pt"
+    },
+    "ipcamera_mp4_23": {
+      "camera_name": "Sprong23",
+      "ip_address":"MP4 tochtige koeien\\sprong 23.mp4",
+      "ai_model": "cowcatcherV14.pt"
+    },
+    "ipcamera_mp4_24": {
+      "camera_name": "Sprong24",
+      "ip_address":"MP4 tochtige koeien\\sprong24.mp4",
+      "ai_model": "cowcatcherV14.pt"
+    }
+}
