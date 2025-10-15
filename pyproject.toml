@@ -23,4 +23,5 @@ dev = [
     "ruff>=0.6.2",
     "fastapi-cli>=0.0.5",
     "onnxruntime>=1.23.1",
+    "ty>=0.0.1a22",
 ]

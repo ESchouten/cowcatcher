@@ -1,9 +1,11 @@
+import os
+from datetime import datetime
+from pathlib import Path
+
+from ultralytics.engine.results import Results
+
 from cowcatcher.config import Config, DetectorConfig
 from cowcatcher.exporters.exporter import Exporter
-from ultralytics.engine.results import Results
-from datetime import datetime
-import os
-from pathlib import Path
 
 
 class DiskExporter(Exporter):

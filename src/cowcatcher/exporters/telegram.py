@@ -1,7 +1,8 @@
+import requests
+from ultralytics.engine.results import Results
+
 from cowcatcher.config import Config, DetectorConfig
 from cowcatcher.exporters.exporter import Exporter
-from ultralytics.engine.results import Results
-import requests
 
 
 class TelegramExporter(Exporter):

@@ -1,7 +1,8 @@
 from abc import ABC, abstractmethod
 
-from cowcatcher.config import Config, DetectorConfig
 from ultralytics.engine.results import Results
+
+from cowcatcher.config import Config, DetectorConfig
 
 
 class Exporter(ABC):

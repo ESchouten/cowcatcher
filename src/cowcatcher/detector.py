@@ -1,10 +1,12 @@
 from dataclasses import dataclass
 from datetime import datetime
+
 from ultralytics import YOLO  # pyright: ignore[reportPrivateImportUsage]
+from ultralytics.engine.results import Results
 
 from cowcatcher.config import DetectorConfig
 from cowcatcher.exporters.exporter import Exporter
-from ultralytics.engine.results import Results
+
 
 @dataclass
 class Collecting:
@@ -26,9 +28,7 @@ class Detector:
     def detect(self):
         # ultralytics only supports one source for video files
         source = (
-            self.config.sources[0]
-            if self.config.sources[0].endswith((".mp4", ".avi", ".mov"))
-            else self.config.sources
+            self.config.sources[0] if self.config.sources[0].endswith((".mp4", ".avi", ".mov")) else self.config.sources
         )
         results = self.model.predict(  # pyright: ignore[reportUnknownMemberType]
             source,
@@ -52,12 +52,9 @@ class Detector:
     def _try_export(self):
         if (
             self.collecting is not None
-            and (datetime.now() - self.collecting.since).total_seconds()
-            >= self.config.collection_seconds
+            and (datetime.now() - self.collecting.since).total_seconds() >= self.config.collection_seconds
         ):
-            print(
-                f"Exporting detection with confidence {self.collecting.max_confidence}"
-            )
+            print(f"Exporting detection with confidence {self.collecting.max_confidence}")
             for exporter in self.exporters:
                 exporter.export(self.collecting.result)
             self.collecting = None
