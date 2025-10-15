@@ -6,6 +6,9 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi[standard]>=0.112.2",
+    "onnx>=1.19.1",
+    "pydantic>=2.11.10",
+    "ultralytics>=8.3.214",
 ]
 
 [build-system]
@@ -13,10 +16,11 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project.scripts]
-hello = "cowcatcher:hello"
+main = "cowcatcher:main"
 
 [dependency-groups]
 dev = [
     "ruff>=0.6.2",
     "fastapi-cli>=0.0.5",
+    "onnxruntime>=1.23.1",
 ]

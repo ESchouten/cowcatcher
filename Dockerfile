@@ -22,6 +22,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 
 # Then, use a final image without uv
+# FROM ultralytics/ultralytics:latest-arm64
 FROM python:3.12-slim-bookworm
 # It is important to use the image that matches the builder, as the path to the
 # Python executable must be the same, e.g., using `python:3.11-slim-bookworm`
@@ -44,4 +45,4 @@ USER nonroot
 WORKDIR /app
 
 # Run the FastAPI application by default
-CMD ["fastapi", "run", "--host", "0.0.0.0", "src/cowcatcher"]
+CMD ["fastapi", "dev", "--host", "0.0.0.0", "src/cowcatcher"]
