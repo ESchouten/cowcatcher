@@ -1,3 +1,5 @@
+import logging
+
 import requests
 from ultralytics.engine.results import Results
 
@@ -6,6 +8,7 @@ from cowcatcher.exporters.exporter import Exporter
 
 
 class TelegramExporter(Exporter):
+    logger = logging.getLogger(__name__)
     _chat_id: str
 
     def __init__(self, config: Config, detector: DetectorConfig):
@@ -29,6 +32,6 @@ class TelegramExporter(Exporter):
             }
             response = requests.post(url, data=payload, files=files)
             if response.status_code != 200:
-                print(f"Failed to send photo to Telegram: {response.text}")
+                self.logger.error(f"Failed to send photo to Telegram: {response.text}")
         except Exception as e:
-            print(f"Error sending photo to Telegram: {e}")
+            self.logger.error(f"Error sending photo to Telegram: {e}")

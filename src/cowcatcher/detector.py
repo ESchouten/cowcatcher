@@ -1,3 +1,5 @@
+import logging
+import threading
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -16,12 +18,13 @@ class Collecting:
 
 
 class Detector:
+    logger = logging.getLogger(__name__)
     collecting: Collecting | None = None
 
     def __init__(self, config: DetectorConfig, exporters: list[Exporter]):
         self.config = config
         self.exporters = exporters
-        print(f"Loading model from {config.model_url}")
+        self.logger.info(f"Loading model from {config.model_url}")
         self.model = YOLO(config.model_url)
         self.detect()
 
@@ -50,11 +53,22 @@ class Detector:
             )
 
     def _try_export(self):
+        now: datetime = datetime.now()
         if (
             self.collecting is not None
-            and (datetime.now() - self.collecting.since).total_seconds() >= self.config.collection_seconds
+            and (now - self.collecting.since).total_seconds() >= self.config.collection_seconds
         ):
-            print(f"Exporting detection with confidence {self.collecting.max_confidence}")
-            for exporter in self.exporters:
-                exporter.export(self.collecting.result)
+            self.logger.info(f"Exporting detection with confidence {self.collecting.max_confidence}")
+            collecting = self.collecting
+
+            def runner():
+                try:
+                    for exporter in self.exporters:
+                        exporter.export(collecting.result)
+                except Exception:  # noqa: BLE001
+                    self.logger.exception(f"Exporter {exporter.__class__.__name__} failed")
+
+            t = threading.Thread(target=runner, name=f"export-{now.isoformat()}", daemon=True)
+            t.start()
+
             self.collecting = None
