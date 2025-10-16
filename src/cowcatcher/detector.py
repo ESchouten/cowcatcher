@@ -1,9 +1,10 @@
 import logging
+import tempfile
 import threading
 from dataclasses import dataclass
 from datetime import datetime
 
-from ultralytics import YOLO  # pyright: ignore[reportPrivateImportUsage]
+from ultralytics import YOLO
 from ultralytics.engine.results import Results
 
 from cowcatcher.config import DetectorConfig
@@ -26,15 +27,16 @@ class Detector:
         self.exporters = exporters
         self.logger.info(f"Loading model from {config.model_url}")
         self.model = YOLO(config.model_url)
+
+        self.source = tempfile.mkstemp(suffix=".csv", text=True)[1]
+        with open(self.source, "w", encoding="utf-8") as f:
+            f.write(",".join(self.config.sources))
+
         self.detect()
 
     def detect(self):
-        # ultralytics only supports one source for video files
-        source = (
-            self.config.sources[0] if self.config.sources[0].endswith((".mp4", ".avi", ".mov")) else self.config.sources
-        )
-        results = self.model.predict(  # pyright: ignore[reportUnknownMemberType]
-            source,
+        results = self.model.predict(
+            source=self.source,
             conf=self.config.confidence_threshold,
             project=self.config.save_directory,
             stream=True,
@@ -45,12 +47,13 @@ class Detector:
 
     def _try_set_collecting(self, result: Results):
         if result.boxes is not None and len(result.boxes) > 0:
-            highest_confidence = max(box.conf.item() for box in result.boxes)  # pyright: ignore[reportUnknownMemberType]
-            self.collecting = Collecting(
-                since=self.collecting.since if self.collecting else datetime.now(),
-                max_confidence=highest_confidence,
-                result=result,
-            )
+            highest_confidence = max(box.conf.item() for box in result.boxes)
+            if self.collecting is None or highest_confidence > self.collecting.max_confidence:
+                self.collecting = Collecting(
+                    since=self.collecting.since if self.collecting else datetime.now(),
+                    max_confidence=highest_confidence,
+                    result=result,
+                )
 
     def _try_export(self):
         now: datetime = datetime.now()
@@ -65,7 +68,7 @@ class Detector:
                 try:
                     for exporter in self.exporters:
                         exporter.export(collecting.result)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     self.logger.exception(f"Exporter {exporter.__class__.__name__} failed")
 
             t = threading.Thread(target=runner, name=f"export-{now.isoformat()}", daemon=True)

@@ -22,4 +22,4 @@ class DiskExporter(Exporter):
         now = datetime.now().strftime("%Y%m%d_%H%M%S")
         image_name = f"detection_{now}.jpg"
         image_path = os.path.join(self._directory, image_name)
-        data.save(image_path)  # pyright: ignore[reportUnknownMemberType]
+        data.save(image_path)

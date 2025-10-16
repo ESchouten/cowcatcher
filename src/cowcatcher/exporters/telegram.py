@@ -25,7 +25,7 @@ class TelegramExporter(Exporter):
     def export(self, data: Results):
         try:
             url = f"{self._base_url}/sendPhoto"
-            files = {"photo": ("detection.jpg", data.orig_img.tobytes(), "image/jpeg")}  # pyright: ignore[reportUnknownMemberType]
+            files = {"photo": ("detection.jpg", data.orig_img.tobytes(), "image/jpeg")}
             payload = {
                 "chat_id": self._chat_id,
                 "caption": "Help CowCatcher verbeteren door goede detecties te beoordelen met een like!",
