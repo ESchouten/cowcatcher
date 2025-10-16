@@ -28,6 +28,13 @@ FROM python:3.12-slim-bookworm
 # Python executable must be the same, e.g., using `python:3.11-slim-bookworm`
 # will fail.
 
+# Install libgl1-mesa-dev and libglib2.0-0 for OpenCV
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1-mesa-dev \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
 # Setup a non-root user
 RUN groupadd --system --gid 999 nonroot \
  && useradd --system --gid 999 --uid 999 --create-home nonroot
@@ -45,4 +52,4 @@ USER nonroot
 WORKDIR /app
 
 # Run the FastAPI application by default
-CMD ["fastapi", "dev", "--host", "0.0.0.0", "src/cowcatcher"]
+CMD ["python3", "src/cowcatcher/__init__.py"]

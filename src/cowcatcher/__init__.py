@@ -7,7 +7,9 @@ from cowcatcher.exporters.factory import create_exporters
 
 logger = logging.getLogger(__name__)
 
-config_json = json.load(open("test/config.json"))
+config_json = json.load(open("config.json"))
+if config_json is None:
+    raise ValueError("Config file is empty or not found.")
 config = Config(**config_json)
 
 detectors = [Detector(detector, create_exporters(config, detector)) for detector in config.detectors]

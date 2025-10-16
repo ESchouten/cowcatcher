@@ -4,11 +4,11 @@ services:
     build: .
 
     volumes:
-      - ./config.json:/app/config.json:ro
+      - ./test/config.json:/app/config.json:ro
 
-    # Host the FastAPI application on port 8000
-    ports:
-      - "8000:8000"
+      - type: bind
+        source: ./test/detections/
+        target: /app/detections
 
     develop:
       # Create a `watch` configuration to update the app

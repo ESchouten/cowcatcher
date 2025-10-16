@@ -38,7 +38,6 @@ class Detector:
         results = self.model.predict(
             source=self.source,
             conf=self.config.confidence_threshold,
-            project=self.config.save_directory,
             stream=True,
         )
         for result in results:

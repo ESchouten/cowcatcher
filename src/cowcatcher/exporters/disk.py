@@ -15,7 +15,7 @@ class DiskExporter(Exporter):
         super().__init__(config, detector)
         if detector.save_directory is None:
             raise ValueError("Save directory is not set for DiskExporter.")
-        self._directory = detector.save_directory
+        self._directory = os.path.join("detections", detector.save_directory)
         os.makedirs(self._directory, exist_ok=True)
 
     def export(self, data: Results):
