@@ -26,7 +26,7 @@ class Detector:
         self.config = config
         self.exporters = exporters
         self.logger.info(f"Loading model from {config.model_url}")
-        self.model = YOLO(config.model_url)
+        self.model = YOLO(config.model_url, task="detect")
 
         self.source = tempfile.mkstemp(suffix=".csv", text=True)[1]
         with open(self.source, "w", encoding="utf-8") as f:
