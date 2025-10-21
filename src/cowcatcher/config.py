@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from pydantic.dataclasses import dataclass
@@ -18,3 +19,9 @@ class Config:
     detectors: list[DetectorConfig]
     telegram_bot_token: str | None = None
     telegram_chat_id: str | None = None
+
+
+config_json = json.load(open("config.json"))
+if config_json is None:
+    raise ValueError("Config file is empty or not found.")
+config = Config(**config_json)

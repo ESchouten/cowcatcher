@@ -1,8 +1,8 @@
 import logging
 import tempfile
-import threading
 from dataclasses import dataclass
 from datetime import datetime
+from threading import Thread
 from typing import Self
 
 import cv2
@@ -42,12 +42,10 @@ class Detector:
         with open(self.source, "w", encoding="utf-8") as f:
             f.write(",".join(sources))
 
-        self.detect()
-
     @classmethod
-    def fromConfig(cls, config: Config, detector: DetectorConfig) -> Self | None:
+    def fromConfig(cls, config: Config, detector: DetectorConfig) -> Self:
         exporterTypes: list[type[Self]] = [TelegramExporter, DiskExporter]
-        exporters = [exporter.fromConfig(config, detector) for exporter in exporterTypes]
+        exporters = list(filter(None, [exporter.fromConfig(config, detector) for exporter in exporterTypes]))
         return cls(
             detector.model_url,
             detector.sources,
@@ -55,15 +53,18 @@ class Detector:
             exporters,
         )
 
-    def detect(self):
-        results = self.model.predict(
-            source=self.source,
-            conf=self.config.confidence_threshold,
-            stream=True,
-        )
-        for result in results:
-            self._try_set_collecting(result)
-            self._try_export()
+    def start(self):
+        def runner():
+            results = self.model.predict(
+                source=self.source,
+                conf=self.config.confidence_threshold,
+                stream=True,
+            )
+            for result in results:
+                self._try_set_collecting(result)
+                self._try_export()
+
+        Thread(target=runner).start()
 
     def _try_set_collecting(self, result: Results):
         if result.boxes is not None and len(result.boxes) > 0:
@@ -93,7 +94,6 @@ class Detector:
                     except Exception:
                         self.logger.exception(f"Exporter {exporter.__class__.__name__} failed")
 
-            t = threading.Thread(target=runner, name=f"export-{now.isoformat()}", daemon=True)
-            t.start()
+            Thread(target=runner, name=f"export-{now.isoformat()}", daemon=True).start()
 
             self.collecting = None
