@@ -5,9 +5,15 @@ from pydantic.dataclasses import dataclass
 
 
 @dataclass
-class DetectorConfig:
-    collection_seconds: int
+class CollectionConfig:
+    time_seconds: int
+    frames_min: int
     confidence_threshold: float
+
+
+@dataclass
+class DetectorConfig:
+    collection: CollectionConfig
     model_url: str
     sources: list[str]
     save_directory: Path | None = None

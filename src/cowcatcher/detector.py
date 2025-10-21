@@ -9,21 +9,16 @@ import cv2
 from ultralytics import YOLO
 from ultralytics.engine.results import Results
 
-from cowcatcher.config import Config, DetectorConfig
+from cowcatcher.config import CollectionConfig, Config, DetectorConfig
 from cowcatcher.exporters.disk import DiskExporter
 from cowcatcher.exporters.exporter import Exporter
 from cowcatcher.exporters.telegram import TelegramExporter
 
 
 @dataclass
-class CollectionConfig:
-    collection_seconds: int
-    confidence_threshold: float
-
-
-@dataclass
 class Collecting:
     since: datetime
+    detections: list[datetime]
     max_confidence: float
     jpg: bytes
 
@@ -46,12 +41,7 @@ class Detector:
     def fromConfig(cls, config: Config, detector: DetectorConfig) -> Self:
         exporterTypes: list[type[Self]] = [TelegramExporter, DiskExporter]
         exporters = list(filter(None, [exporter.fromConfig(config, detector) for exporter in exporterTypes]))
-        return cls(
-            detector.model_url,
-            detector.sources,
-            CollectionConfig(detector.collection_seconds, detector.confidence_threshold),
-            exporters,
-        )
+        return cls(detector.model_url, detector.sources, detector.collection, exporters)
 
     def start(self):
         def runner():
@@ -68,32 +58,51 @@ class Detector:
 
     def _try_set_collecting(self, result: Results):
         if result.boxes is not None and len(result.boxes) > 0:
-            highest_confidence = max(box.conf.item() for box in result.boxes)
-            if self.collecting is None or highest_confidence > self.collecting.max_confidence:
-                success, jpg = cv2.imencode(".jpg", result.orig_img)
-                if success:
-                    self.collecting = Collecting(
-                        since=self.collecting.since if self.collecting else datetime.now(),
-                        max_confidence=highest_confidence,
-                        jpg=jpg.tobytes(),
-                    )
+            new_max_confidence = max(box.conf.item() for box in result.boxes)
+            new_jpg = (
+                cv2.imencode(".jpg", result.orig_img)[1]
+                if self.collecting is None or new_max_confidence > self.collecting.max_confidence
+                else None
+            )
+            detections = self.collecting.detections if self.collecting else []
+            detections.append(datetime.now())
+
+            self.collecting = Collecting(
+                since=self.collecting.since if self.collecting else datetime.now(),
+                detections=detections,
+                max_confidence=new_max_confidence,
+                jpg=new_jpg.tobytes() if new_jpg is not None else self.collecting.jpg,
+            )
+
+        if self.collecting is not None:
+            self.collecting.detections = [
+                d for d in detections if (datetime.now() - d).total_seconds() <= self.config.time_seconds
+            ]
+
+            if len(self.collecting.detections) == 0:
+                self.collecting = None
 
     def _try_export(self):
         now: datetime = datetime.now()
-        if (
-            self.collecting is not None
-            and (now - self.collecting.since).total_seconds() >= self.config.collection_seconds
-        ):
-            self.logger.info(f"Exporting detection with confidence {self.collecting.max_confidence}")
-            collecting = self.collecting
+        if self.collecting is None:
+            return
 
-            def runner():
-                for exporter in self.exporters:
-                    try:
-                        exporter.export(collecting.jpg)
-                    except Exception:
-                        self.logger.exception(f"Exporter {exporter.__class__.__name__} failed")
+        time_collecting = (now - self.collecting.since).total_seconds()
+        if len(self.collecting.detections) < self.config.frames_min or time_collecting < self.config.time_seconds:
+            return
 
-            Thread(target=runner, name=f"export-{now.isoformat()}", daemon=True).start()
+        self.logger.info(
+            f"Exporting collection with {len(self.collecting.detections)} detections over {time_collecting} seconds with max confidence {self.collecting.max_confidence}"
+        )
+        collecting = self.collecting
 
-            self.collecting = None
+        def runner():
+            for exporter in self.exporters:
+                try:
+                    exporter.export(collecting.jpg)
+                except Exception:
+                    self.logger.exception(f"Exporter {exporter.__class__.__name__} failed")
+
+        Thread(target=runner, name=f"export-{now.isoformat()}", daemon=True).start()
+
+        self.collecting = None
