@@ -2,8 +2,6 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Self
 
-from ultralytics.engine.results import Results
-
 from cowcatcher.config import Config, DetectorConfig
 
 
@@ -20,5 +18,5 @@ class Exporter(ABC):
         pass
 
     @abstractmethod
-    def export(self, data: Results):
+    def export(self, jpg: bytes):
         pass

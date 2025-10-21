@@ -3,8 +3,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Self
 
-from ultralytics.engine.results import Results
-
 from cowcatcher.config import Config, DetectorConfig
 from cowcatcher.exporters.exporter import Exporter
 
@@ -23,8 +21,9 @@ class DiskExporter(Exporter):
             return None
         return cls(detector.save_directory)
 
-    def export(self, data: Results):
+    def export(self, jpg: bytes):
         now = datetime.now().strftime("%Y%m%d_%H%M%S")
         image_name = f"detection_{now}.jpg"
         image_path = os.path.join(self.save_directory, image_name)
-        data.save(image_path)
+        with open(image_path, "wb") as f:
+            f.write(jpg)

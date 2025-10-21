@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Self
 
+import cv2
 from ultralytics import YOLO
 from ultralytics.engine.results import Results
 
@@ -24,7 +25,7 @@ class CollectionConfig:
 class Collecting:
     since: datetime
     max_confidence: float
-    result: Results
+    jpg: bytes
 
 
 class Detector:
@@ -68,11 +69,13 @@ class Detector:
         if result.boxes is not None and len(result.boxes) > 0:
             highest_confidence = max(box.conf.item() for box in result.boxes)
             if self.collecting is None or highest_confidence > self.collecting.max_confidence:
-                self.collecting = Collecting(
-                    since=self.collecting.since if self.collecting else datetime.now(),
-                    max_confidence=highest_confidence,
-                    result=result,
-                )
+                success, jpg = cv2.imencode(".jpg", result.orig_img)
+                if success:
+                    self.collecting = Collecting(
+                        since=self.collecting.since if self.collecting else datetime.now(),
+                        max_confidence=highest_confidence,
+                        jpg=jpg.tobytes(),
+                    )
 
     def _try_export(self):
         now: datetime = datetime.now()
@@ -86,7 +89,7 @@ class Detector:
             def runner():
                 for exporter in self.exporters:
                     try:
-                        exporter.export(collecting.result)
+                        exporter.export(collecting.jpg)
                     except Exception:
                         self.logger.exception(f"Exporter {exporter.__class__.__name__} failed")
 

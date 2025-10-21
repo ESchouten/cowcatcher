@@ -1,7 +1,6 @@
 from typing import Self
 
 import requests
-from ultralytics.engine.results import Results
 
 from cowcatcher.config import Config, DetectorConfig
 from cowcatcher.exporters.exporter import Exporter
@@ -23,10 +22,10 @@ class TelegramExporter(Exporter):
             return None
         return cls(config.telegram_bot_token, telegram_chat_id)
 
-    def export(self, data: Results):
+    def export(self, jpg: bytes):
         try:
             url = f"{self.base_url}/sendPhoto"
-            files = {"photo": ("detection.jpg", data.orig_img.tobytes(), "image/jpeg")}
+            files = {"photo": ("detection.jpg", jpg, "image/jpeg")}
             payload = {
                 "chat_id": self.telegram_chat_id,
                 "caption": "Help CowCatcher verbeteren door goede detecties te beoordelen met een like!",
