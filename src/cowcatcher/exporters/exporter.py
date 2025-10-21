@@ -1,4 +1,6 @@
+import logging
 from abc import ABC, abstractmethod
+from typing import Self
 
 from ultralytics.engine.results import Results
 
@@ -6,9 +8,16 @@ from cowcatcher.config import Config, DetectorConfig
 
 
 class Exporter(ABC):
-    def __init__(self, config: Config, detector: DetectorConfig):
-        self.config = config
-        self.detector = detector
+    logger = logging.getLogger(__name__)
+
+    def __init__(self, *args):
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger.info(f"Initializing with args={args}")
+
+    @classmethod
+    @abstractmethod
+    def fromConfig(cls: Self, config: Config, detector: DetectorConfig) -> Self | None:
+        pass
 
     @abstractmethod
     def export(self, data: Results):

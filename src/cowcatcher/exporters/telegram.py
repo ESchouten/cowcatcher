@@ -1,4 +1,4 @@
-import logging
+from typing import Self
 
 import requests
 from ultralytics.engine.results import Results
@@ -8,26 +8,27 @@ from cowcatcher.exporters.exporter import Exporter
 
 
 class TelegramExporter(Exporter):
-    logger = logging.getLogger(__name__)
-    _chat_id: str
+    base_url: str
+    telegram_chat_id: str
 
-    def __init__(self, config: Config, detector: DetectorConfig):
-        super().__init__(config, detector)
-        if config.telegram_bot_token is None:
-            raise ValueError("Telegram bot token is not set.")
-        self._base_url = f"https://api.telegram.org/bot{config.telegram_bot_token}"
+    def __init__(self, telegram_bot_token: str, telegram_chat_id: str):
+        super().__init__(telegram_bot_token, telegram_chat_id)
+        self.base_url = f"https://api.telegram.org/bot{telegram_bot_token}"
+        self.telegram_chat_id = telegram_chat_id
 
-        chat_id = detector.telegram_chat_id or config.telegram_chat_id
-        if chat_id is None:
-            raise ValueError("Telegram chat ID is not set.")
-        self._chat_id = chat_id
+    @classmethod
+    def fromConfig(cls, config: Config, detector: DetectorConfig) -> Self | None:
+        telegram_chat_id = detector.telegram_chat_id or config.telegram_chat_id
+        if config.telegram_bot_token is None or telegram_chat_id is None:
+            return None
+        return cls(config.telegram_bot_token, telegram_chat_id)
 
     def export(self, data: Results):
         try:
-            url = f"{self._base_url}/sendPhoto"
+            url = f"{self.base_url}/sendPhoto"
             files = {"photo": ("detection.jpg", data.orig_img.tobytes(), "image/jpeg")}
             payload = {
-                "chat_id": self._chat_id,
+                "chat_id": self.telegram_chat_id,
                 "caption": "Help CowCatcher verbeteren door goede detecties te beoordelen met een like!",
             }
             response = requests.post(url, data=payload, files=files)
