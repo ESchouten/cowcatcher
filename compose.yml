@@ -7,7 +7,7 @@ services:
       - ./config.json:/app/config.json:ro
 
       - type: bind
-        source: ./test/detections/
+        source: ./detections/
         target: /app/detections
 
     deploy:
