@@ -22,12 +22,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: free disk space
-        run: |
-          sudo swapoff -a
-          sudo rm -f /swapfile
-          sudo apt clean
-          df -h
+      - name: Remove unused Docker images
+        run: docker system prune -af
+      
+      - name: Clean up temporary files
+        run: sudo rm -rf /tmp/*
       
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
