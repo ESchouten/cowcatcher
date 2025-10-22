@@ -3,6 +3,8 @@ name: CI
 on:
   push:
     branches: [main]
+    tags:
+      - '*'
   pull_request:
   workflow_dispatch:
 
@@ -58,3 +60,25 @@ jobs:
         run: |
           docker compose up -d
           docker compose down
+    
+  publish:
+    name: "publish image"
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref_name == 'main' && contains(github.ref, 'refs/tags/')
+    steps:
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish to GitHub Container Registry
+        uses: docker/build-push-action@v6
+        with:
+          tags: ghcr.io/${{ github.repository_owner }}/cowcatcher:latest,ghcr.io/${{ github.repository_owner }}/cowcatcher:${{ github.ref_name }}
+          cache-from: type=gha,scope=cowcatcher
+          cache-to: type=gha,mode=min,scope=cowcatcher
+          push: true
+
