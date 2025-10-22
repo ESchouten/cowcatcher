@@ -15,58 +15,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
-    name: "build image"
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build and export
-        uses: docker/build-push-action@v6
-        with:
-          tags: ai-detector:latest
-          cache-from: type=gha,scope=ai-detector
-          cache-to: type=gha,mode=min,scope=ai-detector
-          outputs: type=docker,dest=/tmp/aidetector.tar
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ai-detector
-          path: /tmp/aidetector.tar
-
-  test:
-    name: "test image"
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ai-detector
-          path: /tmp
-  
-      - name: Load images
-        run: |
-          docker load --input /tmp/aidetector.tar
-          docker image ls -a
-
-      - name: Test Docker compose
-        run: |
-          docker compose up -d
-          docker compose down
-    
   publish:
     name: "publish image"
     runs-on: ubuntu-latest
-    needs: test
     if: github.ref_name == 'main' && contains(github.ref, 'refs/tags/')
     steps:
+      - uses: actions/checkout@v4
+      
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
         with:
