@@ -9,10 +9,10 @@ import cv2
 from ultralytics import YOLO
 from ultralytics.engine.results import Results
 
-from cowcatcher.config import CollectionConfig, Config, DetectorConfig
-from cowcatcher.exporters.disk import DiskExporter
-from cowcatcher.exporters.exporter import Exporter
-from cowcatcher.exporters.telegram import TelegramExporter
+from aidetector.config import CollectionConfig, Config, DetectorConfig
+from aidetector.exporters.disk import DiskExporter
+from aidetector.exporters.exporter import Exporter
+from aidetector.exporters.telegram import TelegramExporter
 
 
 @dataclass

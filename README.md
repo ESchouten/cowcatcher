@@ -1,1 +1,1 @@
-# CowCatcher Next
+# AI Detector

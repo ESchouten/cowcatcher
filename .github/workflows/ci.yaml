@@ -27,16 +27,16 @@ jobs:
       - name: Build and export
         uses: docker/build-push-action@v6
         with:
-          tags: cowcatcher:latest
-          cache-from: type=gha,scope=cowcatcher
-          cache-to: type=gha,mode=min,scope=cowcatcher
-          outputs: type=docker,dest=/tmp/cowcatcher.tar
+          tags: ai-detector:latest
+          cache-from: type=gha,scope=ai-detector
+          cache-to: type=gha,mode=min,scope=ai-detector
+          outputs: type=docker,dest=/tmp/aidetector.tar
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: cowcatcher
-          path: /tmp/cowcatcher.tar
+          name: ai-detector
+          path: /tmp/aidetector.tar
 
   test:
     name: "test image"
@@ -48,12 +48,12 @@ jobs:
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
-          name: cowcatcher
+          name: ai-detector
           path: /tmp
   
       - name: Load images
         run: |
-          docker load --input /tmp/cowcatcher.tar
+          docker load --input /tmp/aidetector.tar
           docker image ls -a
 
       - name: Test Docker compose
@@ -77,8 +77,8 @@ jobs:
       - name: Publish to GitHub Container Registry
         uses: docker/build-push-action@v6
         with:
-          tags: ghcr.io/${{ github.repository_owner }}/cowcatcher:latest,ghcr.io/${{ github.repository_owner }}/cowcatcher:${{ github.ref_name }}
-          cache-from: type=gha,scope=cowcatcher
-          cache-to: type=gha,mode=min,scope=cowcatcher
+          tags: ghcr.io/${{ github.repository_owner }}/ai-detector:latest,ghcr.io/${{ github.repository_owner }}/ai-detector:${{ github.ref_name }}
+          cache-from: type=gha,scope=ai-detector
+          cache-to: type=gha,mode=min,scope=ai-detector
           push: true
 

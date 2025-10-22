@@ -2,8 +2,8 @@ from typing import Self
 
 import requests
 
-from cowcatcher.config import Config, DetectorConfig
-from cowcatcher.exporters.exporter import Exporter
+from aidetector.config import Config, DetectorConfig
+from aidetector.exporters.exporter import Exporter
 
 
 class TelegramExporter(Exporter):
@@ -28,7 +28,7 @@ class TelegramExporter(Exporter):
             files = {"photo": ("detection.jpg", jpg, "image/jpeg")}
             payload = {
                 "chat_id": self.telegram_chat_id,
-                "caption": "Help CowCatcher verbeteren door goede detecties te beoordelen met een like!",
+                "caption": "Help de AI-detector te verbeteren door goede detecties te beoordelen met een like!",
             }
             response = requests.post(url, data=payload, files=files)
             if response.status_code != 200:

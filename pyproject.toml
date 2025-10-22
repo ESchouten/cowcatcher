@@ -1,5 +1,5 @@
 [project]
-name = "cowcatcher"
+name = "aidetector"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -17,7 +17,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project.scripts]
-main = "cowcatcher:main"
+main = "aidetector:main"
 
 [dependency-groups]
 dev = [

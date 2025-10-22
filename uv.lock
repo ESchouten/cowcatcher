@@ -17,6 +17,39 @@ resolution-markers = [
 ]
 
 [[package]]
+name = "aidetector"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "onnx" },
+    { name = "onnxruntime", marker = "platform_machine == 'aarch64' or sys_platform == 'darwin'" },
+    { name = "onnxruntime-gpu", marker = "platform_machine != 'aarch64' and sys_platform != 'darwin'" },
+    { name = "pydantic" },
+    { name = "ultralytics" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "ruff" },
+    { name = "ty" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "onnx", specifier = ">=1.19.1" },
+    { name = "onnxruntime", marker = "platform_machine == 'aarch64' or sys_platform == 'darwin'", specifier = ">=1.23.0" },
+    { name = "onnxruntime-gpu", marker = "platform_machine != 'aarch64' and sys_platform != 'darwin'", specifier = ">=1.23.0" },
+    { name = "pydantic", specifier = ">=2.11.10" },
+    { name = "ultralytics", specifier = ">=8.3.214" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "ruff", specifier = ">=0.6.2" },
+    { name = "ty", specifier = ">=0.0.1a22" },
+]
+
+[[package]]
 name = "annotated-types"
 version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
@@ -199,39 +232,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/0a/59/ebfb8c677c75605cc27f7122c90313fd2f375ff3c8d19a1694bda74aaa63/contourpy-1.3.3-pp311-pypy311_pp73-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:70f9aad7de812d6541d29d2bbf8feb22ff7e1c299523db288004e3157ff4674e", size = 302202, upload-time = "2025-07-26T12:02:55.947Z" },
     { url = "https://files.pythonhosted.org/packages/3c/37/21972a15834d90bfbfb009b9d004779bd5a07a0ec0234e5ba8f64d5736f4/contourpy-1.3.3-pp311-pypy311_pp73-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:5ed3657edf08512fc3fe81b510e35c2012fbd3081d2e26160f27ca28affec989", size = 329207, upload-time = "2025-07-26T12:02:57.468Z" },
     { url = "https://files.pythonhosted.org/packages/0c/58/bd257695f39d05594ca4ad60df5bcb7e32247f9951fd09a9b8edb82d1daa/contourpy-1.3.3-pp311-pypy311_pp73-win_amd64.whl", hash = "sha256:3d1a3799d62d45c18bafd41c5fa05120b96a28079f2393af559b843d1a966a77", size = 225315, upload-time = "2025-07-26T12:02:58.801Z" },
-]
-
-[[package]]
-name = "cowcatcher"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "onnx" },
-    { name = "onnxruntime", marker = "platform_machine == 'aarch64' or sys_platform == 'darwin'" },
-    { name = "onnxruntime-gpu", marker = "platform_machine != 'aarch64' and sys_platform != 'darwin'" },
-    { name = "pydantic" },
-    { name = "ultralytics" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "ruff" },
-    { name = "ty" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "onnx", specifier = ">=1.19.1" },
-    { name = "onnxruntime", marker = "platform_machine == 'aarch64' or sys_platform == 'darwin'", specifier = ">=1.23.0" },
-    { name = "onnxruntime-gpu", marker = "platform_machine != 'aarch64' and sys_platform != 'darwin'", specifier = ">=1.23.0" },
-    { name = "pydantic", specifier = ">=2.11.10" },
-    { name = "ultralytics", specifier = ">=8.3.214" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "ruff", specifier = ">=0.6.2" },
-    { name = "ty", specifier = ">=0.0.1a22" },
 ]
 
 [[package]]

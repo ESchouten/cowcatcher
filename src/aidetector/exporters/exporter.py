@@ -2,7 +2,7 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Self
 
-from cowcatcher.config import Config, DetectorConfig
+from aidetector.config import Config, DetectorConfig
 
 
 class Exporter(ABC):

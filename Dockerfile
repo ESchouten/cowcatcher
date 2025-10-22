@@ -52,4 +52,4 @@ USER nonroot
 WORKDIR /app
 
 # Run the FastAPI application by default
-CMD ["python3", "src/cowcatcher/__init__.py"]
+CMD ["python3", "src/aidetector/__init__.py"]

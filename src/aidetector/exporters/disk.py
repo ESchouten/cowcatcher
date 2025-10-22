@@ -3,8 +3,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Self
 
-from cowcatcher.config import Config, DetectorConfig
-from cowcatcher.exporters.exporter import Exporter
+from aidetector.config import Config, DetectorConfig
+from aidetector.exporters.exporter import Exporter
 
 
 class DiskExporter(Exporter):

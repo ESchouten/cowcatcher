@@ -1,7 +1,7 @@
 import logging
 
-from cowcatcher.config import config
-from cowcatcher.manager import Manager
+from aidetector.config import config
+from aidetector.manager import Manager
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)

@@ -1,7 +1,7 @@
 from typing import Self
 
-from cowcatcher.config import Config
-from cowcatcher.detector import Detector
+from aidetector.config import Config
+from aidetector.detector import Detector
 
 
 class Manager:
