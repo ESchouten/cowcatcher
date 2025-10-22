@@ -2,7 +2,6 @@ name: CI
 
 on:
   push:
-    branches: [main, gha]
     tags:
       - '*'
   pull_request:
