@@ -1,7 +1,15 @@
 import json
+from datetime import datetime
 from pathlib import Path
 
 from pydantic.dataclasses import dataclass
+
+
+@dataclass
+class Detection:
+    date: datetime
+    jpg: bytes
+    confidence: float
 
 
 @dataclass

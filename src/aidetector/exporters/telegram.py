@@ -2,7 +2,7 @@ from typing import Self
 
 import requests
 
-from aidetector.config import Config, DetectorConfig
+from aidetector.config import Config, Detection, DetectorConfig
 from aidetector.exporters.exporter import Exporter
 
 
@@ -22,13 +22,16 @@ class TelegramExporter(Exporter):
             return None
         return cls(config.telegram_bot_token, telegram_chat_id)
 
-    def export(self, jpg: bytes):
+    def export(self, sorted_detections: list[Detection]):
+        if not sorted_detections:
+            return
         try:
+            self.logger.info(f"Sending photo to Telegram with confidence {sorted_detections[0].confidence}")
             url = f"{self.base_url}/sendPhoto"
-            files = {"photo": ("detection.jpg", jpg, "image/jpeg")}
+            files = {"photo": ("detection.jpg", sorted_detections[0].jpg, "image/jpeg")}
             payload = {
                 "chat_id": self.telegram_chat_id,
-                "caption": "Help de AI-detector te verbeteren door goede detecties te beoordelen met een like!",
+                "caption": "Help de AI te verbeteren door goede detecties te beoordelen met een like!",
             }
             response = requests.post(url, data=payload, files=files)
             if response.status_code != 200:

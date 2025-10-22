@@ -2,7 +2,7 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Self
 
-from aidetector.config import Config, DetectorConfig
+from aidetector.config import Config, Detection, DetectorConfig
 
 
 class Exporter(ABC):
@@ -18,5 +18,5 @@ class Exporter(ABC):
         pass
 
     @abstractmethod
-    def export(self, jpg: bytes):
+    def export(self, sorted_detections: list[Detection]):
         pass

@@ -1,9 +1,8 @@
 import os
-from datetime import datetime
 from pathlib import Path
 from typing import Self
 
-from aidetector.config import Config, DetectorConfig
+from aidetector.config import Config, Detection, DetectorConfig
 from aidetector.exporters.exporter import Exporter
 
 
@@ -21,9 +20,11 @@ class DiskExporter(Exporter):
             return None
         return cls(detector.save_directory)
 
-    def export(self, jpg: bytes):
-        now = datetime.now().strftime("%Y%m%d_%H%M%S")
-        image_name = f"detection_{now}.jpg"
-        image_path = os.path.join(self.save_directory, image_name)
-        with open(image_path, "wb") as f:
-            f.write(jpg)
+    def export(self, sorted_detections: list[Detection]):
+        for result in sorted_detections:
+            rounded_confidence = round(result.confidence, 3)
+            date_str = result.date.isoformat(timespec="milliseconds").replace(":", "-")
+            image_name = f"{date_str}_{rounded_confidence}.jpg"
+            image_path = os.path.join(self.save_directory, image_name)
+            with open(image_path, "wb") as f:
+                f.write(result.jpg)
