@@ -15,12 +15,12 @@ concurrency:
 
 jobs:
   publish:
-    name: "publish image"
+    name: "Build and publish image to GitHub Container Registry"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: free disk space
+      - name: Free up disk space
         run: |
           df -h
           sudo rm -rf /usr/share/dotnet
