@@ -18,7 +18,6 @@ jobs:
   publish:
     name: "publish image"
     runs-on: ubuntu-latest
-    if: github.ref_name == 'main'
     steps:
       - uses: actions/checkout@v4
 
