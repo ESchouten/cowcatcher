@@ -1,0 +1,17 @@
+services:
+  aidetector:
+    image: "ghcr.io/eschouten/ai-detector:latest"
+
+    volumes:
+      - ./config.json:/app/config.json:ro
+
+      - type: bind
+        source: ./detections/
+        target: /app/detections
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
