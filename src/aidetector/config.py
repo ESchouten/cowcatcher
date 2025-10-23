@@ -1,6 +1,7 @@
 import json
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 
 from pydantic.dataclasses import dataclass
 
@@ -10,6 +11,16 @@ class Detection:
     date: datetime
     jpg: bytes
     confidence: float
+
+
+def get_timestamped_filename(detection: Detection) -> str:
+    rounded_confidence = round(detection.confidence, 3)
+    timestamp = get_date_path(detection, "milliseconds")
+    return f"{timestamp}_{rounded_confidence}.jpg"
+
+
+def get_date_path(detection: Detection, timespec: Literal["seconds", "milliseconds"]) -> str:
+    return detection.date.isoformat(timespec=timespec).replace(":", "-")
 
 
 @dataclass

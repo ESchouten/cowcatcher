@@ -2,7 +2,7 @@ from typing import Self
 
 import requests
 
-from aidetector.config import Config, Detection, DetectorConfig
+from aidetector.config import Config, Detection, DetectorConfig, get_timestamped_filename
 from aidetector.exporters.exporter import Exporter
 
 
@@ -28,7 +28,7 @@ class TelegramExporter(Exporter):
         try:
             self.logger.info(f"Sending photo to Telegram with confidence {sorted_detections[0].confidence}")
             url = f"{self.base_url}/sendPhoto"
-            files = {"photo": ("detection.jpg", sorted_detections[0].jpg, "image/jpeg")}
+            files = {"photo": (get_timestamped_filename(sorted_detections[0]), sorted_detections[0].jpg, "image/jpeg")}
             payload = {
                 "chat_id": self.telegram_chat_id,
                 "caption": "Help de AI te verbeteren door goede detecties te beoordelen met een like!",

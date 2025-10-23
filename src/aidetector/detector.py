@@ -18,7 +18,13 @@ class Detector:
     logger = logging.getLogger(__name__)
     detections: list[Detection] = []
 
-    def __init__(self, model: str, sources: list[str], config: CollectionConfig, exporters: list[Exporter]):
+    def __init__(
+        self,
+        model: str,
+        sources: list[str],
+        config: CollectionConfig,
+        exporters: list[Exporter],
+    ):
         self.config = config
         self.exporters = exporters
         self.logger.info(f"Loading model from {model}")
@@ -31,7 +37,12 @@ class Detector:
     @classmethod
     def fromConfig(cls, config: Config, detector: DetectorConfig) -> Self:
         exporterTypes: list[type[Self]] = [TelegramExporter, DiskExporter]
-        exporters = list(filter(None, [exporter.fromConfig(config, detector) for exporter in exporterTypes]))
+        exporters = list(
+            filter(
+                None,
+                [exporter.fromConfig(config, detector) for exporter in exporterTypes],
+            )
+        )
         return cls(detector.model_url, detector.sources, detector.collection, exporters)
 
     def start(self):
@@ -50,7 +61,9 @@ class Detector:
 
     def _filter_detections(self):
         self.detections = [
-            d for d in self.detections if (datetime.now() - d.date).total_seconds() <= self.config.time_seconds
+            d
+            for d in self.detections
+            if (datetime.now() - d.date).total_seconds() <= self.config.time_seconds
         ]
 
     def _add_detection(self, result: Results):
@@ -60,7 +73,9 @@ class Detector:
             if not success:
                 return
 
-            self.detections.append(Detection(date=datetime.now(), jpg=jpg.tobytes(), confidence=confidence))
+            self.detections.append(
+                Detection(date=datetime.now(), jpg=jpg.tobytes(), confidence=confidence)
+            )
 
     def _try_export(self):
         now: datetime = datetime.now()
@@ -68,20 +83,27 @@ class Detector:
             return
 
         time_collecting = (now - self.detections[0].date).total_seconds()
-        if len(self.detections) < self.config.frames_min or time_collecting < self.config.time_seconds:
+        if (
+            len(self.detections) < self.config.frames_min
+            or time_collecting < self.config.time_seconds
+        ):
             return
 
         self.logger.info(
             f"Exporting collection with {len(self.detections)} detections over {time_collecting} seconds with max confidence {max(d.confidence for d in self.detections)}"
         )
-        sorted_detections = sorted(self.detections, key=lambda d: d.confidence, reverse=True)
+        sorted_detections = sorted(
+            self.detections, key=lambda d: d.confidence, reverse=True
+        )
 
         def runner():
             for exporter in self.exporters:
                 try:
                     exporter.export(sorted_detections)
                 except Exception:
-                    self.logger.exception(f"Exporter {exporter.__class__.__name__} failed")
+                    self.logger.exception(
+                        f"Exporter {exporter.__class__.__name__} failed"
+                    )
 
         Thread(target=runner, daemon=True).start()
 

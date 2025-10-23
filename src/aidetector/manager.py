@@ -10,7 +10,9 @@ class Manager:
 
     @classmethod
     def fromConfig(cls, config: Config) -> Self:
-        return cls([Detector.fromConfig(config, detector) for detector in config.detectors])
+        return cls(
+            [Detector.fromConfig(config, detector) for detector in config.detectors]
+        )
 
     def start(self):
         for detector in self.detectors:
