@@ -23,10 +23,10 @@ class DiskExporter(Exporter):
     def export(self, sorted_detections: list[Detection]):
         self.logger.info(f"Saving {len(sorted_detections)} photos to disk")
         timestamp = get_date_path(sorted_detections[0], "seconds")
-        mount_directory = os.path.join(self.save_directory, timestamp)
-        os.makedirs(mount_directory, exist_ok=True)
+        timestamped_directory = os.path.join(self.save_directory, timestamp)
+        os.makedirs(timestamped_directory, exist_ok=True)
         for result in sorted_detections:
             image_name = get_timestamped_filename(result)
-            image_path = os.path.join(mount_directory, image_name)
+            image_path = os.path.join(timestamped_directory, image_name)
             with open(image_path, "wb") as f:
                 f.write(result.jpg)

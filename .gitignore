@@ -3,3 +3,4 @@
 **/*.pyc
 detections
 config.json
+!example/config.json

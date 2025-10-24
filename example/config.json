@@ -1,6 +1,6 @@
 {
-    "telegram_bot_token": "your_bot_token",
-    "telegram_chat_id": "your_chat_id",
+    "telegram_bot_token": "<your_bot_token>",
+    "telegram_chat_id": "<your_chat_id>",
     "detectors": [
         {
             "collection": {
@@ -11,7 +11,7 @@
             "model_url": "https://github.com/CowCatcherAI/CowCatcherAI/releases/download/modelv-14/cowcatcherV14.pt",
             "save_directory": "mounts",
             "sources": ["sprong24.mp4"],
-            "telegram_chat_id": "your_chat_id"
+            "telegram_chat_id": "<your_chat_id>"
         }
     ]
 }
