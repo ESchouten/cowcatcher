@@ -3,10 +3,11 @@ name = "aidetector"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = "==3.12.*"
 dependencies = [
-    "pydantic>=2.11.10",
-    "ultralytics>=8.3.214",
+    "executorch>=1.0.0",
+    "pydantic>=2.12.3",
+    "ultralytics>=8.3.221",
 ]
 
 [build-system]
@@ -18,6 +19,6 @@ main = "aidetector:main"
 
 [dependency-groups]
 dev = [
-    "ruff>=0.6.2",
-    "ty>=0.0.1a23",
+    "ruff>=0.14.2",
+    "ty>=0.0.1a24",
 ]
