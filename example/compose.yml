@@ -4,14 +4,15 @@ services:
 
     volumes:
       - ./config.json:/app/config.json:ro
+      - ./sprong24.mp4:/app/sprong24.mp4:ro
 
       - type: bind
         source: ./detections/
         target: /app/detections
 
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              capabilities: [gpu]
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           capabilities: [gpu]

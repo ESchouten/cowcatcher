@@ -10,7 +10,7 @@
             },
             "model_url": "https://github.com/CowCatcherAI/CowCatcherAI/releases/download/modelv-14/cowcatcherV14.pt",
             "save_directory": "mounts",
-            "sources": ["test/sprong24.mp4"],
+            "sources": ["sprong24.mp4"],
             "telegram_chat_id": "your_chat_id"
         }
     ]
