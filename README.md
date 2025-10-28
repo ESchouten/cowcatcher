@@ -24,7 +24,7 @@ Install dependencies and run locally:
 
 ```bash
 uv sync
-uv run main         # Expects a config.json in the root directory
+uv run main   # Expects a config.json in the root directory
 ```
 
 Build and run docker image locally:
@@ -36,15 +36,15 @@ docker compose up --build
 Development commands:
 
 ```bash
-ruff check   # Lint
-ruff format  # Format
-ty check     # Type check
+ruff check    # Lint
+ruff format   # Format
+ty check      # Type check
 ```
 
 ## Components
 
 - Entrypoint: [`aidetector.main`](src/aidetector/__init__.py)
-- Manager: loads detectors from config [`aidetector.manager.Manager.fromConfig`](src/aidetector/manager.py)
+- Manager: loads detectors from config [`aidetector.manager.Manager`](src/aidetector/manager.py)
 - Detector: runs the model and collects/export detections [`aidetector.detector.Detector`](src/aidetector/detector.py)
 - Config types: [`aidetector.config.Config`](src/aidetector/config.py)
 - Exporters:
