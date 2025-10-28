@@ -2,7 +2,13 @@ import os
 from pathlib import Path
 from typing import Self
 
-from aidetector.config import Config, Detection, DetectorConfig, get_date_path, get_timestamped_filename
+from aidetector.config import (
+    Config,
+    Detection,
+    DetectorConfig,
+    get_date_path,
+    get_timestamped_filename,
+)
 from aidetector.exporters.exporter import Exporter
 
 

@@ -19,7 +19,9 @@ def get_timestamped_filename(detection: Detection) -> str:
     return f"{timestamp}_{rounded_confidence}.jpg"
 
 
-def get_date_path(detection: Detection, timespec: Literal["seconds", "milliseconds"]) -> str:
+def get_date_path(
+    detection: Detection, timespec: Literal["seconds", "milliseconds"]
+) -> str:
     return detection.date.isoformat(timespec=timespec).replace(":", "-")
 
 
