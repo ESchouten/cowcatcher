@@ -9,7 +9,7 @@ class FrameCollector:
 
     def __init__(self, retention: int = 1):
         self.frames: dict[str, list[tuple[datetime, ndarray]]] = {}
-        self.retention = retention
+        self.retention = max(1, retention)
 
     def add(self, source: str, frame: ndarray):
         self.remove_old()
@@ -22,8 +22,6 @@ class FrameCollector:
 
     def remove_old(self):
         for source, frames in self.frames.items():
-            # only keep the last {retention} frames
-            # self.frames[source] = [frame for frame in frames if now - frame[0] < timedelta(seconds=self.retention)]
             self.frames[source] = frames[-self.retention :]
 
     def counts(self) -> dict[str, int]:
