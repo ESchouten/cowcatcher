@@ -3,7 +3,7 @@
         "interval": 1
     },
     "yolo": {
-        "model": "https://github.com/CowCatcherAI/CalvingCatcherAI/releases/download/CalvingcatcherV1/CalvingcatcherV6.pt",
+        "model": "https://github.com/CowCatcherAI/CalvingCatcherAI/releases/download/CalvingcatcherV1/CalvingcatcherV7.pt",
         "confidence": {
             "waterbag": 0.8,
             "legs": 0.8,
