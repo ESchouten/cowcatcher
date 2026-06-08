@@ -143,7 +143,7 @@ jobs:
       - name: Upload zip
         uses: actions/upload-artifact@v7
         with:
-          name: aidetector-web-windows-${{ steps.version.outputs.version }}-zip
+          name: aidetector-web-windows-${{ steps.version.outputs.version }}-exe
           path: web/dist/aidetector-web-windows-${{ steps.version.outputs.version }}.zip
 
       - name: Release
@@ -224,7 +224,7 @@ jobs:
       - name: Upload zip
         uses: actions/upload-artifact@v7
         with:
-          name: aidetector-web-osx-${{ steps.version.outputs.version }}-zip
+          name: aidetector-web-osx-${{ steps.version.outputs.version }}-exe
           path: web/dist/aidetector-web-osx-${{ steps.version.outputs.version }}.zip
 
       - name: Release
