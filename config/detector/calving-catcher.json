@@ -3,13 +3,13 @@
         "interval": 1
     },
     "yolo": {
-        "model": "https://github.com/CowCatcherAI/CalvingCatcherAI/releases/download/CalvingcatcherV1/CalvingcatcherV7.pt",
+        "model": "https://github.com/CowCatcherAI/CalvingCatcherAI/releases/download/CalvingcatcherV1/CalvingcatcherV7.1.pt",
         "confidence": {
-            "waterbag": 0.8,
-            "legs": 0.8,
-            "head": 0.8,
-            "body": 0.8,
-            "calf": 0.8
+            "waterbag": 0.5,
+            "legs": 0.5,
+            "head": 0.5,
+            "body": 0.5,
+            "calf": 0.5
         },
         "cooldown": {
             "calf": 900,
