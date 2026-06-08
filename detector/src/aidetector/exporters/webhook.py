@@ -197,7 +197,10 @@ class WebhookExporter(Exporter[WebhookConfig]):
                     data["crop"] = base64.b64encode(jpg).decode("utf-8")
             if self.include_video:
                 video = generate_mp4(
-                    detections, width=self.video_width, crf=self.video_crf, padding=self.crop_padding
+                    detections,
+                    width=self.video_width,
+                    crf=self.video_crf,
+                    padding=self.crop_padding,
                 )
                 if video:
                     data["video"] = base64.b64encode(video).decode("utf-8")

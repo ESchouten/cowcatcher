@@ -26,7 +26,11 @@ class OrtState:
 
     @property
     def names(self) -> list[str]:
-        return [device.ep_name for device, _ in self.devices] if self.devices else self.providers
+        return (
+            [device.ep_name for device, _ in self.devices]
+            if self.devices
+            else self.providers
+        )
 
 
 _STATE = OrtState()
@@ -60,7 +64,11 @@ def _patch_ultralytics_requirements() -> None:
 
     def _check_requirements(requirements=(), **kwargs):
         def should_skip(requirement: str) -> bool:
-            return "onnxruntime-gpu" in requirement or "onnxruntime" in requirement or "onnx" in requirement
+            return (
+                "onnxruntime-gpu" in requirement
+                or "onnxruntime" in requirement
+                or "onnx" in requirement
+            )
 
         if isinstance(requirements, (list, tuple)):
             requirements = [r for r in requirements if not should_skip(r)]
@@ -90,7 +98,11 @@ def _candidate_windows_dll_dirs(root: Path) -> list[Path]:
 
 
 def _add_windows_dll_directories() -> None:
-    if sys.platform != "win32" or not hasattr(os, "add_dll_directory") or TYPE not in ("cuda", "tensorrt"):
+    if (
+        sys.platform != "win32"
+        or not hasattr(os, "add_dll_directory")
+        or TYPE not in ("cuda", "tensorrt")
+    ):
         return
 
     seen: set[str] = set()
@@ -125,7 +137,9 @@ def _add_windows_dll_directories() -> None:
                     continue
                 seen.add(normalized)
                 _STATE.dll_dirs.append(os.add_dll_directory(dll_dir_str))
-                os.environ["PATH"] = dll_dir_str + os.pathsep + os.environ.get("PATH", "")
+                os.environ["PATH"] = (
+                    dll_dir_str + os.pathsep + os.environ.get("PATH", "")
+                )
 
 
 def setup_ort(config: Config) -> bool:
@@ -147,28 +161,43 @@ def setup_ort(config: Config) -> bool:
         if _should_auto_install_windows_ml_ep(config):
             LOGGER.info("Registering WinML execution provider...")
             try:
-                registered_winml_providers = WinML().register_execution_providers_to_ort()
-                LOGGER.info("Registered WinML providers: %s", registered_winml_providers)
+                registered_winml_providers = (
+                    WinML().register_execution_providers_to_ort()
+                )
+                LOGGER.info(
+                    "Registered WinML providers: %s", registered_winml_providers
+                )
             except Exception as e:
                 LOGGER.warning("Failed to register WinML execution provider: %s", e)
         else:
             LOGGER.info("Not registering WinML execution provider.")
 
-        def init_devices_and_providers(config: Config, registered_winml_providers: list[str]):
+        def init_devices_and_providers(
+            config: Config, registered_winml_providers: list[str]
+        ):
             selected_devices = [
                 ep_device
                 for ep_device in ort.get_ep_devices()
                 if ep_device.ep_name in registered_winml_providers
-                and (config.onnx.provider is None or config.onnx.provider == ep_device.ep_name)
+                and (
+                    config.onnx.provider is None
+                    or config.onnx.provider == ep_device.ep_name
+                )
             ]
             _STATE.devices = get_devices(config, selected_devices)
-            _STATE.providers = ort.get_available_providers() if config.onnx.provider is None else [config.onnx.provider]
+            _STATE.providers = (
+                ort.get_available_providers()
+                if config.onnx.provider is None
+                else [config.onnx.provider]
+            )
 
         init_devices_and_providers(config, registered_winml_providers)
 
         _original_InferenceSession = ort.InferenceSession
 
-        def InferenceSession(path_or_bytes, sess_options=None, providers=None, **kwargs):
+        def InferenceSession(
+            path_or_bytes, sess_options=None, providers=None, **kwargs
+        ):
             if _STATE.devices:
                 LOGGER.info(
                     "Selected ORT EP devices: %s",
@@ -180,10 +209,15 @@ def setup_ort(config: Config) -> bool:
                 for device, options in _STATE.devices:
                     sess_options.add_provider_for_devices([device], options)
 
-                return _original_InferenceSession(path_or_bytes, sess_options=sess_options, **kwargs)
+                return _original_InferenceSession(
+                    path_or_bytes, sess_options=sess_options, **kwargs
+                )
 
             LOGGER.info("ORT providers configured for session: %s", _STATE.providers)
-            configured_providers = [(provider, get_provider_options(config, provider)) for provider in _STATE.providers]
+            configured_providers = [
+                (provider, get_provider_options(config, provider))
+                for provider in _STATE.providers
+            ]
             return _original_InferenceSession(
                 path_or_bytes,
                 sess_options=sess_options,
@@ -227,9 +261,13 @@ def sort_devices_by_provider(devices: list) -> list:
             if str(device.device.type).endswith("GPU"):
                 devices_by_provider["OpenVINOExecutionProvider"] = [device]
                 break
-        devices_by_provider["OpenVINOExecutionProvider"] = devices_by_provider["OpenVINOExecutionProvider"][:1]
+        devices_by_provider["OpenVINOExecutionProvider"] = devices_by_provider[
+            "OpenVINOExecutionProvider"
+        ][:1]
 
-    devices_minus_openvino = [d for d in devices_by_provider.items() if d[0] != "OpenVINOExecutionProvider"]
+    devices_minus_openvino = [
+        d for d in devices_by_provider.items() if d[0] != "OpenVINOExecutionProvider"
+    ]
     sorted_devices = []
     for provider_name, devices in devices_minus_openvino:
         sorted_devices.extend(devices)
@@ -241,7 +279,9 @@ def sort_devices_by_provider(devices: list) -> list:
 
 def get_devices(config: Config, devices: list) -> list[tuple]:
     sorted_devices = sort_devices_by_provider(devices)
-    device_options = [(device, get_device_options(config, device)) for device in sorted_devices]
+    device_options = [
+        (device, get_device_options(config, device)) for device in sorted_devices
+    ]
     return device_options
 
 
@@ -256,7 +296,11 @@ def _nvtensorrtx_options(config: Config):
     size_max = max(detector.yolo.imgsz for detector in yolo_detectors)
     streams_max = max(
         [1]
-        + [len(detector.detection.source) for detector in yolo_detectors if isinstance(detector.detection.source, list)]
+        + [
+            len(detector.detection.source)
+            for detector in yolo_detectors
+            if isinstance(detector.detection.source, list)
+        ]
     )
     streams_max = max(streams_max, 1)
     return {

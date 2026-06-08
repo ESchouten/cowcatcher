@@ -11,6 +11,10 @@ from imageio_ffmpeg import get_ffmpeg_exe
 logger = logging.getLogger(__name__)
 
 
+def even_width(value: int) -> int:
+    return max(2, value // 2 * 2)
+
+
 def generate_mp4(
     detections: list[Detection],
     width: int | None = None,
@@ -36,7 +40,8 @@ def generate_mp4(
                 frames = [
                     f
                     for d in detections
-                    if (f := get_crop(d, crop=crop_region, plot=plot, padding=padding)) is not None
+                    if (f := get_crop(d, crop=crop_region, plot=plot, padding=padding))
+                    is not None
                 ]
 
         if not frames:
@@ -57,9 +62,6 @@ def generate_mp4(
         h, w = frames[0].shape[:2]
 
         ffmpeg_exe = get_ffmpeg_exe()
-
-        def even_width(value: int) -> int:
-            return max(2, value // 2 * 2)
 
         def encode_mp4(target_width: int, target_crf: int) -> bytes | None:
             # Build the scaling filter string
@@ -195,6 +197,17 @@ def get_image(image: np.ndarray, quality: int = 100) -> bytes:
     if not success:
         raise ValueError("Failed to encode image")
     return jpg.tobytes()
+
+
+def shrink_image(image: np.ndarray, width_max: int) -> np.ndarray:
+    h, w = image.shape[:2]
+    width_max = even_width(width_max)
+    if w <= width_max:
+        return image
+
+    scale = width_max / w
+    new_h = even_width(round(h * scale))
+    return cv2.resize(image, (width_max, new_h), interpolation=cv2.INTER_AREA)
 
 
 def compress_jpg(

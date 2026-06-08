@@ -17,12 +17,12 @@ class StreamBatcher:
     missing_sources: set[str]
     condition: Condition
 
-    def __init__(self, sources: list[str], retention: int = 1):
+    def __init__(self, sources: list[str], width: int = 1080, retention: int = 1):
         logger.info("Initializing StreamBatcher with %d sources", len(sources))
         self.running = True
         self.sources = sources
         self.loaders = [None] * len(sources)
-        self.collector = FrameCollector(retention)
+        self.collector = FrameCollector(width, retention)
         self.threads = []
         self.missing_sources = set()
         self.condition = Condition()

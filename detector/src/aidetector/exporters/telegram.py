@@ -117,7 +117,12 @@ class TelegramExporter(WebhookExporter, Exporter[ChatConfig]):
             )
 
         if self.include_video:
-            video = generate_mp4(detections, width=self.video_width, crf=self.video_crf, padding=self.crop_padding)
+            video = generate_mp4(
+                detections,
+                width=self.video_width,
+                crf=self.video_crf,
+                padding=self.crop_padding,
+            )
             if video:
                 media.append(
                     {

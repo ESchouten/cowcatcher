@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 class SourceProvider:
     running: bool
     sources: list[str]
+    width: int
     retention: int
 
     def __init__(self, detection: DetectionConfig):
@@ -23,6 +24,7 @@ class SourceProvider:
             if isinstance(detection.source, str)
             else detection.source
         )
+        self.width = detection.frames_width
         self.retention = detection.frame_retention
 
     def is_stream(self) -> bool:
@@ -41,7 +43,7 @@ class SourceProvider:
         self,
     ) -> Iterator[dict[str, list[tuple[datetime, ndarray]]]]:
         logger.info("Starting stream processing for sources: %s", self.sources)
-        batcher = StreamBatcher(self.sources, self.retention)
+        batcher = StreamBatcher(self.sources, self.width, self.retention)
         logger.info(
             "StreamBatcher started with %d active sources", len(batcher.sources)
         )
