@@ -2,13 +2,13 @@ import nodeAdapter from '@sveltejs/adapter-node';
 import exeAdapter from '@jesterkit/exe-sveltekit';
 import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 
-const buildTarget = process.env.AI_DETECTOR_WEB_TARGET?.trim().toLowerCase();
+const buildTarget = process.env.AI_DETECTOR_WEB_TARGET?.trim().toLowerCase() || 'node';
 const adapter =
-	buildTarget === 'docker'
+	buildTarget === 'node'
 		? nodeAdapter()
 		: exeAdapter({
 				binaryName: 'ai-detector-web',
-				target: 'windows-x64-baseline'
+				target: buildTarget
 			});
 
 /** @type {import('@sveltejs/kit').Config} */
