@@ -69,6 +69,19 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Version
+        id: version
+        run: |
+          $version = "${{ github.ref_name }}"
+          if ($version.StartsWith("web/")) {
+            $version = $version.Substring("web/".Length)
+          } else {
+            $version = $version -replace "/", "-"
+          }
+          $artifactName = "aidetector-web-windows-$version"
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "ARTIFACT_NAME=$artifactName" >> $env:GITHUB_ENV
+
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -116,21 +129,13 @@ jobs:
           AI_DETECTOR_WEB_TARGET: windows-x64-baseline
         run: pnpm run build
 
-      - name: Version exe
-        id: version
+      - name: Name Executable
         run: |
-          $version = "${{ github.ref_name }}"
-          if ($version.StartsWith("web/")) {
-            $version = $version.Substring("web/".Length)
-          } else {
-            $version = $version -replace "/", "-"
-          }
-          Move-Item -Path "dist\ai-detector-web.exe" -Destination "dist\ai-detector-web-$version.exe" -Force
-          "version=$version" >> $env:GITHUB_OUTPUT
+          Move-Item -Path "dist\ai-detector-web.exe" -Destination "dist\${env:ARTIFACT_NAME}.exe" -Force
 
       - name: Zip exe
         run: |
-          7z a -tzip -mx=1 "dist\ai-detector-web-${{ steps.version.outputs.version }}.zip" "dist\ai-detector-web-${{ steps.version.outputs.version }}.exe"
+          7z a -tzip -mx=1 "dist\${env:ARTIFACT_NAME}.zip" "dist\${env:ARTIFACT_NAME}.exe"
           if ($LASTEXITCODE -ne 0) {
             throw "7z failed with exit code $LASTEXITCODE"
           }
@@ -138,8 +143,8 @@ jobs:
       - name: Upload zip
         uses: actions/upload-artifact@v7
         with:
-          name: ai-detector-web-${{ steps.version.outputs.version }}-zip
-          path: web/dist/ai-detector-web-${{ steps.version.outputs.version }}.zip
+          name: aidetector-web-windows-${{ steps.version.outputs.version }}-zip
+          path: web/dist/aidetector-web-windows-${{ steps.version.outputs.version }}.zip
 
       - name: Release
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/web/v')
@@ -148,7 +153,7 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: Web ${{ steps.version.outputs.version }}
           make_latest: false
-          files: web/dist/ai-detector-web-${{ steps.version.outputs.version }}.zip
+          files: web/dist/aidetector-web-windows-${{ steps.version.outputs.version }}.zip
 
   macos-exe:
     name: Build macOS exe
@@ -159,6 +164,18 @@ jobs:
         working-directory: web
     steps:
       - uses: actions/checkout@v6
+
+      - name: Version
+        id: version
+        run: |
+          version="${GITHUB_REF_NAME}"
+          if [[ "${version}" == web/* ]]; then
+            version="${version#web/}"
+          else
+            version="${version//\//-}"
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "ARTIFACT_NAME=aidetector-web-osx-${version}" >> "$GITHUB_ENV"
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -195,29 +212,20 @@ jobs:
           AI_DETECTOR_WEB_TARGET: darwin-arm64
         run: pnpm run build
 
-      - name: Version exe
-        id: version
+      - name: Name Executable
         run: |
-          version="${{ github.ref_name }}"
-          if [[ "$version" == web/* ]]; then
-            version="${version#web/}"
-          else
-            version="${version//\//-}"
-          fi
-          mv "dist/ai-detector-web" "dist/ai-detector-web-$version-macos-arm64"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          mv "dist/ai-detector-web" "dist/${ARTIFACT_NAME}"
 
       - name: Zip exe
         run: |
-          cd dist
-          chmod +x "ai-detector-web-${{ steps.version.outputs.version }}-macos-arm64"
-          ditto -c -k --keepParent "ai-detector-web-${{ steps.version.outputs.version }}-macos-arm64" "ai-detector-web-${{ steps.version.outputs.version }}-macos-arm64.zip"
+          chmod +x "dist/${ARTIFACT_NAME}"
+          ditto -c -k "dist/${ARTIFACT_NAME}" "dist/${ARTIFACT_NAME}.zip"
 
       - name: Upload zip
         uses: actions/upload-artifact@v7
         with:
-          name: ai-detector-web-${{ steps.version.outputs.version }}-macos-arm64-zip
-          path: web/dist/ai-detector-web-${{ steps.version.outputs.version }}-macos-arm64.zip
+          name: aidetector-web-osx-${{ steps.version.outputs.version }}-zip
+          path: web/dist/aidetector-web-osx-${{ steps.version.outputs.version }}.zip
 
       - name: Release
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/web/v')
@@ -226,4 +234,4 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: Web ${{ steps.version.outputs.version }}
           make_latest: false
-          files: web/dist/ai-detector-web-${{ steps.version.outputs.version }}-macos-arm64.zip
+          files: web/dist/aidetector-web-osx-${{ steps.version.outputs.version }}.zip
