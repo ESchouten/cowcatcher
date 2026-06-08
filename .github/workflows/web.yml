@@ -126,11 +126,18 @@ jobs:
           Move-Item -Path "dist\ai-detector-web.exe" -Destination "dist\ai-detector-web-$version.exe" -Force
           "version=$version" >> $env:GITHUB_OUTPUT
 
-      - name: Upload exe
+      - name: Zip exe
+        run: |
+          7z a -tzip -mx=1 "dist\ai-detector-web-${{ steps.version.outputs.version }}.zip" "dist\ai-detector-web-${{ steps.version.outputs.version }}.exe"
+          if ($LASTEXITCODE -ne 0) {
+            throw "7z failed with exit code $LASTEXITCODE"
+          }
+
+      - name: Upload zip
         uses: actions/upload-artifact@v7
         with:
-          name: ai-detector-web-${{ steps.version.outputs.version }}-exe
-          path: web/dist/ai-detector-web-${{ steps.version.outputs.version }}.exe
+          name: ai-detector-web-${{ steps.version.outputs.version }}-zip
+          path: web/dist/ai-detector-web-${{ steps.version.outputs.version }}.zip
 
       - name: Release
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/web/v')
@@ -139,4 +146,4 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: Web ${{ steps.version.outputs.version }}
           make_latest: false
-          files: web/dist/ai-detector-web-${{ steps.version.outputs.version }}.exe
+          files: web/dist/ai-detector-web-${{ steps.version.outputs.version }}.zip
