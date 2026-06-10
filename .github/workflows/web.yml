@@ -135,10 +135,12 @@ jobs:
 
       - name: Zip exe
         run: |
-          7z a -tzip -mx=1 "dist\${env:ARTIFACT_NAME}.zip" "dist\${env:ARTIFACT_NAME}.exe"
+          Push-Location dist
+          7z a -tzip -mx=1 "${env:ARTIFACT_NAME}.zip" "${env:ARTIFACT_NAME}.exe"
           if ($LASTEXITCODE -ne 0) {
             throw "7z failed with exit code $LASTEXITCODE"
           }
+          Pop-Location
 
       - name: Upload zip
         uses: actions/upload-artifact@v7
@@ -176,6 +178,7 @@ jobs:
           fi
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "ARTIFACT_NAME=aidetector-web-osx-${version}" >> "$GITHUB_ENV"
+          echo "EXECUTABLE_NAME=aidetector-web-osx-${version}.command" >> "$GITHUB_ENV"
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -214,12 +217,13 @@ jobs:
 
       - name: Name Executable
         run: |
-          mv "dist/ai-detector-web" "dist/${ARTIFACT_NAME}"
+          mv "dist/ai-detector-web" "dist/${EXECUTABLE_NAME}"
 
       - name: Zip exe
         run: |
-          chmod +x "dist/${ARTIFACT_NAME}"
-          ditto -c -k "dist/${ARTIFACT_NAME}" "dist/${ARTIFACT_NAME}.zip"
+          cd dist
+          chmod +x "${EXECUTABLE_NAME}"
+          ditto -c -k "${EXECUTABLE_NAME}" "${ARTIFACT_NAME}.zip"
 
       - name: Upload zip
         uses: actions/upload-artifact@v7
