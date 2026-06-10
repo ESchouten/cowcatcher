@@ -37,16 +37,22 @@ def generate_mp4(
                 maxX2 = max(crop.x2 for crop in crops)
                 maxY2 = max(crop.y2 for crop in crops)
                 crop_region = Crop(minX1, minY1, maxX2, maxY2)
-                frames = [
-                    f
-                    for d in detections
-                    if (f := get_crop(d, crop=crop_region, plot=plot, padding=padding))
-                    is not None
-                ]
+                last_crop: Crop | None = None
+                for detection in detections:
+                    last_crop = detection.images.crop or last_crop
+                    frame = get_crop(
+                        detection,
+                        crop=crop_region,
+                        plot=plot,
+                        padding=padding,
+                        plot_crop=last_crop,
+                    )
+                    if frame is not None:
+                        frames.append(frame)
 
         if not frames:
             frames = [
-                d.images.plot if plot and d.images.plot is not None else d.images.jpg
+                get_plot(d) if plot else d.images.jpg
                 for d in detections
             ]
 
@@ -199,6 +205,53 @@ def get_image(image: np.ndarray, quality: int = 100) -> bytes:
     return jpg.tobytes()
 
 
+def get_plot(detection: Detection, crop: Crop | None = None) -> np.ndarray:
+    crop = crop or detection.images.crop
+    if crop is None:
+        return detection.images.jpg
+
+    image = detection.images.jpg.copy()
+    h, w = image.shape[:2]
+    x1 = max(0, min(w - 1, crop.x1))
+    y1 = max(0, min(h - 1, crop.y1))
+    x2 = max(0, min(w - 1, crop.x2))
+    y2 = max(0, min(h - 1, crop.y2))
+    if x2 <= x1 or y2 <= y1:
+        return image
+
+    color = (255, 0, 0)
+    thickness = max(2, round(min(w, h) / 500))
+    cv2.rectangle(image, (x1, y1), (x2, y2), color, thickness)
+
+    if crop.label is None or crop.confidence is None:
+        return image
+
+    font_scale = max(0.5, min(w, h) / 1200)
+    font_thickness = max(1, round(thickness / 2))
+    label = f"{crop.label} {crop.confidence:.0%}"
+    (text_w, text_h), baseline = cv2.getTextSize(
+        label,
+        cv2.FONT_HERSHEY_SIMPLEX,
+        font_scale,
+        font_thickness,
+    )
+    label_y1 = max(0, y1 - text_h - baseline - thickness)
+    label_y2 = label_y1 + text_h + baseline + thickness
+    label_x2 = min(w - 1, x1 + text_w + thickness * 2)
+    cv2.rectangle(image, (x1, label_y1), (label_x2, label_y2), color, -1)
+    cv2.putText(
+        image,
+        label,
+        (x1 + thickness, label_y2 - baseline - max(1, thickness // 2)),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        font_scale,
+        (255, 255, 255),
+        font_thickness,
+        cv2.LINE_AA,
+    )
+    return image
+
+
 def shrink_image(image: np.ndarray, width_max: int) -> np.ndarray:
     h, w = image.shape[:2]
     width_max = even_width(width_max)
@@ -244,6 +297,7 @@ def get_crop(
     aspect_ratio: float | None = 16 / 9,
     padding: float = 0.1,
     plot: bool = True,
+    plot_crop: Crop | None = None,
 ) -> np.ndarray | None:
     def centered_range(center: float, size: int, limit: int) -> tuple[int, int]:
         size = max(1, min(size, limit))
@@ -262,11 +316,7 @@ def get_crop(
     crop = crop or detection.images.crop
     if crop is None:
         return None
-    img = (
-        detection.images.plot
-        if plot and detection.images.plot is not None
-        else detection.images.jpg
-    )
+    img = get_plot(detection, plot_crop) if plot else detection.images.jpg
     h, w = img.shape[:2]
     box_w, box_h = (
         max(1, crop.x2 - crop.x1),

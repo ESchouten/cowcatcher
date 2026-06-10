@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Literal
 
 from aidetector.exporters.exporter import Exporter
-from aidetector.media.video import generate_mp4, get_image
+from aidetector.media.video import generate_mp4, get_image, get_plot
 from aidetector.utils.config import (
     Confidence,
     Config,
@@ -84,13 +84,7 @@ class DiskExporter(Exporter[DiskConfig]):
         if best_detection:
             image_path = os.path.join(timestamped_directory, "best.jpg")
             with open(image_path, "wb") as f:
-                f.write(
-                    get_image(
-                        best_detection.images.plot
-                        if best_detection.images.plot is not None
-                        else best_detection.images.jpg
-                    )
-                )
+                f.write(get_image(get_plot(best_detection)))
             clean_image_path = os.path.join(timestamped_directory, "clean.jpg")
             with open(clean_image_path, "wb") as f:
                 f.write(get_image(best_detection.images.jpg))

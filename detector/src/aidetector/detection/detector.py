@@ -188,7 +188,7 @@ class Detector:
         for source, frames in batch.items():
             self._process(
                 source,
-                [Detection(frames[-1][0], ImageSet(frames[-1][1], None, None), {})],
+                [Detection(frames[-1][0], ImageSet(frames[-1][1], None), {})],
             )
 
     def _handle_yolo_result(
@@ -200,7 +200,9 @@ class Detector:
         confidences: dict[str, float] = {}
         for box in result.boxes:
             class_id = int(box.cls.item())
-            confidences[self.yolo_class_confidences[class_id][0]] = box.conf.item()
+            class_name = self.yolo_class_confidences[class_id][0]
+            confidence = box.conf.item()
+            confidences[class_name] = max(confidences.get(class_name, 0), confidence)
 
         if not confidence_matches(confidences, self.yolo_config.confidence):
             self.logger.debug("Confidence does not match")
@@ -217,7 +219,7 @@ class Detector:
                     "Including trailing frames: %f seconds", time_since_latest_detection
                 )
                 detections = [
-                    Detection(frame[0], ImageSet(frame[1], None, None), {})
+                    Detection(frame[0], ImageSet(frame[1], None), {})
                     for frame in frames
                 ]
                 self._process(source, detections)
@@ -225,20 +227,29 @@ class Detector:
 
         best_box = max(result.boxes, key=lambda x: x.conf.item())
         x1, y1, x2, y2 = map(int, best_box.xyxy[0])
+        class_id = int(best_box.cls.item())
+        label = self.yolo_class_confidences[class_id][0]
+        confidence = best_box.conf.item()
 
         detections = []
         for frame_data in frames[:-1]:
             detections.append(
                 Detection(
                     frame_data[0],
-                    ImageSet(frame_data[1], None, Crop(x1, y1, x2, y2)),
+                    ImageSet(
+                        frame_data[1],
+                        Crop(x1, y1, x2, y2, label=label, confidence=confidence),
+                    ),
                     {},
                 ),
             )
         detections.append(
             Detection(
                 frames[-1][0],
-                ImageSet(result.orig_img, result.plot(), Crop(x1, y1, x2, y2)),
+                ImageSet(
+                    frames[-1][1],
+                    Crop(x1, y1, x2, y2, label=label, confidence=confidence),
+                ),
                 confidences,
             ),
         )
