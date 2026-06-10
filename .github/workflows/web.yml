@@ -216,13 +216,13 @@ jobs:
 
       - name: Name Executable
         run: |
-          mv "dist/ai-detector-web" "dist/${ARTIFACT_NAME}"
+          mv "dist/ai-detector-web" "dist/${ARTIFACT_NAME}.command"
 
       - name: Zip Executable
         run: |
           cd dist
-          chmod +x "${ARTIFACT_NAME}"
-          ditto -c -k "${ARTIFACT_NAME}" "${ARTIFACT_NAME}.zip"
+          chmod +x "${ARTIFACT_NAME}.command"
+          ditto -c -k "${ARTIFACT_NAME}.command" "${ARTIFACT_NAME}.zip"
 
       - name: Upload zip
         uses: actions/upload-artifact@v7

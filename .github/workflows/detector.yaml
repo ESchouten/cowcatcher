@@ -324,13 +324,13 @@ jobs:
         run: |
           echo 'TYPE = "default"' > ${{ env.VERSION_FILE }}
           echo 'REF_NAME = "${{ github.ref_name }}"' >> ${{ env.VERSION_FILE }}
-          uv run --extra default pyinstaller src/aidetector/__init__.py --name "$ARTIFACT_NAME" ${{ env.PYINSTALLER_ARGS }}
+          uv run --extra default pyinstaller src/aidetector/__init__.py --name "${ARTIFACT_NAME}.command" ${{ env.PYINSTALLER_ARGS }}
 
       - name: Zip Executable
         run: |
           cd dist
-          chmod +x "${ARTIFACT_NAME}"
-          ditto -c -k "${ARTIFACT_NAME}" "${ARTIFACT_NAME}.zip"
+          chmod +x "${ARTIFACT_NAME}.command"
+          ditto -c -k "${ARTIFACT_NAME}.command" "${ARTIFACT_NAME}.zip"
 
       - name: Upload zip
         uses: actions/upload-artifact@v7
