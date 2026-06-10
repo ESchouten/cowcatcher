@@ -227,19 +227,22 @@ class Detector:
 
         best_box = max(result.boxes, key=lambda x: x.conf.item())
         x1, y1, x2, y2 = map(int, best_box.xyxy[0])
+        class_id = int(best_box.cls.item())
+        label = self.yolo_class_confidences[class_id][0]
+        confidence = best_box.conf.item()
 
         detections = []
         for frame_data in frames[:-1]:
             detections.append(
                 Detection(
                     frame_data[0],
-                    ImageSet(frame_data[1], Crop(x1, y1, x2, y2)),
+                    ImageSet(
+                        frame_data[1],
+                        Crop(x1, y1, x2, y2, label=label, confidence=confidence),
+                    ),
                     {},
                 ),
             )
-        class_id = int(best_box.cls.item())
-        label = self.yolo_class_confidences[class_id][0]
-        confidence = best_box.conf.item()
         detections.append(
             Detection(
                 frames[-1][0],
