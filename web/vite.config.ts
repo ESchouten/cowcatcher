@@ -3,7 +3,7 @@ import devtoolsJson from 'vite-plugin-devtools-json';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 
-const buildTarget = process.env.AI_DETECTOR_WEB_TARGET?.trim().toLowerCase() ?? '';
+const buildTarget = process.env.AI_DETECTOR_WEB_TARGET?.trim().toLowerCase() || 'node';
 
 export default defineConfig({
 	define: {

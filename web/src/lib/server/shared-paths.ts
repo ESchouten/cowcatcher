@@ -7,7 +7,7 @@ declare const __AI_DETECTOR_WEB_TARGET__: string;
 const buildTarget = __AI_DETECTOR_WEB_TARGET__;
 
 function getRuntimeDataDirectory(): string {
-	if (dev || buildTarget === 'docker') {
+	if (dev || buildTarget === 'node') {
 		return process.cwd();
 	}
 

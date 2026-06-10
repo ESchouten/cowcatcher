@@ -276,10 +276,12 @@ jobs:
       - name: Zip Release Asset
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/detector/v') && env.PUBLISH_RELEASE_ASSET == 'true'
         run: |
-          7z a -tzip -mx=1 "dist\${env:ARTIFACT_NAME}.zip" "dist\${env:ARTIFACT_NAME}.exe"
+          Push-Location dist
+          7z a -tzip -mx=1 "${env:ARTIFACT_NAME}.zip" "${env:ARTIFACT_NAME}.exe"
           if ($LASTEXITCODE -ne 0) {
             throw "7z failed with exit code $LASTEXITCODE"
           }
+          Pop-Location
 
       - name: Release
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/detector/v') && env.PUBLISH_RELEASE_ASSET == 'true'
@@ -322,18 +324,19 @@ jobs:
         run: |
           echo 'TYPE = "default"' > ${{ env.VERSION_FILE }}
           echo 'REF_NAME = "${{ github.ref_name }}"' >> ${{ env.VERSION_FILE }}
-          uv run --extra default pyinstaller src/aidetector/__init__.py --name "$ARTIFACT_NAME" ${{ env.PYINSTALLER_ARGS }}
+          uv run --extra default pyinstaller src/aidetector/__init__.py --name "${ARTIFACT_NAME}.command" ${{ env.PYINSTALLER_ARGS }}
 
-      - name: Upload Executable
+      - name: Zip Executable
+        run: |
+          cd dist
+          chmod +x "${ARTIFACT_NAME}.command"
+          ditto -c -k "${ARTIFACT_NAME}.command" "${ARTIFACT_NAME}.zip"
+
+      - name: Upload zip
         uses: actions/upload-artifact@v7
         with:
           name: aidetector-osx-${{ steps.version.outputs.version }}-exe
-          path: detector/dist/aidetector-osx-${{ steps.version.outputs.version }}
-
-      - name: Zip Release Asset
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/detector/v')
-        run: |
-          ditto -c -k "dist/${ARTIFACT_NAME}" "dist/${ARTIFACT_NAME}.zip"
+          path: detector/dist/aidetector-osx-${{ steps.version.outputs.version }}.zip
 
       - name: Release
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/detector/v')

@@ -15,8 +15,6 @@ RUN pnpm install --frozen-lockfile
 
 COPY . .
 
-ENV AI_DETECTOR_WEB_TARGET=docker
-
 RUN pnpm exec svelte-kit sync && pnpm build && pnpm prune --prod --ignore-scripts
 
 FROM base AS runtime
