@@ -46,7 +46,7 @@ def generate_mp4(
 
         if not frames:
             frames = [
-                d.images.plot if plot and d.images.plot is not None else d.images.jpg
+                get_plot(d) if plot else d.images.jpg
                 for d in detections
             ]
 
@@ -199,6 +199,51 @@ def get_image(image: np.ndarray, quality: int = 100) -> bytes:
     return jpg.tobytes()
 
 
+def get_plot(detection: Detection) -> np.ndarray:
+    crop = detection.images.crop
+    if crop is None or crop.label is None or crop.confidence is None:
+        return detection.images.jpg
+
+    image = detection.images.jpg.copy()
+    h, w = image.shape[:2]
+    x1 = max(0, min(w - 1, crop.x1))
+    y1 = max(0, min(h - 1, crop.y1))
+    x2 = max(0, min(w - 1, crop.x2))
+    y2 = max(0, min(h - 1, crop.y2))
+    if x2 <= x1 or y2 <= y1:
+        return image
+
+    color = (0, 255, 0)
+    thickness = max(2, round(min(w, h) / 500))
+    font_scale = max(0.5, min(w, h) / 1200)
+    font_thickness = max(1, round(thickness / 2))
+    label = f"{crop.label} {crop.confidence:.0%}"
+
+    cv2.rectangle(image, (x1, y1), (x2, y2), color, thickness)
+
+    (text_w, text_h), baseline = cv2.getTextSize(
+        label,
+        cv2.FONT_HERSHEY_SIMPLEX,
+        font_scale,
+        font_thickness,
+    )
+    label_y1 = max(0, y1 - text_h - baseline - thickness)
+    label_y2 = label_y1 + text_h + baseline + thickness
+    label_x2 = min(w - 1, x1 + text_w + thickness * 2)
+    cv2.rectangle(image, (x1, label_y1), (label_x2, label_y2), color, -1)
+    cv2.putText(
+        image,
+        label,
+        (x1 + thickness, label_y2 - baseline - max(1, thickness // 2)),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        font_scale,
+        (0, 0, 0),
+        font_thickness,
+        cv2.LINE_AA,
+    )
+    return image
+
+
 def shrink_image(image: np.ndarray, width_max: int) -> np.ndarray:
     h, w = image.shape[:2]
     width_max = even_width(width_max)
@@ -262,11 +307,7 @@ def get_crop(
     crop = crop or detection.images.crop
     if crop is None:
         return None
-    img = (
-        detection.images.plot
-        if plot and detection.images.plot is not None
-        else detection.images.jpg
-    )
+    img = get_plot(detection) if plot else detection.images.jpg
     h, w = img.shape[:2]
     box_w, box_h = (
         max(1, crop.x2 - crop.x1),

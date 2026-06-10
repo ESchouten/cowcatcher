@@ -4,7 +4,7 @@ from typing import Literal
 
 import requests
 from aidetector.exporters.exporter import Exporter
-from aidetector.media.video import compress_jpg, generate_mp4, get_crop, get_image
+from aidetector.media.video import compress_jpg, generate_mp4, get_crop, get_image, get_plot
 from aidetector.utils.config import (
     Confidence,
     Config,
@@ -110,11 +110,7 @@ class WebhookExporter(Exporter[WebhookConfig]):
                 "image/jpeg",
             )
         if self.include_plot:
-            image = (
-                detection.images.plot
-                if detection.images.plot is not None
-                else detection.images.jpg
-            )
+            image = get_plot(detection)
             photo = get_image(image)
             if self.data_max is not None:
                 compressed = compress_jpg(image, self.data_max)
@@ -175,11 +171,7 @@ class WebhookExporter(Exporter[WebhookConfig]):
                         jpg = compressed
                 data["image"] = base64.b64encode(jpg).decode("utf-8")
             if self.include_plot:
-                img = (
-                    best_detection.images.plot
-                    if best_detection.images.plot is not None
-                    else best_detection.images.jpg
-                )
+                img = get_plot(best_detection)
                 jpg = get_image(img)
                 if self.data_max is not None:
                     compressed = compress_jpg(img, self.data_max)

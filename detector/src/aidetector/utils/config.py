@@ -34,12 +34,13 @@ class Crop:
     y1: int
     x2: int
     y2: int
+    label: str | None = None
+    confidence: float | None = None
 
 
 @dataclass(config=ConfigDict(arbitrary_types_allowed=True))
 class ImageSet:
     jpg: ndarray
-    plot: ndarray | None
     crop: Crop | None
 
 
