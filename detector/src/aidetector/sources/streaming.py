@@ -17,7 +17,7 @@ class StreamBatcher:
     missing_sources: set[str]
     condition: Condition
 
-    def __init__(self, sources: list[str], width: int = 1080, retention: int = 1):
+    def __init__(self, sources: list[str], width: int = 1280, retention: int = 1):
         logger.info("Initializing StreamBatcher with %d sources", len(sources))
         self.running = True
         self.sources = sources
