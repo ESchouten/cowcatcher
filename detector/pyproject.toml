@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "imageio-ffmpeg>=0.6.0",
+    "lap>=0.5.12",
     "litellm>=1.81.6",
     "opencv-stubs>=0.1.1",
     "pydantic>=2.12.5",

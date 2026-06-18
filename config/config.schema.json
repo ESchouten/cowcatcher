@@ -115,7 +115,7 @@
           "type": "integer"
         },
         "frames_width": {
-          "default": 1080,
+          "default": 1280,
           "title": "Frames Width",
           "type": "integer"
         }
@@ -214,6 +214,11 @@
           "default": false,
           "title": "Multiple",
           "type": "boolean"
+        },
+        "samples": {
+          "default": 1,
+          "title": "Samples",
+          "type": "integer"
         }
       },
       "required": [

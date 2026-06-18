@@ -99,6 +99,7 @@ class DetectorIdentityConfig:
     provider: str
     labels: list[str] | None = None
     multiple: bool = False
+    samples: int = 1
 
 
 @dataclass(kw_only=True)

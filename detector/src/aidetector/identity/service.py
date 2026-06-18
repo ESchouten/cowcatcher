@@ -8,7 +8,7 @@ IdentityLookupResult = IdentityResult | list[IdentityResult] | None
 class IdentityProvider(Protocol):
     def identify(
         self,
-        detection: Detection,
+        detection: Detection | list[Detection],
         source: str,
         multiple: bool = False,
     ) -> IdentityLookupResult:
@@ -44,7 +44,7 @@ class IdentityService:
     def identify(
         self,
         provider: str,
-        detection: Detection,
+        detection: Detection | list[Detection],
         source: str,
         multiple: bool = False,
     ) -> IdentityLookupResult:

@@ -386,7 +386,7 @@ class Detector:
                 validated = self.validator.validate(best_detection, detections)
                 if validated is not False:
                     try:
-                        self._identify(source, best_detection)
+                        self._identify(source, best_detection, detections)
                     except Exception:
                         self.logger.exception("Identity lookup failed")
 
@@ -407,7 +407,12 @@ class Detector:
             self.export_executor.submit(export_task)
         self.detections[source] = []
 
-    def _identify(self, source: str, detection: Detection) -> None:
+    def _identify(
+        self,
+        source: str,
+        detection: Detection,
+        detections: list[Detection] | None = None,
+    ) -> None:
         if not self.identity_service or not self.identity_config:
             return
 
@@ -424,53 +429,59 @@ class Detector:
             self.logger.info("Skipping identity: no crops available")
             return
 
+        samples = self._identity_sample_detections(detections, detection)
         self.logger.info(
-            "Looking up identity with provider %s for %s detector crop(s), multiple=%s",
+            "Looking up identity with provider %s for %s detector crop(s), %s sample frame(s), multiple=%s",
             self.identity_config.provider,
             len(crops),
+            len(samples),
             self.identity_config.multiple,
         )
         identities = []
-        try:
-            for crop in crops:
-                if not self._identity_matches_label(detection, crop):
-                    self.logger.info(
-                        "Skipping identity detector crop: label %s not in %s",
-                        crop.label,
-                        self.identity_config.labels,
-                    )
-                    continue
+        for crop in crops:
+            if not self._identity_matches_label(detection, crop):
+                self.logger.info(
+                    "Skipping identity detector crop: label %s not in %s",
+                    crop.label,
+                    self.identity_config.labels,
+                )
+                continue
 
-                detection.images.crop = crop
-                identity = self.identity_service.identify(
-                    self.identity_config.provider,
-                    detection,
-                    source,
-                    multiple=self.identity_config.multiple,
+            sample_detections = [
+                Detection(
+                    sample.date,
+                    ImageSet(sample.images.jpg, crop, sample.images.crops),
+                    sample.confidence,
                 )
-                crop_identities = (
-                    identity
-                    if isinstance(identity, list)
-                    else ([identity] if identity is not None else [])
+                for sample in samples
+            ]
+            identity = self.identity_service.identify(
+                self.identity_config.provider,
+                sample_detections[0] if len(sample_detections) == 1 else sample_detections,
+                source,
+                multiple=self.identity_config.multiple,
+            )
+            crop_identities = (
+                identity
+                if isinstance(identity, list)
+                else ([identity] if identity is not None else [])
+            )
+            if not crop_identities:
+                self.logger.info(
+                    "Identity provider returned no result for detector crop label %s",
+                    crop.label,
                 )
-                if not crop_identities:
-                    self.logger.info(
-                        "Identity provider returned no result for detector crop label %s",
-                        crop.label,
-                    )
-                    continue
-                for item in crop_identities:
-                    self.logger.info(
-                        "Identity result: status=%s id=%s similarity=%s",
-                        item.status,
-                        item.identity_id,
-                        item.similarity,
-                    )
-                    identities.append(item)
-                if crop == original_crop:
-                    detection.identity = crop_identities[0]
-        finally:
-            detection.images.crop = original_crop
+                continue
+            for item in crop_identities:
+                self.logger.info(
+                    "Identity result: status=%s id=%s similarity=%s",
+                    item.status,
+                    item.identity_id,
+                    item.similarity,
+                )
+                identities.append(item)
+            if crop == original_crop:
+                detection.identity = crop_identities[0]
 
         detection.identities = identities
         if detection.identity is None and identities:
@@ -482,9 +493,37 @@ class Detector:
 
         labels = set(self.identity_config.labels)
         crop = crop or detection.images.crop
-        if crop and crop.label in labels:
-            return True
+        if crop and crop.label is not None:
+            return crop.label in labels
         return any(label in detection.confidence for label in labels)
+
+    def _identity_sample_detections(
+        self,
+        detections: list[Detection] | None,
+        best_detection: Detection,
+    ) -> list[Detection]:
+        if not self.identity_config or self.identity_config.samples <= 1 or not detections:
+            return [best_detection]
+
+        samples = [detection for detection in detections if detection.images.jpg is not None]
+        if not samples:
+            return [best_detection]
+
+        limit = max(1, self.identity_config.samples)
+        if len(samples) <= limit:
+            selected = samples
+        else:
+            indexes = {
+                round(index * (len(samples) - 1) / (limit - 1))
+                for index in range(limit)
+            }
+            selected = [samples[index] for index in sorted(indexes)]
+
+        if not any(sample is best_detection for sample in selected):
+            selected[-1] = best_detection
+
+        selected_ids = {id(sample) for sample in selected}
+        return [sample for sample in samples if id(sample) in selected_ids]
 
     def _has_min_detections(self, source: str) -> bool:
         detections_with_confidence = [

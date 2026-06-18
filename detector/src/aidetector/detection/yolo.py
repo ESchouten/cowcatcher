@@ -9,6 +9,7 @@ from aidetector.utils.config import Crop
 class YoloObject:
     crop: Crop
     mask: np.ndarray | None = None
+    track_id: int | None = None
 
     @property
     def area(self) -> int:
@@ -60,6 +61,7 @@ def objects_from_result(
                     confidence=confidence,
                 ),
                 mask=mask,
+                track_id=_track_id_from_result(result, index),
             )
         )
 
@@ -103,6 +105,17 @@ def _mask_from_result(result, index: int, image_shape: tuple[int, int]) -> np.nd
         (image_shape[1], image_shape[0]),
         interpolation=cv2.INTER_NEAREST,
     ).astype(bool)
+
+
+def _track_id_from_result(result, index: int) -> int | None:
+    track_ids = getattr(result.boxes, "id", None)
+    if track_ids is None:
+        return None
+
+    try:
+        return int(track_ids[index].item())
+    except AttributeError:
+        return int(track_ids[index])
 
 
 def _class_name(names, class_id: int) -> str:
