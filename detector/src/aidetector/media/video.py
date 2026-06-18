@@ -206,11 +206,19 @@ def get_image(image: np.ndarray, quality: int = 100) -> bytes:
 
 
 def get_plot(detection: Detection, crop: Crop | None = None) -> np.ndarray:
-    crop = crop or detection.images.crop
-    if crop is None:
+    crops = [crop] if crop is not None else detection.images.crops
+    if not crops and detection.images.crop is not None:
+        crops = [detection.images.crop]
+    if not crops:
         return detection.images.jpg
 
     image = detection.images.jpg.copy()
+    for item in crops:
+        image = draw_crop(image, item)
+    return image
+
+
+def draw_crop(image: np.ndarray, crop: Crop) -> np.ndarray:
     h, w = image.shape[:2]
     x1 = max(0, min(w - 1, crop.x1))
     y1 = max(0, min(h - 1, crop.y1))

@@ -1,5 +1,6 @@
 import base64
 import logging
+from dataclasses import asdict
 from typing import Literal
 
 import requests
@@ -162,6 +163,12 @@ class WebhookExporter(Exporter[WebhookConfig]):
             "duration": (detections[-1].date - detections[0].date).total_seconds(),
             "validated": validated,
         }
+        if best_detection.identity is not None:
+            data["identity"] = asdict(best_detection.identity)
+        if best_detection.identities:
+            data["identities"] = [
+                asdict(identity) for identity in best_detection.identities
+            ]
         if self.data_type == "base64":
             if self.include_image:
                 jpg = get_image(best_detection.images.jpg)
@@ -222,6 +229,8 @@ class WebhookExporter(Exporter[WebhookConfig]):
                 best_detection.date,
                 best_detection.images,
                 best_detection.confidence,
+                best_detection.identity,
+                best_detection.identities,
             )
 
             payload = self.get_payload(new_detection, detections, validated)

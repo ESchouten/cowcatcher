@@ -12,6 +12,7 @@ dependencies = [
     "tiktoken[openai]>=0.12.0",
     "ultralytics>=8.4.10",
     "typing-extensions>=4.15.0",
+    "wildlife-tools @ git+https://github.com/WildlifeDatasets/wildlife-tools.git@1.0.1",
 ]
 
 [project.optional-dependencies]

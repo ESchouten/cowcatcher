@@ -132,8 +132,27 @@ class TelegramExporter(WebhookExporter, Exporter[ChatConfig]):
                 )
 
         thumbs = "\n👍 / 👎" if validated is None else ""
+        identity = best_detection.identity
+        identity_line = ""
+        if len(best_detection.identities) > 1:
+            identity_line = "\nIdentities: " + ", ".join(
+                _format_identity(identity) for identity in best_detection.identities
+            )
+        elif identity is not None:
+            similarity = (
+                f" ({int(identity.similarity * 100)}%)"
+                if identity.similarity is not None
+                else ""
+            )
+            if identity.status == "created" and identity.identity_id is not None:
+                identity_line = f"\nNew identity: {identity.identity_id}{similarity}"
+            elif identity.status == "matched" and identity.identity_id is not None:
+                identity_name = identity.name or identity.identity_id
+                identity_line = f"\nIdentity: {identity_name}{similarity}"
+            else:
+                identity_line = "\nIdentity: unknown"
         media[0]["caption"] = (
-            f"{int(max_confidence(best_detection.confidence) * 100)}%{' ✅' if validated else ' ❌' if validated is False else ''}\n{round((detections[-1].date - detections[0].date).total_seconds())} second(s){thumbs}"
+            f"{int(max_confidence(best_detection.confidence) * 100)}%{' ✅' if validated else ' ❌' if validated is False else ''}\n{round((detections[-1].date - detections[0].date).total_seconds())} second(s){identity_line}{thumbs}"
         )
 
         return {
@@ -141,3 +160,12 @@ class TelegramExporter(WebhookExporter, Exporter[ChatConfig]):
             "disable_notification": self.alert_count % self.alert_every != 0,
             "media": json.dumps(media),
         }
+
+
+def _format_identity(identity) -> str:
+    identity_id = identity.name or identity.identity_id
+    if identity_id is None:
+        return "unknown"
+    if identity.similarity is None:
+        return identity_id
+    return f"{identity_id} ({int(identity.similarity * 100)}%)"

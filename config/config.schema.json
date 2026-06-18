@@ -110,8 +110,13 @@
           "type": "number"
         },
         "frame_retention": {
-          "default": 30,
+          "default": 15,
           "title": "Frame Retention",
+          "type": "integer"
+        },
+        "frames_width": {
+          "default": 1080,
+          "title": "Frames Width",
           "type": "integer"
         }
       },
@@ -155,6 +160,17 @@
           "default": null,
           "title": "Vlm"
         },
+        "identity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DetectorIdentityConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "exporters": {
           "anyOf": [
             {
@@ -171,6 +187,39 @@
         "detection"
       ],
       "title": "DetectorConfig",
+      "type": "object"
+    },
+    "DetectorIdentityConfig": {
+      "properties": {
+        "provider": {
+          "title": "Provider",
+          "type": "string"
+        },
+        "labels": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Labels"
+        },
+        "multiple": {
+          "default": false,
+          "title": "Multiple",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "provider"
+      ],
+      "title": "DetectorIdentityConfig",
       "type": "object"
     },
     "DiskConfig": {
@@ -350,6 +399,115 @@
         "url"
       ],
       "title": "HealthcheckConfig",
+      "type": "object"
+    },
+    "IdentityConfig": {
+      "properties": {
+        "providers": {
+          "items": {
+            "$ref": "#/$defs/IdentityProviderConfig"
+          },
+          "title": "Providers",
+          "type": "array"
+        }
+      },
+      "title": "IdentityConfig",
+      "type": "object"
+    },
+    "IdentityProviderConfig": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "wildlife_tools",
+          "default": "wildlife_tools",
+          "title": "Type",
+          "type": "string"
+        },
+        "database": {
+          "format": "path",
+          "title": "Database",
+          "type": "string"
+        },
+        "model": {
+          "default": "hf-hub:BVRA/MegaDescriptor-T-224",
+          "title": "Model",
+          "type": "string"
+        },
+        "segment_model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Segment Model"
+        },
+        "segment_labels": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Segment Labels",
+          "type": "array"
+        },
+        "segment_confidence": {
+          "default": 0.5,
+          "title": "Segment Confidence",
+          "type": "number"
+        },
+        "segment_background": {
+          "default": "gray",
+          "enum": [
+            "gray",
+            "black"
+          ],
+          "title": "Segment Background",
+          "type": "string"
+        },
+        "debug_directory": {
+          "anyOf": [
+            {
+              "format": "path",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Debug Directory"
+        },
+        "match_threshold": {
+          "default": 0.75,
+          "title": "Match Threshold",
+          "type": "number"
+        },
+        "candidate_threshold": {
+          "default": 0.75,
+          "title": "Candidate Threshold",
+          "type": "number"
+        },
+        "create_after": {
+          "default": 3,
+          "title": "Create After",
+          "type": "integer"
+        },
+        "crop_padding": {
+          "default": 0.1,
+          "title": "Crop Padding",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "database"
+      ],
+      "title": "IdentityProviderConfig",
       "type": "object"
     },
     "OnnxConfig": {
@@ -645,18 +803,16 @@
     "onnx": {
       "$ref": "#/$defs/OnnxConfig"
     },
-    "app": {
+    "identity": {
       "anyOf": [
         {
-          "additionalProperties": true,
-          "type": "object"
+          "$ref": "#/$defs/IdentityConfig"
         },
         {
           "type": "null"
         }
       ],
-      "default": null,
-      "title": "App"
+      "default": null
     },
     "health": {
       "anyOf": [

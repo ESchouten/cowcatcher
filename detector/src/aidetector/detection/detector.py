@@ -11,13 +11,15 @@ from aidetector.exporters.disk import DiskExporter
 from aidetector.exporters.exporter import Exporter
 from aidetector.exporters.telegram import TelegramExporter
 from aidetector.exporters.webhook import WebhookExporter
+from aidetector.detection.yolo import confidences_from_objects, objects_from_result
+from aidetector.identity.service import IdentityService
 from aidetector.sources.source import SourceProvider
 from aidetector.utils.config import (
     ChatConfig,
     Config,
-    Crop,
     Detection,
     DetectionConfig,
+    DetectorIdentityConfig,
     DetectorConfig,
     DiskConfig,
     ImageSet,
@@ -47,6 +49,8 @@ class Detector:
     source_provider: SourceProvider
     validator: Validator
     exporters: list[Exporter]
+    identity_service: IdentityService | None
+    identity_config: DetectorIdentityConfig | None
     running: bool
     export_executor: ThreadPoolExecutor
     last_frame_time: datetime
@@ -59,6 +63,8 @@ class Detector:
         validator: Validator,
         exporters: list[Exporter],
         onnx_config: OnnxConfig,
+        identity_service: IdentityService | None = None,
+        identity_config: DetectorIdentityConfig | None = None,
     ):
         self.detections = defaultdict(list)
         self.detection = detection
@@ -95,13 +101,20 @@ class Detector:
 
         self.validator = validator
         self.exporters = exporters
+        self.identity_service = identity_service
+        self.identity_config = identity_config
         self.running = True
         self.export_executor = ThreadPoolExecutor()
         self.last_frame_time = datetime.min
         self.last_detection_time = {}
 
     @classmethod
-    def from_config(cls, config: Config, detector: DetectorConfig) -> list[Self]:
+    def from_config(
+        cls,
+        config: Config,
+        detector: DetectorConfig,
+        identity_service: IdentityService | None = None,
+    ) -> list[Self]:
         exporters: list[Exporter] = []
         if detector.exporters is not None:
             config_exporter_map = {
@@ -127,7 +140,15 @@ class Detector:
         )
 
         return [
-            cls(detector.detection, detector.yolo, validator, exporters, config.onnx)
+            cls(
+                detector.detection,
+                detector.yolo,
+                validator,
+                exporters,
+                config.onnx,
+                identity_service,
+                detector.identity,
+            )
         ]
 
     def _generate_frames(self):
@@ -197,12 +218,12 @@ class Detector:
         if self.yolo_config is None:
             return
 
-        confidences: dict[str, float] = {}
-        for box in result.boxes:
-            class_id = int(box.cls.item())
-            class_name = self.yolo_class_confidences[class_id][0]
-            confidence = box.conf.item()
-            confidences[class_name] = max(confidences.get(class_name, 0), confidence)
+        objects = objects_from_result(
+            result,
+            result.orig_shape,
+            class_confidences=self.yolo_class_confidences,
+        )
+        confidences = confidences_from_objects(objects)
 
         if not confidence_matches(confidences, self.yolo_config.confidence):
             self.logger.debug("Confidence does not match")
@@ -225,11 +246,8 @@ class Detector:
                 self._process(source, detections)
             return
 
-        best_box = max(result.boxes, key=lambda x: x.conf.item())
-        x1, y1, x2, y2 = map(int, best_box.xyxy[0])
-        class_id = int(best_box.cls.item())
-        label = self.yolo_class_confidences[class_id][0]
-        confidence = best_box.conf.item()
+        crops = [obj.crop for obj in objects]
+        best_crop = max(crops, key=lambda crop: crop.confidence or 0)
 
         detections = []
         for frame_data in frames[:-1]:
@@ -238,7 +256,8 @@ class Detector:
                     frame_data[0],
                     ImageSet(
                         frame_data[1],
-                        Crop(x1, y1, x2, y2, label=label, confidence=confidence),
+                        best_crop,
+                        crops,
                     ),
                     {},
                 ),
@@ -248,7 +267,8 @@ class Detector:
                 frames[-1][0],
                 ImageSet(
                     frames[-1][1],
-                    Crop(x1, y1, x2, y2, label=label, confidence=confidence),
+                    best_crop,
+                    crops,
                 ),
                 confidences,
             ),
@@ -364,6 +384,11 @@ class Detector:
 
             def export_task():
                 validated = self.validator.validate(best_detection, detections)
+                if validated is not False:
+                    try:
+                        self._identify(source, best_detection)
+                    except Exception:
+                        self.logger.exception("Identity lookup failed")
 
                 if validated is not False and self.yolo_config:
                     last_detection_time = self.last_detection_time.get(source, {})
@@ -381,6 +406,85 @@ class Detector:
 
             self.export_executor.submit(export_task)
         self.detections[source] = []
+
+    def _identify(self, source: str, detection: Detection) -> None:
+        if not self.identity_service or not self.identity_config:
+            return
+
+        original_crop = detection.images.crop
+        available_crops = detection.images.crops or (
+            [original_crop] if original_crop else []
+        )
+        crops = (
+            available_crops
+            if self.identity_config.multiple
+            else ([original_crop] if original_crop else available_crops[:1])
+        )
+        if not crops:
+            self.logger.info("Skipping identity: no crops available")
+            return
+
+        self.logger.info(
+            "Looking up identity with provider %s for %s detector crop(s), multiple=%s",
+            self.identity_config.provider,
+            len(crops),
+            self.identity_config.multiple,
+        )
+        identities = []
+        try:
+            for crop in crops:
+                if not self._identity_matches_label(detection, crop):
+                    self.logger.info(
+                        "Skipping identity detector crop: label %s not in %s",
+                        crop.label,
+                        self.identity_config.labels,
+                    )
+                    continue
+
+                detection.images.crop = crop
+                identity = self.identity_service.identify(
+                    self.identity_config.provider,
+                    detection,
+                    source,
+                    multiple=self.identity_config.multiple,
+                )
+                crop_identities = (
+                    identity
+                    if isinstance(identity, list)
+                    else ([identity] if identity is not None else [])
+                )
+                if not crop_identities:
+                    self.logger.info(
+                        "Identity provider returned no result for detector crop label %s",
+                        crop.label,
+                    )
+                    continue
+                for item in crop_identities:
+                    self.logger.info(
+                        "Identity result: status=%s id=%s similarity=%s",
+                        item.status,
+                        item.identity_id,
+                        item.similarity,
+                    )
+                    identities.append(item)
+                if crop == original_crop:
+                    detection.identity = crop_identities[0]
+        finally:
+            detection.images.crop = original_crop
+
+        detection.identities = identities
+        if detection.identity is None and identities:
+            detection.identity = identities[0]
+
+    def _identity_matches_label(self, detection: Detection, crop=None) -> bool:
+        if not self.identity_config or self.identity_config.labels is None:
+            return True
+
+        labels = set(self.identity_config.labels)
+        crop = crop or detection.images.crop
+        if crop and crop.label in labels:
+            return True
+        return any(label in detection.confidence for label in labels)
 
     def _has_min_detections(self, source: str) -> bool:
         detections_with_confidence = [

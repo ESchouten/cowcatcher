@@ -1,6 +1,6 @@
 import json
 import os
-from dataclasses import asdict
+from dataclasses import asdict, field
 from pathlib import Path
 from typing import Literal
 
@@ -98,6 +98,10 @@ class DiskExporter(Exporter[DiskConfig]):
             validated=validated,
             confidence=max_confidence(best_detection.confidence),
             confidences=best_detection.confidence,
+            identity=asdict(best_detection.identity)
+            if best_detection.identity is not None
+            else None,
+            identities=[asdict(identity) for identity in best_detection.identities],
             detections=len(detections),
             start=detections[0].date.isoformat(),
             end=detections[-1].date.isoformat(),
@@ -110,6 +114,15 @@ class DiskExporter(Exporter[DiskConfig]):
             }
             if best_detection.images.crop
             else None,
+            crops=[
+                {
+                    "x1": crop.x1,
+                    "y1": crop.y1,
+                    "x2": crop.x2,
+                    "y2": crop.y2,
+                }
+                for crop in best_detection.images.crops
+            ],
         )
         metadata_path = os.path.join(timestamped_directory, "metadata.json")
         with open(metadata_path, "w") as f:
@@ -122,8 +135,11 @@ class Metadata:
     validated: bool | None
     confidence: float
     confidences: dict[str, float]
+    identity: dict[str, str | float | None] | None
+    identities: list[dict[str, str | float | None]]
     detections: int
     start: str
     end: str
     duration: float
     crop: dict[str, int] | None = None
+    crops: list[dict[str, int]] = field(default_factory=list)

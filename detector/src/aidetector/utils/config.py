@@ -29,6 +29,15 @@ Confidence = dict[str, float]
 
 
 @dataclass
+class IdentityResult:
+    provider: str
+    identity_id: str | None
+    name: str | None
+    status: Literal["matched", "created", "unknown"]
+    similarity: float | None = None
+
+
+@dataclass
 class Crop:
     x1: int
     y1: int
@@ -42,6 +51,7 @@ class Crop:
 class ImageSet:
     jpg: ndarray
     crop: Crop | None
+    crops: list[Crop] = field(default_factory=list)
 
 
 @dataclass(config=ConfigDict(arbitrary_types_allowed=True))
@@ -49,6 +59,8 @@ class Detection:
     date: datetime
     images: ImageSet
     confidence: Confidence
+    identity: IdentityResult | None = None
+    identities: list[IdentityResult] = field(default_factory=list)
 
 
 @dataclass(kw_only=True)
@@ -80,6 +92,35 @@ class VLMConfig:
     url: str | None = None
     strategy: Literal["IMAGE", "VIDEO"] = "VIDEO"
     crop_padding: float = 0.1
+
+
+@dataclass(kw_only=True)
+class DetectorIdentityConfig:
+    provider: str
+    labels: list[str] | None = None
+    multiple: bool = False
+
+
+@dataclass(kw_only=True)
+class IdentityProviderConfig:
+    id: str
+    type: Literal["wildlife_tools"] = "wildlife_tools"
+    database: Path
+    model: str = "hf-hub:BVRA/MegaDescriptor-T-224"
+    segment_model: str | None = None
+    segment_labels: list[str] = field(default_factory=lambda: ["cow"])
+    segment_confidence: float = 0.5
+    segment_background: Literal["gray", "black"] = "gray"
+    debug_directory: Path | None = None
+    match_threshold: float = 0.75
+    candidate_threshold: float = 0.75
+    create_after: int = 3
+    crop_padding: float = 0.1
+
+
+@dataclass
+class IdentityConfig:
+    providers: list[IdentityProviderConfig] = field(default_factory=list)
 
 
 @dataclass(kw_only=True)
@@ -145,6 +186,7 @@ class DetectorConfig:
     detection: DetectionConfig
     yolo: YoloConfig | None = None
     vlm: VLMConfig | list[VLMConfig] | None = None
+    identity: DetectorIdentityConfig | None = None
     exporters: ExportersConfig | None = None
 
 
@@ -159,6 +201,7 @@ class OnnxConfig:
 class Config:
     detectors: list[DetectorConfig]
     onnx: OnnxConfig = field(default_factory=OnnxConfig)
+    identity: IdentityConfig | None = None
     health: HealthcheckConfig | None = None
 
 
