@@ -8,10 +8,7 @@ services:
       stack: 67108864
 
     volumes:
-      - ./config.json:/app/config.json
-      - ./app.json:/app/app.json
-      - ./sprong24.mp4:/app/sprong24.mp4
-      - ./detections/:/app/detections
+      - .:/data
 
     deploy:
       resources:

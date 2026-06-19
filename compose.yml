@@ -7,10 +7,7 @@ services:
       stack: 67108864
 
     volumes:
-      - ./example/config.json:/app/config.json
-      - ./example/app.json:/app/app.json
-      - ./example/sprong24.mp4:/app/sprong24.mp4
-      - ./example/detections/:/app/detections
+      - ./example:/data
     deploy:
       resources:
         reservations:
