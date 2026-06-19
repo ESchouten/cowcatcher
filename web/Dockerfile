@@ -29,8 +29,11 @@ COPY --from=build --chown=node:node /app/build ./build
 COPY --from=build --chown=node:node /app/package.json ./package.json
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
 
+RUN mkdir -p /data && chown node:node /data
+
 USER node
+WORKDIR /data
 
 EXPOSE 3000
 
-CMD ["node", "build"]
+CMD ["node", "/app/build"]

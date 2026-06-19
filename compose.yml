@@ -2,22 +2,16 @@ services:
   aidetector:
     image: "ghcr.io/eschouten/ai-detector:latest"
     ipc: host
+    environment:
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility,video
     ulimits:
       memlock: -1
       stack: 67108864
 
     volumes:
-      - ./example/config.json:/app/config.json
-      - ./example/app.json:/app/app.json
-      - ./example/sprong24.mp4:/app/sprong24.mp4
-      - ./example/detections/:/app/detections
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [ gpu ]
+      - ./example:/data
+    gpus:
+      - count: all
 
   web:
     image: "ghcr.io/eschouten/ai-detector-web:latest"

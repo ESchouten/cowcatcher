@@ -10,6 +10,7 @@
 	import BellIcon from '@lucide/svelte/icons/bell';
 	import { page } from '$app/state';
 	import GithubIcon from '@lucide/svelte/icons/github';
+	import CircleCheckIcon from '@lucide/svelte/icons/circle-check';
 
 	let { children } = $props();
 
@@ -32,6 +33,11 @@
 		{
 			title: 'Settings',
 			items: [
+				{
+					title: 'Setup',
+					url: '/setup',
+					icon: CircleCheckIcon
+				},
 				{
 					title: 'Notifications',
 					url: '/notifications',

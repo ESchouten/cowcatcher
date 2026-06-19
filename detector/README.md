@@ -46,7 +46,7 @@ docker compose up -d
 docker compose logs -f aidetector web
 ```
 
-The example Compose stack also starts the web UI on [http://localhost:3000](http://localhost:3000).
+The example Compose stack also starts the web UI on [http://localhost](http://localhost).
 
 > **Don't have Docker?** [Download Docker Desktop](https://www.docker.com/products/docker-desktop/) — it's free.
 

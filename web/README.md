@@ -37,4 +37,4 @@ From the repository root:
 docker compose up -d aidetector web
 ```
 
-The container serves the app on [http://localhost](http://localhost). In Compose, the `web` service reuses `aidetector`'s mounted `config.json`, `app.json`, input files, and `detections/` via `volumes_from`.
+The container serves the app on [http://localhost](http://localhost).

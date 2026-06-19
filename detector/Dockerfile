@@ -40,11 +40,12 @@ RUN groupadd --system --gid 999 nonroot \
 # Give nonroot user write access to ultralytics weights directory (for model downloads)
 RUN mkdir -p /ultralytics/weights && chown -R nonroot:nonroot /ultralytics
 
-# Change ownership of the app directory
-RUN chown -R nonroot:nonroot /app
+# Change ownership of the app directory and runtime data directory
+RUN mkdir -p /data && chown -R nonroot:nonroot /app /data
 
 # Use the non-root user to run our application
 USER nonroot
+WORKDIR /data
 
 # Run the application
-CMD ["python3", "src/aidetector/__init__.py"]
+CMD ["python3", "/app/src/aidetector/__init__.py"]
