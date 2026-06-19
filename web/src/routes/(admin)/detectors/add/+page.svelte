@@ -56,6 +56,7 @@
 
 	const originalLabel = $state(page.url.searchParams.get('label') ?? '');
 	const isEditing = $derived(!!originalLabel);
+	const setupMode = $derived(page.url.searchParams.get('setup') === '1');
 	const detectorPresets = $state(await getDetectorPresets());
 	const detectorSchema = $state(await getDetectorSchema());
 	const streams = $derived(await getStreams());
@@ -141,7 +142,7 @@
 			`Detector configuration '${label}' saved. Restart the detector to apply the changes.`,
 			{ duration: Number.POSITIVE_INFINITY, closeButton: true }
 		);
-		await goto(resolve('/detectors'));
+		await goto(resolve(setupMode ? '/setup?complete=1' : '/detectors'));
 	}
 
 	function getPresetLabel(presetFile: string) {
@@ -162,9 +163,11 @@
 <section class="space-y-6">
 	<header class="space-y-1">
 		<h1 class="text-2xl font-semibold tracking-tight">
-			{isEditing ? 'Edit Detector' : 'Add Detector'}
+			{setupMode ? 'Setup: Add Detector' : isEditing ? 'Edit Detector' : 'Add Detector'}
 		</h1>
-		<p class="text-sm text-muted-foreground">Configure a detector.</p>
+		<p class="text-sm text-muted-foreground">
+			{setupMode ? 'Select the streams and alerts for the detector.' : 'Configure a detector.'}
+		</p>
 	</header>
 
 	<form class="flex max-w-2xl flex-col gap-2" onsubmit={handleSave}>
@@ -240,7 +243,11 @@
 					{/each}
 				</Select.Content>
 			</Select.Root>
-			<Button target="_blank" href="/streams/add" variant="outline"><Plus /></Button>
+			<Button
+				target="_blank"
+				href={setupMode ? '/streams/add?setup=1' : '/streams/add'}
+				variant="outline"><Plus /></Button
+			>
 		</div>
 
 		<Label for="telegrams" class="mt-2">Telegram</Label>
@@ -317,7 +324,11 @@
 					{/each}
 				</Select.Content>
 			</Select.Root>
-			<Button target="_blank" href="/notifications/add" variant="outline"><Plus /></Button>
+			<Button
+				target="_blank"
+				href={setupMode ? '/notifications/add?setup=1' : '/notifications/add'}
+				variant="outline"><Plus /></Button
+			>
 		</div>
 
 		<Label for="model" class="mt-2">Model</Label>
@@ -405,7 +416,9 @@
 					class="flex-1">Delete</Button
 				>
 			{/if}
-			<Button type="submit" class="flex-1" disabled={editorHasErrors}>Save</Button>
+			<Button type="submit" class="flex-1" disabled={editorHasErrors}
+				>{setupMode ? 'Save setup' : 'Save'}</Button
+			>
 		</div>
 	</form>
 </section>

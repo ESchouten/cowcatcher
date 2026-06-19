@@ -4,16 +4,24 @@ import type { StreamMeta } from '$lib/schema';
 import * as v from 'valibot';
 import { redirect } from '@sveltejs/kit';
 
+function getRedirectTarget(next: string | undefined, fallback: string) {
+	return next?.startsWith('/') && !next.startsWith('//') ? next : fallback;
+}
+
 export const getStreams = query(async () => {
 	const { config, app } = await getConfig();
 	const detectorSources = config.detectors.flatMap((detector) => detector.detection.source);
-	const detectorStreams = detectorSources.filter((source) => source.trim().match(/rtsps?:\/\//i))
-	const allStreams = [...new Set([...app.streams, ...detectorStreams.map((source) => ({ source } as StreamMeta))])];
-	const uniqueStreams = allStreams.filter((stream, index) => allStreams.findIndex((s) => s.source === stream.source) === index);
+	const detectorStreams = detectorSources.filter((source) => source.trim().match(/rtsps?:\/\//i));
+	const allStreams = [
+		...new Set([...app.streams, ...detectorStreams.map((source) => ({ source }) as StreamMeta)])
+	];
+	const uniqueStreams = allStreams.filter(
+		(stream, index) => allStreams.findIndex((s) => s.source === stream.source) === index
+	);
 
 	return uniqueStreams.map((stream, index) => ({
 		source: stream.source,
-		label: stream.label ?? 'Stream ' + (index + 1),
+		label: stream.label ?? 'Stream ' + (index + 1)
 	}));
 });
 
@@ -22,8 +30,9 @@ export const saveStream = form(
 		original: v.optional(v.string()),
 		label: v.string(),
 		source: v.string(),
+		next: v.optional(v.string())
 	}),
-	async ({ source, label, original }) => {
+	async ({ source, label, original, next }) => {
 		const { config, app } = await getConfig();
 		let found = false;
 		app.streams.forEach((stream) => {
@@ -37,15 +46,18 @@ export const saveStream = form(
 			app.streams.push({ source, label });
 		}
 		config.detectors.forEach((detector) => {
-			detector.detection.source = detector.detection.source.map((s) => s === original ? source : s);
+			detector.detection.source = detector.detection.source.map((s) =>
+				s === original ? source : s
+			);
 		});
 		await saveConfig({ config, app });
-		redirect(302, '/streams');
-	})
+		redirect(302, getRedirectTarget(next, '/streams'));
+	}
+);
 
 export const deleteStream = command(
 	v.object({
-		source: v.string(),
+		source: v.string()
 	}),
 	async ({ source }) => {
 		const { config, app } = await getConfig();
@@ -60,7 +72,7 @@ export const deleteStream = command(
 export const reorderStream = command(
 	v.object({
 		index0: v.number(),
-		index1: v.number(),
+		index1: v.number()
 	}),
 	async ({ index0, index1 }) => {
 		const { config, app } = await getConfig();

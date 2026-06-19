@@ -12,12 +12,19 @@
 	let label = $state(originalLabel);
 	let token = $state(page.url.searchParams.get('token') ?? '');
 	let chat = $state(page.url.searchParams.get('chat') ?? '');
+	const setupMode = $derived(page.url.searchParams.get('setup') === '1');
 </script>
 
 <section class="space-y-6">
 	<header class="space-y-1">
-		<h1 class="text-2xl font-semibold tracking-tight">Add Telegram</h1>
-		<p class="text-sm text-muted-foreground">Add a new Telegram notification channel.</p>
+		<h1 class="text-2xl font-semibold tracking-tight">
+			{setupMode ? 'Setup: Add Telegram' : 'Add Telegram'}
+		</h1>
+		<p class="text-sm text-muted-foreground">
+			{setupMode
+				? 'Add a bot and channel for detector alerts.'
+				: 'Add a new Telegram notification channel.'}
+		</p>
 	</header>
 
 	<div class="flex justify-between gap-6">
@@ -51,17 +58,34 @@
 					>Test notification</Button
 				>
 			</div>
-			<div class="mt-2 flex gap-6">
-				{#if originalLabel}
+			{#if setupMode && !originalLabel}
+				<div class="mt-2 flex gap-2">
 					<Button
-						onclick={() =>
-							deleteTelegram({ label: originalLabel }).then(() => goto(resolve('/notifications')))}
-						variant="destructive"
-						class="flex-1">Delete</Button
+						type="submit"
+						name="next"
+						value="/notifications/add?setup=1"
+						variant="outline"
+						class="flex-1">Save and add another</Button
 					>
-				{/if}
-				<Button type="submit" class="flex-1">Save</Button>
-			</div>
+					<Button type="submit" name="next" value="/setup" class="flex-1"
+						>Save and return to setup</Button
+					>
+				</div>
+			{:else}
+				<div class="mt-2 flex gap-6">
+					{#if originalLabel}
+						<Button
+							onclick={() =>
+								deleteTelegram({ label: originalLabel }).then(() =>
+									goto(resolve('/notifications'))
+								)}
+							variant="destructive"
+							class="flex-1">Delete</Button
+						>
+					{/if}
+					<Button type="submit" class="flex-1">Save</Button>
+				</div>
+			{/if}
 		</form>
 	</div>
 </section>
