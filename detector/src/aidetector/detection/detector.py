@@ -1,4 +1,6 @@
 import logging
+import os
+import pathlib
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
@@ -37,6 +39,11 @@ from typing_extensions import Self
 from ultralytics import YOLO
 
 
+def _patch_windows_path_checkpoints() -> None:
+    if os.name != "nt":
+        pathlib.WindowsPath = pathlib.PosixPath
+
+
 class Detector:
     logger = logging.getLogger(__name__)
     detections: defaultdict[str, list[Detection]]
@@ -67,6 +74,7 @@ class Detector:
         self.yolo_class_confidences = {}
         self.source_provider = SourceProvider(detection)
         if yolo_config is not None:
+            _patch_windows_path_checkpoints()
             self.yolo = YOLO(
                 yolo_config.model
                 if yolo_config.model.endswith(".onnx") or TYPE == "cuda"
