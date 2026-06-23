@@ -1,5 +1,6 @@
 import json
 import logging
+import sys
 from dataclasses import field
 from datetime import datetime
 from pathlib import Path
@@ -235,7 +236,14 @@ def format_validation_errors(error: ValidationError) -> str:
     return "\n".join(messages)
 
 
-def load_config(config_path: Path = Path("config.json")) -> Config:
+def _default_config_path() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent / "config.json"
+    return Path("config.json")
+
+
+def load_config(config_path: Path | None = None) -> Config:
+    config_path = config_path or _default_config_path()
     if not config_path.exists():
         template = get_template()
         if template:
