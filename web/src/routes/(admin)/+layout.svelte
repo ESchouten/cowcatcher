@@ -11,6 +11,7 @@
 	import { page } from '$app/state';
 	import GithubIcon from '@lucide/svelte/icons/github';
 	import CircleCheckIcon from '@lucide/svelte/icons/circle-check';
+	import FingerprintIcon from '@lucide/svelte/icons/fingerprint';
 
 	let { children } = $props();
 
@@ -27,6 +28,11 @@
 					title: 'Streams',
 					url: '/streams',
 					icon: TVIcon
+				},
+				{
+					title: 'Identities',
+					url: '/identities',
+					icon: FingerprintIcon
 				}
 			]
 		},

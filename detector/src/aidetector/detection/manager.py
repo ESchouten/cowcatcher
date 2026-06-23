@@ -23,7 +23,7 @@ class Manager:
 
     @classmethod
     def from_config(cls, config: Config) -> Self:
-        identity_service = IdentityService.from_config(config.identity)
+        identity_service = IdentityService.from_config(config)
         detectors = [
             d
             for ds in [

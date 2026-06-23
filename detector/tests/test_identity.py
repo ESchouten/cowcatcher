@@ -169,9 +169,7 @@ class DetectorIdentityTests(unittest.TestCase):
 
     def test_detector_identity_label_filtering(self):
         detector = Detector.__new__(Detector)
-        detector.identity_config = DetectorIdentityConfig(
-            provider="cow-main", labels=["cow"]
-        )
+        detector.identity_config = _detector_identity_config(labels=["cow"])
 
         self.assertTrue(detector._identity_matches_label(_detection(label="cow")))
         self.assertFalse(detector._identity_matches_label(_detection(label="deer")))
@@ -206,8 +204,7 @@ class DetectorIdentityTests(unittest.TestCase):
 
     def test_detector_identity_multiple_flag_collects_provider_results(self):
         detector = Detector.__new__(Detector)
-        detector.identity_config = DetectorIdentityConfig(
-            provider="cow-main",
+        detector.identity_config = _detector_identity_config(
             multiple=True,
         )
         detector.identity_service = _ListIdentityService()
@@ -221,8 +218,7 @@ class DetectorIdentityTests(unittest.TestCase):
 
     def test_detector_identity_samples_event_detections(self):
         detector = Detector.__new__(Detector)
-        detector.identity_config = DetectorIdentityConfig(
-            provider="cow-main",
+        detector.identity_config = _detector_identity_config(
             samples=3,
         )
         detector.identity_service = _RecordingIdentityService()
@@ -244,8 +240,7 @@ class DetectorIdentityTests(unittest.TestCase):
 
     def test_detector_identity_samples_keep_frame_order_after_adding_best(self):
         detector = Detector.__new__(Detector)
-        detector.identity_config = DetectorIdentityConfig(
-            provider="cow-main",
+        detector.identity_config = _detector_identity_config(
             samples=3,
         )
         detections = [
@@ -719,6 +714,15 @@ class _RecordingExporter:
         self.called = True
 
 
+def _detector_identity_config(**overrides):
+    config = {
+        "id": "cow-main",
+        "database": Path("identities.sqlite"),
+    }
+    config.update(overrides)
+    return DetectorIdentityConfig(**config)
+
+
 def _detector_for_export(validated: bool | None):
     detector = Detector.__new__(Detector)
     detector.detections = defaultdict(list)
@@ -727,7 +731,7 @@ def _detector_for_export(validated: bool | None):
     detector.validator = _Validator(validated)
     detector.exporters = [_RecordingExporter()]
     detector.identity_service = _FailingIdentityService()
-    detector.identity_config = DetectorIdentityConfig(provider="cow-main")
+    detector.identity_config = _detector_identity_config()
     detector.export_executor = ThreadPoolExecutor(max_workers=1)
     return detector
 

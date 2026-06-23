@@ -1,0 +1,12 @@
+{
+    "id": "cow-main",
+    "type": "wildlife_tools",
+    "database": "identities.sqlite",
+    "model": "hf-hub:BVRA/MegaDescriptor-T-224",
+    "segment_labels": [
+        "cow"
+    ],
+    "labels": [
+        "cow"
+    ]
+}

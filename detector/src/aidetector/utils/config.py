@@ -95,14 +95,6 @@ class VLMConfig:
 
 
 @dataclass(kw_only=True)
-class DetectorIdentityConfig:
-    provider: str
-    labels: list[str] | None = None
-    multiple: bool = False
-    samples: int = 1
-
-
-@dataclass(kw_only=True)
 class IdentityProviderConfig:
     id: str
     type: Literal["wildlife_tools"] = "wildlife_tools"
@@ -119,9 +111,11 @@ class IdentityProviderConfig:
     crop_padding: float = 0.1
 
 
-@dataclass
-class IdentityConfig:
-    providers: list[IdentityProviderConfig] = field(default_factory=list)
+@dataclass(kw_only=True)
+class DetectorIdentityConfig(IdentityProviderConfig):
+    labels: list[str] | None = None
+    multiple: bool = False
+    samples: int = 1
 
 
 @dataclass(kw_only=True)
@@ -202,7 +196,6 @@ class OnnxConfig:
 class Config:
     detectors: list[DetectorConfig]
     onnx: OnnxConfig = field(default_factory=OnnxConfig)
-    identity: IdentityConfig | None = None
     health: HealthcheckConfig | None = None
 
 

@@ -432,7 +432,7 @@ class Detector:
         samples = self._identity_sample_detections(detections, detection)
         self.logger.info(
             "Looking up identity with provider %s for %s detector crop(s), %s sample frame(s), multiple=%s",
-            self.identity_config.provider,
+            self.identity_config.id,
             len(crops),
             len(samples),
             self.identity_config.multiple,
@@ -456,7 +456,7 @@ class Detector:
                 for sample in samples
             ]
             identity = self.identity_service.identify(
-                self.identity_config.provider,
+                self.identity_config.id,
                 sample_detections[0] if len(sample_detections) == 1 else sample_detections,
                 source,
                 multiple=self.identity_config.multiple,

@@ -1,10 +1,15 @@
 <script lang="ts">
-	import { goto, invalidateAll } from '$app/navigation';
+	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { Button } from '$lib/components/ui/button';
 	import JsonEditor from '$lib/components/json-editor.svelte';
-	import type { DetectorConfig, TelegramConfig } from '$lib/schema';
+	import type {
+		DetectorConfig,
+		DetectorIdentityConfig,
+		IdentityMeta,
+		TelegramConfig
+	} from '$lib/schema';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
 	import {
@@ -19,9 +24,11 @@
 	import * as Select from '$lib/components/ui/select';
 	import { getStreams } from '$lib/remote/stream.remote';
 	import { getTelegrams, testTelegram } from '$lib/remote/exporter.remote';
+	import { getIdentities } from '$lib/remote/identity.remote';
 	import Stream from '../../streams/stream.svelte';
 	import { Plus } from '@lucide/svelte';
 	import { Switch } from '$lib/components/ui/switch';
+	import { SvelteSet } from 'svelte/reactivity';
 
 	const EMPTY_DETECTOR = {
 		detection: {
@@ -54,22 +61,21 @@
 		};
 	}
 
-	const originalLabel = $state(page.url.searchParams.get('label') ?? '');
-	const isEditing = $derived(!!originalLabel);
-	const setupMode = $derived(page.url.searchParams.get('setup') === '1');
+	const originalLabel = page.url.searchParams.get('label') ?? '';
+	const isEditing = !!originalLabel;
+	const setupMode = page.url.searchParams.get('setup') === '1';
 	const detectorPresets = $state(await getDetectorPresets());
 	const detectorSchema = $state(await getDetectorSchema());
 	const streams = $derived(await getStreams());
 	const telegrams = $derived(await getTelegrams());
-	const initialDetector = $derived(
-		mergeWithEmptyDetector(
-			isEditing ? (await getDetector({ label: originalLabel }))?.detector : undefined
-		)
+	const identities = $derived(await getIdentities());
+	const initialDetector = mergeWithEmptyDetector(
+		isEditing ? (await getDetector({ label: originalLabel }))?.detector : undefined
 	);
 
 	let label = $state(originalLabel);
 	let detector = $state(initialDetector);
-	let visiblePreviewSources = $state<Set<string>>(new Set());
+	const visiblePreviewSources = new SvelteSet<string>();
 	let editorHasErrors = $state(false);
 	let preset = $state<string>('Custom');
 	let advanced = $state(false);
@@ -91,13 +97,11 @@
 			return;
 		}
 
-		const next = new Set(visiblePreviewSources);
 		if (visible) {
-			next.add(source);
+			visiblePreviewSources.add(source);
 		} else {
-			next.delete(source);
+			visiblePreviewSources.delete(source);
 		}
-		visiblePreviewSources = next;
 	}
 
 	function trackPreviewVisibility(node: HTMLElement, source: string) {
@@ -120,6 +124,35 @@
 	async function handlePresetChange(file: string) {
 		const preset = await getDetectorPreset({ file });
 		detector = mergeWithEmptyDetector(preset);
+	}
+
+	function identityConfig(identity: IdentityMeta): DetectorIdentityConfig {
+		const config = structuredClone(identity) as DetectorIdentityConfig & { label?: string };
+		delete config.label;
+		return config;
+	}
+
+	function selectedIdentityLabel() {
+		if (!detector.identity) {
+			return '';
+		}
+
+		return (
+			identities.find((identity) => identity.id === detector.identity?.id)?.label ??
+			detector.identity.id
+		);
+	}
+
+	function setDetectorIdentity(label: string) {
+		if (!label) {
+			delete detector.identity;
+			return;
+		}
+
+		const identity = identities.find((identity) => identity.label === label);
+		if (identity) {
+			detector.identity = identityConfig(identity);
+		}
 	}
 
 	async function handleSave(event: SubmitEvent) {
@@ -157,7 +190,8 @@
 
 <svelte:document
 	onvisibilitychange={() =>
-		document.visibilityState === 'visible' && (getStreams().refresh(), getTelegrams().refresh())}
+		document.visibilityState === 'visible' &&
+		(getStreams().refresh(), getTelegrams().refresh(), getIdentities().refresh())}
 />
 
 <section class="space-y-6">
@@ -256,20 +290,26 @@
 				type="multiple"
 				bind:value={
 					() =>
-						(detector.exporters.telegram ?? []).map(
-							(telegram) =>
-								telegrams.find((t) => t.token === telegram.token && t.chat === telegram.chat)?.label
-						),
+						(detector.exporters.telegram ?? [])
+							.map(
+								(telegram) =>
+									telegrams.find((t) => t.token === telegram.token && t.chat === telegram.chat)
+										?.label
+							)
+							.filter((label): label is string => typeof label === 'string'),
 					(selectedTelegrams) => {
 						detector.exporters.telegram = (selectedTelegrams ?? [])
-							.map((telegram) => {
+							.map((telegram): TelegramConfig | null => {
 								const t = telegrams.find((t) => t.label === telegram);
+								if (!t) {
+									return null;
+								}
 								const curr = detector.exporters.telegram?.find(
-									(t) => t.token === t.token && t.chat === t.chat
+									(current) => current.token === t.token && current.chat === t.chat
 								);
-								return { token: t!.token, chat: t!.chat, alert_every: curr?.alert_every ?? 1 };
+								return { token: t.token, chat: t.chat, alert_every: curr?.alert_every ?? 1 };
 							})
-							.filter(Boolean);
+							.filter((telegram): telegram is TelegramConfig => telegram !== null);
 					}
 				}
 				items={telegrams.map((telegram) => ({ value: telegram.label, label: telegram.label }))}
@@ -327,6 +367,41 @@
 			<Button
 				target="_blank"
 				href={setupMode ? '/notifications/add?setup=1' : '/notifications/add'}
+				variant="outline"><Plus /></Button
+			>
+		</div>
+
+		<Label for="identity" class="mt-2">Identity</Label>
+		<div class="flex gap-6">
+			<Select.Root
+				type="single"
+				bind:value={() => selectedIdentityLabel(), (value) => setDetectorIdentity(value ?? '')}
+				items={[
+					{ value: '', label: 'None' },
+					...identities.map((identity) => ({
+						value: identity.label,
+						label: identity.label
+					}))
+				]}
+			>
+				<Select.Trigger id="identity" class="w-full">
+					{selectedIdentityLabel() || 'Select identity'}
+				</Select.Trigger>
+				<Select.Content>
+					<Select.Item value="" label="None"></Select.Item>
+					{#each identities as identity (identity.label)}
+						<Select.Item value={identity.label} label={identity.label} class="gap-6">
+							<div class="flex flex-col">
+								<span>{identity.label}</span>
+								<span class="text-xs text-muted-foreground">{identity.id}</span>
+							</div>
+						</Select.Item>
+					{/each}
+				</Select.Content>
+			</Select.Root>
+			<Button
+				target="_blank"
+				href={setupMode ? '/identities/add?setup=1' : '/identities/add'}
 				variant="outline"><Plus /></Button
 			>
 		</div>

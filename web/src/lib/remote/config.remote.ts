@@ -5,22 +5,27 @@ import {
 	saveConfig as saveConfigShared
 } from '$lib/server/shared-paths';
 import { readFile } from 'node:fs/promises';
-import type { AppConfig, Config } from '$lib/schema';
+import type { AppConfig, Config, DetectorConfig, StreamMeta, TelegramConfig } from '$lib/schema';
 import { DEFAULT_SCHEMA_URL } from '$lib/schema';
 
 async function readConfigDocument(): Promise<Config | null> {
-	const config = await readFile(CONFIG_PATH, 'utf8').then(JSON.parse).catch(() => null);
+	const config = await readFile(CONFIG_PATH, 'utf8')
+		.then((contents) => JSON.parse(contents) as Config)
+		.catch(() => null);
 	if (!config) {
 		return null;
 	}
-	config.detectors = config.detectors.map((detector) => {
+	config.detectors = config.detectors.map((detector: DetectorConfig) => {
 		const source = detector.detection?.source ?? [];
 		detector.detection.source = Array.isArray(source) ? source : [source];
-		detector.exporters = Object.entries(detector.exporters ?? {}).reduce((acc, [key, value]) => {
-			acc[key] = value ? Array.isArray(value) ? value : [value] : [];
-			return acc;
-		}, {} as Record<string, unknown[]>);
-		return detector
+		detector.exporters = Object.entries(detector.exporters ?? {}).reduce(
+			(acc, [key, value]) => {
+				acc[key] = value ? (Array.isArray(value) ? value : [value]) : [];
+				return acc;
+			},
+			{} as Record<string, unknown[]>
+		);
+		return detector;
 	});
 	return config;
 }
@@ -35,29 +40,49 @@ async function fetchSchema(schemaUrl: string) {
 }
 
 export const getConfig = query(async (): Promise<{ config: Config; app: AppConfig }> => {
-	const config = await readConfigDocument().then((res) => res ?? {
-		$schema: DEFAULT_SCHEMA_URL,
-		detectors: []
-	});
-	const appConfig = await readFile(APP_CONFIG_PATH, 'utf8')
-		.then((res) => JSON.parse(res))
-		.catch(() => ({
-			streams: [],
-			telegrams: [],
-			detectors: []
-		}));
+	const config = await readConfigDocument().then(
+		(res) =>
+			res ?? {
+				$schema: DEFAULT_SCHEMA_URL,
+				detectors: []
+			}
+	);
+	const appConfig: AppConfig = await readFile(APP_CONFIG_PATH, 'utf8')
+		.then((res) => JSON.parse(res) as AppConfig)
+		.catch(
+			(): AppConfig => ({
+				streams: [],
+				telegrams: [],
+				detectors: [],
+				identities: []
+			})
+		);
+	appConfig.streams ??= [];
+	appConfig.telegrams ??= [];
+	appConfig.detectors ??= [];
+	appConfig.identities ??= [];
 
 	const detectorLengthDiff = config.detectors.length - appConfig.detectors.length;
 	for (let i = 0; i < detectorLengthDiff; i++) {
 		appConfig.detectors.push({ label: 'Detector ' + (appConfig.detectors.length + 1) });
 	}
 
-	const unknownStreams = config.detectors.flatMap((detector) => detector.detection?.source ?? []).filter((source) => !appConfig.streams.some((s) => s.source === source));
+	const unknownStreams = config.detectors
+		.flatMap((detector) => detector.detection?.source ?? [])
+		.filter((source) => !appConfig.streams.some((stream: StreamMeta) => stream.source === source));
 	unknownStreams.forEach((stream) => {
 		appConfig.streams.push({ label: stream, source: stream });
 	});
 
-	const unknownTelegrams = config.detectors.flatMap((detector) => detector.exporters?.telegram ?? []).filter((telegram) => !appConfig.telegrams.some((t) => t.token === telegram.token && t.chat === telegram.chat));
+	const unknownTelegrams = config.detectors
+		.flatMap((detector) => detector.exporters?.telegram ?? [])
+		.filter(
+			(telegram) =>
+				!appConfig.telegrams.some(
+					(savedTelegram: TelegramConfig) =>
+						savedTelegram.token === telegram.token && savedTelegram.chat === telegram.chat
+				)
+		);
 	unknownTelegrams.forEach((telegram) => {
 		appConfig.telegrams.push({ label: telegram.chat, token: telegram.token, chat: telegram.chat });
 	});
