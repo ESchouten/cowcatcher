@@ -219,7 +219,7 @@ jobs:
             uv_run_args: --no-sync
             needs_cuda_install: true
             cuda_index_url: https://download.pytorch.org/whl/cu130
-            publish_release_asset: "true"
+            publish_release_asset: "false"
           - job_name: Windows CUDA 12.6 Executable
             artifact_prefix: aidetector-cuda126
             type: cuda
