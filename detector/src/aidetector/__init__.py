@@ -1,7 +1,8 @@
 import logging
+import os
+import sys
 import time
-
-from aidetector.utils.onnx import setup_ort
+from pathlib import Path
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -12,8 +13,16 @@ logger = logging.getLogger(__name__)
 _RESTART_DELAY_SECONDS = 5
 
 
+def _set_working_directory() -> None:
+    if getattr(sys, "frozen", False):
+        os.chdir(Path(sys.executable).resolve().parent)
+
+
 def start() -> None:
+    _set_working_directory()
+
     from aidetector.utils.config import config
+    from aidetector.utils.onnx import setup_ort
 
     logger.info(f"Starting application with config: {config}")
     setup_ort(config)
