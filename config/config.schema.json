@@ -110,8 +110,13 @@
           "type": "number"
         },
         "frame_retention": {
-          "default": 30,
+          "default": 15,
           "title": "Frame Retention",
+          "type": "integer"
+        },
+        "frames_width": {
+          "default": 1280,
+          "title": "Frames Width",
           "type": "integer"
         }
       },
@@ -308,11 +313,6 @@
           "title": "Method",
           "type": "string"
         },
-        "interval": {
-          "default": 60,
-          "title": "Interval",
-          "type": "integer"
-        },
         "timeout": {
           "default": 5,
           "title": "Timeout",
@@ -344,6 +344,11 @@
           ],
           "default": null,
           "title": "Body"
+        },
+        "interval": {
+          "default": 60,
+          "title": "Interval",
+          "type": "integer"
         }
       },
       "required": [
@@ -448,6 +453,62 @@
     },
     "WebhookConfig": {
       "properties": {
+        "url": {
+          "title": "Url",
+          "type": "string"
+        },
+        "method": {
+          "default": "POST",
+          "enum": [
+            "GET",
+            "POST",
+            "PUT",
+            "PATCH",
+            "DELETE",
+            "HEAD"
+          ],
+          "title": "Method",
+          "type": "string"
+        },
+        "timeout": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timeout"
+        },
+        "headers": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Headers"
+        },
+        "body": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Body"
+        },
         "confidence": {
           "anyOf": [
             {
@@ -476,10 +537,6 @@
           "title": "Export Rejected",
           "type": "boolean"
         },
-        "url": {
-          "title": "Url",
-          "type": "string"
-        },
         "token": {
           "anyOf": [
             {
@@ -496,7 +553,8 @@
           "default": "binary",
           "enum": [
             "binary",
-            "base64"
+            "base64",
+            "none"
           ],
           "title": "Data Type",
           "type": "string"
@@ -644,19 +702,6 @@
     },
     "onnx": {
       "$ref": "#/$defs/OnnxConfig"
-    },
-    "app": {
-      "anyOf": [
-        {
-          "additionalProperties": true,
-          "type": "object"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "App"
     },
     "health": {
       "anyOf": [

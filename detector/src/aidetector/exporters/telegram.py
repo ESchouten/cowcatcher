@@ -43,7 +43,11 @@ class TelegramExporter(WebhookExporter, Exporter[ChatConfig]):
         url = f"https://api.telegram.org/bot{token}/sendMediaGroup"
         super().__init__(
             url,
+            "POST",
             token,
+            None,
+            None,
+            None,
             confidence,
             "binary",
             12_000_000,

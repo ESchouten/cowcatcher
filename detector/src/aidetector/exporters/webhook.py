@@ -1,6 +1,6 @@
 import base64
 import logging
-from typing import Literal
+from typing import Any, Literal
 
 import requests
 from aidetector.exporters.exporter import Exporter
@@ -10,6 +10,7 @@ from aidetector.utils.config import (
     Config,
     Detection,
     DetectorConfig,
+    HttpMethod,
     WebhookConfig,
     get_timestamped_filename,
     max_confidence,
@@ -19,8 +20,12 @@ from typing_extensions import Self
 
 class WebhookExporter(Exporter[WebhookConfig]):
     url: str
+    method: HttpMethod
     token: str | None
-    data_type: Literal["binary", "base64"]
+    headers: dict[str, str] | None
+    body: str | None
+    timeout: int | None
+    data_type: Literal["binary", "base64", "none"]
     include_video: bool
     include_image: bool
     include_plot: bool
@@ -32,9 +37,13 @@ class WebhookExporter(Exporter[WebhookConfig]):
     def __init__(
         self,
         url: str,
+        method: HttpMethod,
         token: str | None,
+        headers: dict[str, str] | None,
+        body: str | None,
+        timeout: int | None,
         confidence: float | Confidence,
-        data_type: Literal["binary", "base64"],
+        data_type: Literal["binary", "base64", "none"],
         data_max: int | None,
         include_video: bool,
         include_image: bool,
@@ -49,7 +58,11 @@ class WebhookExporter(Exporter[WebhookConfig]):
             confidence,
             export_rejected,
             url,
+            method,
             token,
+            headers,
+            body,
+            timeout,
             data_type,
             data_max,
             include_video,
@@ -63,10 +76,15 @@ class WebhookExporter(Exporter[WebhookConfig]):
         )
         self.confidence = confidence
         self.url = url
+        self.method = method
         self.token = token
+        self.headers = headers
+        self.body = body
+        self.timeout = timeout
         self.data_type = data_type
         self.data_max = data_max
         self.include_video = include_video
+        self.include_image = include_image
         self.include_plot = include_plot
         self.include_crop = include_crop
         self.video_width = video_width
@@ -80,7 +98,11 @@ class WebhookExporter(Exporter[WebhookConfig]):
     ) -> Self:
         return cls(
             exporter.url,
+            exporter.method,
             exporter.token,
+            exporter.headers,
+            exporter.body,
+            exporter.timeout,
             confidence=exporter.confidence or 0,
             data_type=exporter.data_type,
             data_max=exporter.data_max,
@@ -95,7 +117,7 @@ class WebhookExporter(Exporter[WebhookConfig]):
         )
 
     def get_file(self, detection: Detection, detections: list[Detection]):
-        if self.data_type == "base64":
+        if self.data_type in ("base64", "none"):
             return None
         files = {}
         if self.include_image:
@@ -199,11 +221,10 @@ class WebhookExporter(Exporter[WebhookConfig]):
         return data
 
     def get_headers(self):
-        if self.token is None:
-            return {}
-        return {
-            "Authorization": self.token,
-        }
+        headers = dict(self.headers or {})
+        if self.token is not None:
+            headers["Authorization"] = self.token
+        return headers
 
     def filtered_export(
         self,
@@ -213,7 +234,7 @@ class WebhookExporter(Exporter[WebhookConfig]):
     ):
         try:
             self.logger.info(
-                "Sending photo to webhook with confidence %s",
+                "Sending webhook with confidence %s",
                 max_confidence(best_detection.confidence),
             )
             headers = self.get_headers()
@@ -224,17 +245,18 @@ class WebhookExporter(Exporter[WebhookConfig]):
                 best_detection.confidence,
             )
 
-            payload = self.get_payload(new_detection, detections, validated)
-            files = self.get_file(new_detection, detections)
+            request: dict[str, Any] = {"headers": headers, "timeout": self.timeout}
+            if self.body is not None:
+                request["data"] = self.body
+            elif self.data_type == "base64":
+                request["json"] = self.get_payload(new_detection, detections, validated)
+            elif self.data_type == "binary":
+                request["data"] = self.get_payload(new_detection, detections, validated)
+                request["files"] = self.get_file(new_detection, detections)
 
-            if self.data_type == "base64":
-                response = requests.post(self.url, headers=headers, json=payload)
-            else:
-                response = requests.post(
-                    self.url, headers=headers, data=payload, files=files
-                )
+            response = requests.request(self.method, self.url, **request)
 
-            if response.status_code != 200:
-                self.logger.error(f"Failed to send photo to webhook: {response.text}")
+            if response.status_code >= 400:
+                self.logger.error(f"Failed to send webhook: {response.text}")
         except Exception as e:
-            self.logger.error(f"Error sending photo to webhook: {e}")
+            self.logger.error(f"Error sending webhook: {e}")

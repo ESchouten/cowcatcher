@@ -26,6 +26,7 @@ def _default_frames_min() -> int:
 
 
 Confidence = dict[str, float]
+HttpMethod = Literal["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]
 
 
 @dataclass
@@ -90,6 +91,15 @@ class ExporterConfig:
 
 
 @dataclass(kw_only=True)
+class HttpConfig:
+    url: str
+    method: HttpMethod = "GET"
+    timeout: int | None = None
+    headers: dict[str, str] | None = field(default=None, repr=False)
+    body: str | None = None
+
+
+@dataclass(kw_only=True)
 class ChatConfig(ExporterConfig):
     token: str = field(repr=False)
     chat: str
@@ -103,10 +113,10 @@ class ChatConfig(ExporterConfig):
 
 
 @dataclass(kw_only=True)
-class WebhookConfig(ExporterConfig):
-    url: str
+class WebhookConfig(ExporterConfig, HttpConfig):
+    method: HttpMethod = "POST"
     token: str | None = field(default=None, repr=False)
-    data_type: Literal["binary", "base64"] = "binary"
+    data_type: Literal["binary", "base64", "none"] = "binary"
     data_max: int | None = None
     include_image: bool = False
     include_plot: bool = False
@@ -131,13 +141,9 @@ class ExportersConfig:
 
 
 @dataclass(kw_only=True)
-class HealthcheckConfig:
-    url: str
-    method: Literal["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"] = "GET"
+class HealthcheckConfig(HttpConfig):
     interval: int = 60
     timeout: int = 5
-    headers: dict[str, str] | None = field(default=None, repr=False)
-    body: str | None = None
 
 
 @dataclass
