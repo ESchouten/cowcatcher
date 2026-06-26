@@ -42,7 +42,20 @@ class Crop:
 @dataclass(config=ConfigDict(arbitrary_types_allowed=True))
 class ImageSet:
     jpg: ndarray
-    crop: Crop | None
+    crops: list[Crop] = field(default_factory=list)
+
+    @property
+    def crop_region(self) -> Crop | None:
+        if not self.crops:
+            return None
+        if len(self.crops) == 1:
+            return self.crops[0]
+        return Crop(
+            min(crop.x1 for crop in self.crops),
+            min(crop.y1 for crop in self.crops),
+            max(crop.x2 for crop in self.crops),
+            max(crop.y2 for crop in self.crops),
+        )
 
 
 @dataclass(config=ConfigDict(arbitrary_types_allowed=True))
@@ -55,6 +68,7 @@ class Detection:
 @dataclass(kw_only=True)
 class YoloConfig:
     model: str
+    task: Literal["detect", "segment"] = "detect"
     confidence: float | Confidence = 0
     time_max: int = 60
     timeout: int = 5

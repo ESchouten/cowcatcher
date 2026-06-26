@@ -27,7 +27,6 @@ from aidetector.utils.config import (
     VLMConfig,
     WebhookConfig,
     YoloConfig,
-    confidence_matches,
     matching_confidences,
     max_confidence,
     min_confidence,
@@ -79,7 +78,7 @@ class Detector:
                 yolo_config.model
                 if yolo_config.model.endswith(".onnx") or TYPE == "cuda"
                 else (
-                    YOLO(yolo_config.model).export(
+                    YOLO(yolo_config.model, task=yolo_config.task).export(
                         format="engine" if TYPE == "tensorrt" else "onnx",
                         batch=max(1, len(self.source_provider.sources)),
                         dynamic=True,
@@ -89,7 +88,7 @@ class Detector:
                         opset=onnx_config.opset,
                     )
                 ),
-                task="detect",
+                task=yolo_config.task,
             )
             if self.yolo.predictor is None:
                 self.yolo.predictor = self.yolo._smart_load("predictor")(
@@ -196,7 +195,7 @@ class Detector:
         for source, frames in batch.items():
             self._process(
                 source,
-                [Detection(frames[-1][0], ImageSet(frames[-1][1], None), {})],
+                [Detection(frames[-1][0], ImageSet(frames[-1][1]), {})],
             )
 
     def _handle_yolo_result(
@@ -205,14 +204,21 @@ class Detector:
         if self.yolo_config is None:
             return
 
+        crops: list[Crop] = []
         confidences: dict[str, float] = {}
         for box in result.boxes:
             class_id = int(box.cls.item())
-            class_name = self.yolo_class_confidences[class_id][0]
+            class_name, threshold = self.yolo_class_confidences[class_id]
             confidence = box.conf.item()
+            if confidence < threshold:
+                continue
             confidences[class_name] = max(confidences.get(class_name, 0), confidence)
+            x1, y1, x2, y2 = map(int, box.xyxy[0])
+            crops.append(
+                Crop(x1, y1, x2, y2, label=class_name, confidence=confidence)
+            )
 
-        if not confidence_matches(confidences, self.yolo_config.confidence):
+        if not crops:
             self.logger.debug("Confidence does not match")
             latest_detection = self._latest_detection(source)
             if not latest_detection:
@@ -227,37 +233,25 @@ class Detector:
                     "Including trailing frames: %f seconds", time_since_latest_detection
                 )
                 detections = [
-                    Detection(frame[0], ImageSet(frame[1], None), {})
+                    Detection(frame[0], ImageSet(frame[1]), {})
                     for frame in frames
                 ]
                 self._process(source, detections)
             return
-
-        best_box = max(result.boxes, key=lambda x: x.conf.item())
-        x1, y1, x2, y2 = map(int, best_box.xyxy[0])
-        class_id = int(best_box.cls.item())
-        label = self.yolo_class_confidences[class_id][0]
-        confidence = best_box.conf.item()
 
         detections = []
         for frame_data in frames[:-1]:
             detections.append(
                 Detection(
                     frame_data[0],
-                    ImageSet(
-                        frame_data[1],
-                        Crop(x1, y1, x2, y2, label=label, confidence=confidence),
-                    ),
+                    ImageSet(frame_data[1], crops),
                     {},
                 ),
             )
         detections.append(
             Detection(
                 frames[-1][0],
-                ImageSet(
-                    frames[-1][1],
-                    Crop(x1, y1, x2, y2, label=label, confidence=confidence),
-                ),
+                ImageSet(frames[-1][1], crops),
                 confidences,
             ),
         )

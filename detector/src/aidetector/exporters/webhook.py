@@ -143,7 +143,7 @@ class WebhookExporter(Exporter[WebhookConfig]):
                 photo,
                 "image/jpeg",
             )
-        if self.include_crop and detection.images.crop:
+        if self.include_crop and detection.images.crop_region:
             c = get_crop(detection)
             if c is not None:
                 crop = get_image(c)
@@ -200,7 +200,7 @@ class WebhookExporter(Exporter[WebhookConfig]):
                     if compressed is not None:
                         jpg = compressed
                 data["photo"] = base64.b64encode(jpg).decode("utf-8")
-            if self.include_crop and best_detection.images.crop:
+            if self.include_crop and best_detection.images.crop_region:
                 c = get_crop(best_detection)
                 if c is not None:
                     jpg = get_image(c)

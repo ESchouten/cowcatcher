@@ -122,6 +122,7 @@ This is the fast first-pass AI that scans every frame. Without a YOLO model, the
 | Field                   | Default      | Description |
 | :---------------------- | :----------- | :---------- |
 | `model`                 | **Required** | URL or local path to a YOLO model file (`.pt` or `.onnx`). |
+| `task`                  | `"detect"`   | YOLO task to run: `"detect"` for detection models or `"segment"` for segmentation models. |
 | `confidence`            | `0`          | How confident YOLO must be (0–1) before counting something as a detection. `0.8` means 80% sure. You can also set different thresholds per class — see tip below. |
 | `time_max`              | `60`         | Maximum duration in seconds to group frames into one event. If a detection runs longer than this, a new event starts. |
 | `timeout`               | `5`          | Seconds of no detections before the current event is considered over. |

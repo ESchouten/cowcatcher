@@ -93,6 +93,7 @@ class DiskExporter(Exporter[DiskConfig]):
             video_path = os.path.join(timestamped_directory, "video.mp4")
             with open(video_path, "wb") as f:
                 f.write(video)
+        crop_region = best_detection.images.crop_region
         metadata: Metadata = Metadata(
             timestamp=timestamp,
             validated=validated,
@@ -103,12 +104,12 @@ class DiskExporter(Exporter[DiskConfig]):
             end=detections[-1].date.isoformat(),
             duration=(detections[-1].date - detections[0].date).total_seconds(),
             crop={
-                "x1": best_detection.images.crop.x1,
-                "y1": best_detection.images.crop.y1,
-                "x2": best_detection.images.crop.x2,
-                "y2": best_detection.images.crop.y2,
+                "x1": crop_region.x1,
+                "y1": crop_region.y1,
+                "x2": crop_region.x2,
+                "y2": crop_region.y2,
             }
-            if best_detection.images.crop
+            if crop_region
             else None,
         )
         metadata_path = os.path.join(timestamped_directory, "metadata.json")

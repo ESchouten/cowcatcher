@@ -112,7 +112,7 @@ class TelegramExporter(WebhookExporter, Exporter[ChatConfig]):
                     "media": "attach://photo",
                 }
             )
-        if self.include_crop and best_detection.images.crop:
+        if self.include_crop and best_detection.images.crop_region:
             media.append(
                 {
                     "type": "photo",

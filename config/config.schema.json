@@ -621,6 +621,15 @@
           "title": "Model",
           "type": "string"
         },
+        "task": {
+          "default": "detect",
+          "enum": [
+            "detect",
+            "segment"
+          ],
+          "title": "Task",
+          "type": "string"
+        },
         "confidence": {
           "anyOf": [
             {
