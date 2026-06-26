@@ -4,7 +4,6 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from threading import Thread
 from time import sleep
-from typing import Any, cast
 
 from aidetector.detection.validator import Validator
 from aidetector.detection.yolo import YoloRunner
@@ -86,9 +85,7 @@ class Detector:
                     [config_obj] if isinstance(config_obj, config_cls) else config_obj
                 )
                 for item in config_list:
-                    exporters.append(
-                        exporter_cls.from_config(config, detector, cast(Any, item))
-                    )
+                    exporters.append(exporter_cls(item))
 
         validator = Validator.from_config(
             [detector.vlm]
