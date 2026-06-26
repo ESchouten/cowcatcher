@@ -37,15 +37,18 @@ def generate_mp4(
                 maxX2 = max(crop.x2 for crop in crops)
                 maxY2 = max(crop.y2 for crop in crops)
                 crop_region = Crop(minX1, minY1, maxX2, maxY2)
+                last_crop_index = max(
+                    i for i, d in enumerate(detections) if d.images.crop is not None
+                )
                 last_crop: Crop | None = None
-                for detection in detections:
+                for i, detection in enumerate(detections):
                     last_crop = detection.images.crop or last_crop
                     frame = get_crop(
                         detection,
                         crop=crop_region,
                         plot=plot,
                         padding=padding,
-                        plot_crop=last_crop,
+                        plot_crop=last_crop if i <= last_crop_index else None,
                     )
                     if frame is not None:
                         frames.append(frame)
