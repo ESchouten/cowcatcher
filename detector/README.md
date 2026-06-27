@@ -122,6 +122,7 @@ This is the fast first-pass AI that scans every frame. Without a YOLO model, the
 | Field                   | Default      | Description |
 | :---------------------- | :----------- | :---------- |
 | `model`                 | **Required** | URL or local path to a YOLO model file (`.pt` or `.onnx`). |
+| `task`                  | `"detect"`   | YOLO task to run: `"detect"` for detection models or `"segment"` for segmentation models. |
 | `confidence`            | `0`          | How confident YOLO must be (0–1) before counting something as a detection. `0.8` means 80% sure. You can also set different thresholds per class — see tip below. |
 | `time_max`              | `60`         | Maximum duration in seconds to group frames into one event. If a detection runs longer than this, a new event starts. |
 | `timeout`               | `5`          | Seconds of no detections before the current event is considered over. |
@@ -207,10 +208,14 @@ Posts detection data to an HTTP endpoint. Useful for integrating with other syst
 
 | Field             | Default      | Description |
 | :---------------- | :----------- | :---------- |
-| `url`             | **Required** | The URL to POST to when a detection occurs. |
+| `url`             | **Required** | The URL to call when a detection occurs. |
+| `method`          | `"POST"`     | HTTP method to use: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, or `HEAD`. |
+| `headers`         |              | Optional HTTP headers map. |
+| `body`            |              | Optional raw request body. When set, this is sent instead of the generated detection payload. |
+| `timeout`         |              | Optional request timeout in seconds. |
 | `token`           |              | Authorization token sent in the request headers. |
 | `confidence`      |              | Minimum confidence required to trigger. Leave empty to always trigger. |
-| `data_type`       | `"binary"`   | How image/video data is encoded in the payload: `"binary"` or `"base64"`. |
+| `data_type`       | `"binary"`   | How image/video data is sent: `"binary"`, `"base64"`, or `"none"` for no generated body/files. |
 | `data_max`        |              | Maximum payload size in bytes. The image is compressed if it exceeds this. |
 | `include_plot`    | `false`      | Include the full frame with detection overlay. |
 | `include_crop`    | `true`       | Include a cropped image of the detected area. |

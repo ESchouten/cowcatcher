@@ -82,7 +82,7 @@ jobs:
             REF_NAME=${{ github.ref_name }}
           outputs: type=image,name=ghcr.io/eschouten/ai-detector,push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=${{ matrix.platform }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.platform }},ignore-error=true
 
       - name: Export digest
         run: |
@@ -153,7 +153,7 @@ jobs:
             REF_NAME=${{ github.ref_name }}
             ULTRALYTICS_TAG_ARM64=latest-jetson-jetpack6
           cache-from: type=gha,scope=jetson
-          cache-to: type=gha,mode=max,scope=jetson
+          cache-to: type=gha,mode=max,scope=jetson,ignore-error=true
 
   merge:
     runs-on: ubuntu-latest
@@ -219,7 +219,7 @@ jobs:
             uv_run_args: --no-sync
             needs_cuda_install: true
             cuda_index_url: https://download.pytorch.org/whl/cu130
-            publish_release_asset: "true"
+            publish_release_asset: "false"
           - job_name: Windows CUDA 12.6 Executable
             artifact_prefix: aidetector-cuda126
             type: cuda

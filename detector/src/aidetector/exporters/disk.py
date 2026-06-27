@@ -1,55 +1,27 @@
 import json
-import os
 from dataclasses import asdict, field
 from pathlib import Path
-from typing import Literal
 
 from aidetector.exporters.exporter import Exporter
 from aidetector.media.video import generate_mp4, get_image, get_plot
 from aidetector.utils.config import (
-    Confidence,
-    Config,
     Detection,
-    DetectorConfig,
     DiskConfig,
     get_date_path,
     get_timestamped_filename,
     max_confidence,
 )
 from pydantic.dataclasses import dataclass
-from typing_extensions import Self
 
 
 class DiskExporter(Exporter[DiskConfig]):
     directory: Path | None
-    strategy: Literal["ALL", "BEST"]
 
-    def __init__(
-        self,
-        directory: Path | None,
-        confidence: float | Confidence,
-        export_rejected: bool = True,
-        strategy: Literal["ALL", "BEST"] = "BEST",
-        crop_padding: float = 0.1,
-    ):
-        super().__init__(confidence, export_rejected, directory)
-        if directory:
-            self.directory = Path(os.path.join("detections", directory))
-            os.makedirs(self.directory, exist_ok=True)
-        self.strategy = strategy
-        self.crop_padding = crop_padding
-
-    @classmethod
-    def from_config(
-        cls, config: Config, detector: DetectorConfig, exporter: DiskConfig
-    ) -> Self:
-        return cls(
-            exporter.directory,
-            exporter.confidence or 0,
-            exporter.export_rejected,
-            exporter.strategy,
-            exporter.crop_padding,
-        )
+    def __init__(self, config: DiskConfig):
+        super().__init__(config)
+        self.directory = Path("detections") / config.directory if config.directory else None
+        if self.directory:
+            self.directory.mkdir(parents=True, exist_ok=True)
 
     def filtered_export(
         self,
@@ -68,31 +40,30 @@ class DiskExporter(Exporter[DiskConfig]):
         )
 
         confidence_max = max(best_detection.confidence.items(), key=lambda x: x[1])
-        directory = self.directory or Path(
-            os.path.join("detections", confidence_max[0])
-        )
-        os.makedirs(directory, exist_ok=True)
+        directory = self.directory or Path("detections") / confidence_max[0]
+        directory.mkdir(parents=True, exist_ok=True)
 
-        timestamped_directory = os.path.join(directory, subfolder, timestamp)
-        os.makedirs(timestamped_directory, exist_ok=True)
-        if self.strategy == "ALL":
+        timestamped_directory = directory / subfolder / timestamp
+        timestamped_directory.mkdir(parents=True, exist_ok=True)
+        if self.config.strategy == "ALL":
             for result in detections:
                 image_name = get_timestamped_filename(result)
-                image_path = os.path.join(timestamped_directory, image_name)
+                image_path = timestamped_directory / image_name
                 with open(image_path, "wb") as f:
                     f.write(get_image(result.images.jpg))
         if best_detection:
-            image_path = os.path.join(timestamped_directory, "best.jpg")
+            image_path = timestamped_directory / "best.jpg"
             with open(image_path, "wb") as f:
                 f.write(get_image(get_plot(best_detection)))
-            clean_image_path = os.path.join(timestamped_directory, "clean.jpg")
+            clean_image_path = timestamped_directory / "clean.jpg"
             with open(clean_image_path, "wb") as f:
                 f.write(get_image(best_detection.images.jpg))
-        video = generate_mp4(detections, padding=self.crop_padding)
+        video = generate_mp4(detections, padding=self.config.crop_padding)
         if video:
-            video_path = os.path.join(timestamped_directory, "video.mp4")
+            video_path = timestamped_directory / "video.mp4"
             with open(video_path, "wb") as f:
                 f.write(video)
+        crop_region = best_detection.images.crop_region
         metadata: Metadata = Metadata(
             timestamp=timestamp,
             validated=validated,
@@ -107,12 +78,12 @@ class DiskExporter(Exporter[DiskConfig]):
             end=detections[-1].date.isoformat(),
             duration=(detections[-1].date - detections[0].date).total_seconds(),
             crop={
-                "x1": best_detection.images.crop.x1,
-                "y1": best_detection.images.crop.y1,
-                "x2": best_detection.images.crop.x2,
-                "y2": best_detection.images.crop.y2,
+                "x1": crop_region.x1,
+                "y1": crop_region.y1,
+                "x2": crop_region.x2,
+                "y2": crop_region.y2,
             }
-            if best_detection.images.crop
+            if crop_region
             else None,
             crops=[
                 {
@@ -124,7 +95,7 @@ class DiskExporter(Exporter[DiskConfig]):
                 for crop in best_detection.images.crops
             ],
         )
-        metadata_path = os.path.join(timestamped_directory, "metadata.json")
+        metadata_path = timestamped_directory / "metadata.json"
         with open(metadata_path, "w") as f:
             json.dump(asdict(metadata), f)
 

@@ -4,14 +4,13 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from threading import Thread
 from time import sleep
-from typing import Any, cast
 
 from aidetector.detection.validator import Validator
+from aidetector.detection.yolo import YoloRunner
 from aidetector.exporters.disk import DiskExporter
 from aidetector.exporters.exporter import Exporter
 from aidetector.exporters.telegram import TelegramExporter
 from aidetector.exporters.webhook import WebhookExporter
-from aidetector.detection.yolo import confidences_from_objects, objects_from_result
 from aidetector.identity.service import IdentityService
 from aidetector.sources.source import SourceProvider
 from aidetector.utils.config import (
@@ -27,25 +26,19 @@ from aidetector.utils.config import (
     VLMConfig,
     WebhookConfig,
     YoloConfig,
-    confidence_matches,
     matching_confidences,
     max_confidence,
-    min_confidence,
 )
-from aidetector.utils.onnx import should_half, should_rect
-from aidetector.utils.version import TYPE
 from numpy import ndarray
 from typing_extensions import Self
-from ultralytics import YOLO
 
 
 class Detector:
     logger = logging.getLogger(__name__)
     detections: defaultdict[str, list[Detection]]
     detection: DetectionConfig
-    yolo: YOLO | None
     yolo_config: YoloConfig | None
-    yolo_class_confidences: dict[int, tuple[str, float]]
+    yolo_runner: YoloRunner | None
     source_provider: SourceProvider
     validator: Validator
     exporters: list[Exporter]
@@ -69,36 +62,12 @@ class Detector:
         self.detections = defaultdict(list)
         self.detection = detection
         self.yolo_config = yolo_config
-        self.yolo = None
-        self.yolo_class_confidences = {}
         self.source_provider = SourceProvider(detection)
-        if yolo_config is not None:
-            self.yolo = YOLO(
-                yolo_config.model
-                if yolo_config.model.endswith(".onnx") or TYPE == "cuda"
-                else (
-                    YOLO(yolo_config.model).export(
-                        format="engine" if TYPE == "tensorrt" else "onnx",
-                        batch=max(1, len(self.source_provider.sources)),
-                        dynamic=True,
-                        half=should_half(),
-                        imgsz=yolo_config.imgsz,
-                        simplify=True,
-                        opset=onnx_config.opset,
-                    )
-                ),
-                task="detect",
-            )
-            if self.yolo.predictor is None:
-                self.yolo.predictor = self.yolo._smart_load("predictor")(
-                    overrides=self.yolo.overrides,
-                    _callbacks=self.yolo.callbacks,
-                )
-                self.yolo.predictor.setup_model(model=self.yolo.model, verbose=False)
-            self.yolo_class_confidences = self._resolve_class_confidences(
-                yolo_config.confidence
-            )
-
+        self.yolo_runner = (
+            YoloRunner(yolo_config, onnx_config, len(self.source_provider.sources))
+            if yolo_config is not None
+            else None
+        )
         self.validator = validator
         self.exporters = exporters
         self.identity_service = identity_service
@@ -129,9 +98,7 @@ class Detector:
                     [config_obj] if isinstance(config_obj, config_cls) else config_obj
                 )
                 for item in config_list:
-                    exporters.append(
-                        exporter_cls.from_config(config, detector, cast(Any, item))
-                    )
+                    exporters.append(exporter_cls(item))
 
         validator = Validator.from_config(
             [detector.vlm]
@@ -171,29 +138,13 @@ class Detector:
             return
         self.last_frame_time = datetime.now()
 
-        if self.yolo and self.yolo_config:
+        if self.yolo_runner and self.yolo_config:
             if self.yolo_config.strategy == "LATEST":
                 frames = [frames[-1][1] for frames in batch.values()]
             else:
                 frames = [frame[1] for frames in batch.values() for frame in frames]
 
-            then = datetime.now()
-            results = self.yolo.predict(
-                source=frames,
-                conf=min_confidence(self.yolo_config.confidence),
-                stream=False,
-                classes=list(self.yolo_class_confidences.keys()) or None,
-                imgsz=self.yolo_config.imgsz,
-                rect=should_rect(),
-                batch=len(frames),
-            )
-            now = datetime.now()
-            self.logger.info(
-                "Detection time: %dms for %d frame(s). Avg: %dms",
-                (now - then).total_seconds() * 1000,
-                len(frames),
-                (now - then).total_seconds() * 1000 / len(frames),
-            )
+            results = self.yolo_runner.predict(frames)
             if self.yolo_config.strategy == "LATEST":
                 for source, result in zip(batch.keys(), results):
                     self._handle_yolo_result(source, result, batch[source])
@@ -209,71 +160,38 @@ class Detector:
         for source, frames in batch.items():
             self._process(
                 source,
-                [Detection(frames[-1][0], ImageSet(frames[-1][1], None), {})],
+                [Detection(frames[-1][0], ImageSet(frames[-1][1]), {})],
             )
 
     def _handle_yolo_result(
         self, source: str, result, frames: list[tuple[datetime, ndarray]]
     ):
-        if self.yolo_config is None:
+        if self.yolo_config is None or self.yolo_runner is None:
             return
 
-        objects = objects_from_result(
-            result,
-            result.orig_shape,
-            class_confidences=self.yolo_class_confidences,
-        )
-        confidences = confidences_from_objects(objects)
-
-        if not confidence_matches(confidences, self.yolo_config.confidence):
-            self.logger.debug("Confidence does not match")
-            latest_detection = self._latest_detection(source)
-            if not latest_detection:
-                return
-            time_since_latest_detection = (
-                (frames[-1][0] - latest_detection.date).total_seconds()
-                if latest_detection
-                else 0
-            )
-            if self.yolo_config.include_trailing_time > time_since_latest_detection:
-                self.logger.info(
-                    "Including trailing frames: %f seconds", time_since_latest_detection
-                )
-                detections = [
-                    Detection(frame[0], ImageSet(frame[1], None), {})
-                    for frame in frames
-                ]
-                self._process(source, detections)
+        detections = self.yolo_runner.detections_from_result(result, frames)
+        if detections:
+            self._process(source, detections)
             return
 
-        crops = [obj.crop for obj in objects]
-        best_crop = max(crops, key=lambda crop: crop.confidence or 0)
-
-        detections = []
-        for frame_data in frames[:-1]:
-            detections.append(
-                Detection(
-                    frame_data[0],
-                    ImageSet(
-                        frame_data[1],
-                        best_crop,
-                        crops,
-                    ),
-                    {},
-                ),
-            )
-        detections.append(
-            Detection(
-                frames[-1][0],
-                ImageSet(
-                    frames[-1][1],
-                    best_crop,
-                    crops,
-                ),
-                confidences,
-            ),
+        self.logger.debug("Confidence does not match")
+        latest_detection = self._latest_detection(source)
+        if not latest_detection:
+            return
+        time_since_latest_detection = (
+            (frames[-1][0] - latest_detection.date).total_seconds()
+            if latest_detection
+            else 0
         )
-        self._process(source, detections)
+        if self.yolo_config.include_trailing_time > time_since_latest_detection:
+            self.logger.info(
+                "Including trailing frames: %f seconds", time_since_latest_detection
+            )
+            detections = [
+                Detection(frame[0], ImageSet(frame[1]), {})
+                for frame in frames
+            ]
+            self._process(source, detections)
 
     def start(self):
         def monitor_timeouts():
@@ -310,51 +228,6 @@ class Detector:
 
         if self._time_exceeded(source):
             self._export(source)
-
-    def _resolve_class_confidences(
-        self, confidence: float | dict[str, float]
-    ) -> dict[int, tuple[str, float]]:
-        if not self.yolo:
-            return {}
-
-        yolo_names = self.yolo.names
-        id_to_name = (
-            {
-                int(class_id): str(class_name)
-                for class_id, class_name in yolo_names.items()
-            }
-            if isinstance(yolo_names, dict)
-            else {
-                class_id: str(class_name)
-                for class_id, class_name in enumerate(yolo_names)
-            }
-        )
-
-        if not isinstance(confidence, dict):
-            threshold = float(confidence)
-            return {
-                class_id: (class_name, threshold)
-                for class_id, class_name in id_to_name.items()
-            }
-
-        name_to_id = {
-            class_name: class_id for class_id, class_name in id_to_name.items()
-        }
-        class_confidences: dict[int, tuple[str, float]] = {}
-        for raw_class_name, threshold in confidence.items():
-            class_name = raw_class_name.strip()
-            class_id = name_to_id.get(class_name)
-            if class_id is None:
-                available_names = ", ".join(
-                    id_to_name[class_id] for class_id in sorted(id_to_name)
-                )
-                raise ValueError(
-                    f"Unknown YOLO class name '{raw_class_name}' in yolo.confidence. "
-                    f"Available class names: {available_names}"
-                )
-            class_confidences[class_id] = (id_to_name[class_id], float(threshold))
-
-        return class_confidences
 
     def _export(self, source: str):
         detections = self.detections[source]
@@ -450,14 +323,16 @@ class Detector:
             sample_detections = [
                 Detection(
                     sample.date,
-                    ImageSet(sample.images.jpg, crop, sample.images.crops),
+                    ImageSet(sample.images.jpg, [crop]),
                     sample.confidence,
                 )
                 for sample in samples
             ]
             identity = self.identity_service.identify(
                 self.identity_config.id,
-                sample_detections[0] if len(sample_detections) == 1 else sample_detections,
+                sample_detections[0]
+                if len(sample_detections) == 1
+                else sample_detections,
                 source,
                 multiple=self.identity_config.multiple,
             )

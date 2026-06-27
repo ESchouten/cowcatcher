@@ -1,0 +1,52 @@
+name: Detector Tests
+
+on:
+  pull_request:
+    paths:
+      - "detector/**"
+      - ".github/workflows/detector-tests.yml"
+  push:
+    branches:
+      - "**"
+    paths:
+      - "detector/**"
+      - ".github/workflows/detector-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - "3.10"
+          - "3.11"
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+    defaults:
+      run:
+        working-directory: detector
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Ruff
+        run: uv run ruff check src/aidetector tests
+
+      - name: Compile
+        run: uv run python -m compileall src/aidetector
+
+      - name: Pytest
+        run: uv run pytest

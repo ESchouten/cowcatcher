@@ -1,5 +1,7 @@
 detections
 config.json
+config.**.json
+yolo11**
 app.json
 !example/config.json
 !web/src/routes/(admin)/detections

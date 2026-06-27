@@ -43,7 +43,11 @@ dev = [
     "ruff>=0.14.14",
     "ty>=0.0.14",
     "pyinstaller>=6.18.0",
+    "pytest>=9.1.1",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.hatch.metadata]
 allow-direct-references = true

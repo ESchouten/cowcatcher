@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 from aidetector.detection.detector import Detector
-from aidetector.detection.yolo import apply_mask, objects_from_result
+from aidetector.detection.yolo import YoloResultMapper, apply_mask, objects_from_result
 from aidetector.exporters.telegram import TelegramExporter
 from aidetector.exporters.webhook import WebhookExporter
 from aidetector.identity.store import SQLiteIdentityStore
@@ -17,12 +17,13 @@ from aidetector.identity.wildlife_tools import (
 )
 from aidetector.utils.config import (
     Crop,
+    ChatConfig,
     Detection,
     DetectorIdentityConfig,
+    WebhookConfig,
     IdentityProviderConfig,
     IdentityResult,
     ImageSet,
-    YoloConfig,
 )
 
 
@@ -141,11 +142,7 @@ class IdentityStoreTests(unittest.TestCase):
 
 class DetectorIdentityTests(unittest.TestCase):
     def test_yolo_result_keeps_multiple_crops_per_frame(self):
-        detector = Detector.__new__(Detector)
-        detector.yolo_config = YoloConfig(model="cow.pt", confidence={"cow": 0.5})
-        detector.yolo_class_confidences = {19: ("cow", 0.5)}
-        processed = []
-        detector._process = lambda source, detections: processed.append(detections)
+        mapper = YoloResultMapper({19: ("cow", 0.5)})
         result = _SegmentationResult(
             names={19: "cow"},
             boxes=[
@@ -156,13 +153,13 @@ class DetectorIdentityTests(unittest.TestCase):
             orig_shape=(10, 10),
         )
 
-        detector._handle_yolo_result(
-            "source-1",
+        detections = mapper.detections_from_result(
             result,
             [(datetime(2026, 1, 1, 12, 0, 0), np.zeros((10, 10, 3), dtype=np.uint8))],
         )
 
-        detection = processed[0][0]
+        assert detections is not None
+        detection = detections[0]
         self.assertEqual(len(detection.images.crops), 2)
         self.assertEqual(detection.images.crop.x1, 5)
         self.assertEqual(detection.confidence, {"cow": 0.9})
@@ -576,15 +573,17 @@ class WildlifeToolsIdentityTests(unittest.TestCase):
 class ExporterIdentityTests(unittest.TestCase):
     def test_telegram_caption_includes_identity(self):
         exporter = TelegramExporter(
-            token="test-token",
-            chat="test-chat",
-            confidence=0,
-            alert_every=1,
-            include_video=False,
-            include_image=True,
-            include_plot=False,
-            include_crop=False,
-            video_width=None,
+            ChatConfig(
+                token="test-token",
+                chat="test-chat",
+                confidence=0,
+                alert_every=1,
+                include_video=False,
+                include_image=True,
+                include_plot=False,
+                include_crop=False,
+                video_width=None,
+            )
         )
         detection = _detection(
             identity=IdentityResult(
@@ -602,16 +601,18 @@ class ExporterIdentityTests(unittest.TestCase):
 
     def test_webhook_payload_includes_identity(self):
         exporter = WebhookExporter(
-            url="https://example.com",
-            token=None,
-            confidence=0,
-            data_type="binary",
-            data_max=None,
-            include_video=False,
-            include_image=False,
-            include_plot=False,
-            include_crop=False,
-            video_width=None,
+            WebhookConfig(
+                url="https://example.com",
+                token=None,
+                confidence=0,
+                data_type="binary",
+                data_max=None,
+                include_video=False,
+                include_image=False,
+                include_plot=False,
+                include_crop=False,
+                video_width=None,
+            )
         )
         detection = _detection(
             identity=IdentityResult(
@@ -647,7 +648,7 @@ def _detection(
         date=date or datetime(2026, 1, 1, 12, 0, 0),
         images=ImageSet(
             jpg=np.zeros((10, 10, 3), dtype=np.uint8),
-            crop=Crop(1, 1, 8, 8, label=label, confidence=0.9) if label else None,
+            crops=[Crop(1, 1, 8, 8, label=label, confidence=0.9)] if label else [],
         ),
         confidence=confidence or ({label: 0.9} if label else {}),
         identity=identity,

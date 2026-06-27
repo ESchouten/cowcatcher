@@ -3,37 +3,22 @@ from abc import ABC, abstractmethod
 from typing import Generic, TypeVar
 
 from aidetector.utils.config import (
-    Confidence,
-    Config,
     Detection,
-    DetectorConfig,
     ExporterConfig,
     confidence_matches,
 )
-from typing_extensions import Self
 
 T = TypeVar("T", bound=ExporterConfig)
 
 
 class Exporter(ABC, Generic[T]):
     logger = logging.getLogger(__name__)
-    confidence: float | Confidence
-    export_rejected: bool
+    config: T
 
-    def __init__(
-        self, confidence: float | Confidence = 0, export_rejected: bool = False, *args
-    ):
+    def __init__(self, config: T):
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.logger.info(f"Initializing with args={args}")
-        self.confidence = confidence
-        self.export_rejected = export_rejected
-
-    @classmethod
-    @abstractmethod
-    def from_config(
-        cls: Self, config: Config, detector: DetectorConfig, exporter: T
-    ) -> Self:
-        pass
+        self.logger.info("Initializing")
+        self.config = config
 
     def export(
         self,
@@ -41,10 +26,10 @@ class Exporter(ABC, Generic[T]):
         detections: list[Detection],
         validated: bool | None,
     ):
-        if not confidence_matches(best_detection.confidence, self.confidence):
+        if not confidence_matches(best_detection.confidence, self.config.confidence or 0):
             self.logger.info("Confidence does not match")
             return
-        if validated is False and not self.export_rejected:
+        if validated is False and not self.config.export_rejected:
             self.logger.info("Best detection is rejected and export_rejected is False")
             return
         self.filtered_export(best_detection, detections, validated)
