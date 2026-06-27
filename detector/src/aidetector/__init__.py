@@ -1,5 +1,6 @@
 import logging
 import os
+import pathlib
 import sys
 import time
 from pathlib import Path
@@ -18,8 +19,14 @@ def _set_working_directory() -> None:
         os.chdir(Path(sys.executable).resolve().parent)
 
 
+def _patch_windows_path_checkpoints() -> None:
+    if os.name != "nt":
+        pathlib.WindowsPath = pathlib.PosixPath
+
+
 def start() -> None:
     _set_working_directory()
+    _patch_windows_path_checkpoints()
 
     from aidetector.utils.config import config
     from aidetector.utils.onnx import setup_ort

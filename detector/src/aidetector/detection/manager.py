@@ -22,7 +22,7 @@ class Manager:
             ]
             for d in ds
         ]
-        health = Healthcheck.from_config(config.health) if config.health else None
+        health = Healthcheck(config.health) if config.health else None
         return cls(detectors, health)
 
     def start(self):
