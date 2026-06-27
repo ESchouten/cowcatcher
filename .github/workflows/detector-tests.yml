@@ -4,16 +4,12 @@ on:
   pull_request:
     paths:
       - "detector/**"
-      - "config/**"
-      - "example/**"
       - ".github/workflows/detector-tests.yml"
   push:
     branches:
       - "**"
     paths:
       - "detector/**"
-      - "config/**"
-      - "example/**"
       - ".github/workflows/detector-tests.yml"
   workflow_dispatch:
 
@@ -22,10 +18,16 @@ permissions:
 
 jobs:
   test:
-    name: Python Tests
+    name: Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - "3.10"
+          - "3.11"
     env:
-      UV_PYTHON: "3.11"
+      UV_PYTHON: ${{ matrix.python-version }}
     defaults:
       run:
         working-directory: detector
