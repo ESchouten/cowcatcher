@@ -1,6 +1,4 @@
 import logging
-import os
-import pathlib
 from datetime import datetime
 from typing import Any
 
@@ -19,11 +17,6 @@ from numpy import ndarray
 from ultralytics import YOLO
 
 logger = logging.getLogger(__name__)
-
-
-def _patch_windows_path_checkpoints() -> None:
-    if os.name != "nt":
-        pathlib.WindowsPath = pathlib.PosixPath
 
 
 class YoloResultMapper:
@@ -80,7 +73,6 @@ class YoloRunner:
         source_count: int,
     ):
         self.config = config
-        _patch_windows_path_checkpoints()
         self.model = YOLO(
             self._model_path(config, onnx_config, source_count),
             task=config.task,
