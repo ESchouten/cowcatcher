@@ -1,5 +1,6 @@
 detections
 config.json
+config.**.json
 app.json
 !example/config.json
 !web/src/routes/(admin)/detections
