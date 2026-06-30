@@ -161,13 +161,13 @@ class YoloResultMapper:
             return None
 
         detections = [
-            Detection(frame_date, ImageSet(frame, list(crops)), {})
+            Detection(frame_date, ImageSet(frame), {})
             for frame_date, frame in frames[:-1]
         ]
         detections.append(
             Detection(
                 frames[-1][0],
-                ImageSet(frames[-1][1], list(crops)),
+                ImageSet(frames[-1][1], _clone_crops(crops)),
                 confidences,
             )
         )
@@ -188,6 +188,10 @@ class YoloResultMapper:
             reverse=True,
         )
         return [obj.crop for obj in objects], confidences_from_objects(objects)
+
+
+def _clone_crops(crops: list[Crop]) -> list[Crop]:
+    return [crop.clone() for crop in crops]
 
 
 class YoloRunner:

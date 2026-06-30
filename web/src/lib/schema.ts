@@ -58,13 +58,20 @@ export interface IdentityProviderConfig {
 	type?: 'wildlife_tools';
 	database: string;
 	model?: string;
+	segment_model?: string | null;
+	segment_labels?: string[];
+	segment_confidence?: number;
+	segment_imgsz?: number;
 	[key: string]: unknown;
 }
 
-export interface DetectorIdentityConfig extends IdentityProviderConfig {
-	labels?: string[] | null;
+export interface IdentityConfig {
+	providers: IdentityProviderConfig[];
+}
+
+export interface DetectorIdentityConfig {
+	provider: string;
 	multiple?: boolean;
-	samples?: number;
 }
 
 export interface TelegramConfig {
@@ -76,6 +83,7 @@ export interface TelegramConfig {
 export interface Config {
 	$schema?: string;
 	detectors: DetectorConfig[];
+	identity?: IdentityConfig | null;
 	[key: string]: unknown;
 }
 
@@ -94,7 +102,7 @@ export interface TelegramMeta extends TelegramConfig {
 	label: string;
 }
 
-export interface IdentityMeta extends DetectorIdentityConfig {
+export interface IdentityMeta extends IdentityProviderConfig {
 	label: string;
 }
 

@@ -69,8 +69,8 @@ class DiskExporter(Exporter[DiskConfig]):
             validated=validated,
             confidence=max_confidence(best_detection.confidence),
             confidences=best_detection.confidence,
-            identity=asdict(best_detection.identity)
-            if best_detection.identity is not None
+            identity=asdict(best_detection.identities[0])
+            if best_detection.identities
             else None,
             identities=[asdict(identity) for identity in best_detection.identities],
             detections=len(detections),

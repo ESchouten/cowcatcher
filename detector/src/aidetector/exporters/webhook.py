@@ -88,9 +88,8 @@ class WebhookExporter(Exporter[WebhookConfig]):
             "duration": (detections[-1].date - detections[0].date).total_seconds(),
             "validated": validated,
         }
-        if best_detection.identity is not None:
-            data["identity"] = asdict(best_detection.identity)
         if best_detection.identities:
+            data["identity"] = asdict(best_detection.identities[0])
             data["identities"] = [
                 asdict(identity) for identity in best_detection.identities
             ]
@@ -153,8 +152,7 @@ class WebhookExporter(Exporter[WebhookConfig]):
                 best_detection.date,
                 best_detection.images,
                 best_detection.confidence,
-                best_detection.identity,
-                best_detection.identities,
+                identities=best_detection.identities,
             )
 
             request: dict[str, Any] = {

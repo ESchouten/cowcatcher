@@ -6,6 +6,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import * as v from 'valibot';
 import type { DetectorIdentityConfig, IdentityMeta, IdentityProviderConfig } from '$lib/schema';
+import { identityProviderConfig } from '$lib/identity-provider';
 import { CONFIG_PATH } from '$lib/server/shared-paths';
 import { getConfig, getConfigSchema, saveConfig } from './config.remote';
 
@@ -39,26 +40,22 @@ export type IdentityStore = {
 const configDirectory = path.dirname(CONFIG_PATH);
 const localIdentityPresetDirectory = path.resolve(process.cwd(), '..', 'config', 'identity');
 
-function cloneIdentity(identity: DetectorIdentityConfig): DetectorIdentityConfig {
-	return structuredClone(identity);
-}
-
-function normalizeIdentityConfig(identity: unknown): DetectorIdentityConfig | null {
+function normalizeIdentityProvider(identity: unknown): IdentityProviderConfig | null {
 	if (!identity || typeof identity !== 'object') {
 		return null;
 	}
 
-	const value = identity as Partial<DetectorIdentityConfig>;
+	const value = identity as Partial<IdentityProviderConfig>;
 	return typeof value.id === 'string' &&
 		value.id.trim().length > 0 &&
 		typeof value.database === 'string' &&
 		value.database.trim().length > 0
-		? (value as DetectorIdentityConfig)
+		? (value as IdentityProviderConfig)
 		: null;
 }
 
 function normalizeIdentityMeta(identity: unknown): IdentityMeta | null {
-	const config = normalizeIdentityConfig(identity);
+	const config = normalizeIdentityProvider(identity);
 	if (!config || !identity || typeof identity !== 'object') {
 		return null;
 	}
@@ -66,6 +63,17 @@ function normalizeIdentityMeta(identity: unknown): IdentityMeta | null {
 	const label = (identity as Partial<IdentityMeta>).label;
 	return typeof label === 'string' && label.trim().length > 0
 		? ({ label, ...config } as IdentityMeta)
+		: null;
+}
+
+function normalizeDetectorIdentity(identity: unknown): DetectorIdentityConfig | null {
+	if (!identity || typeof identity !== 'object') {
+		return null;
+	}
+
+	const value = identity as Partial<DetectorIdentityConfig>;
+	return typeof value.provider === 'string' && value.provider.trim().length > 0
+		? (value as DetectorIdentityConfig)
 		: null;
 }
 
@@ -77,31 +85,37 @@ function resolveDatabasePath(database: string) {
 	return path.isAbsolute(database) ? database : path.resolve(configDirectory, database);
 }
 
-function detectorUsesIdentity(detectorIdentity: unknown, identity: DetectorIdentityConfig) {
-	const normalized = normalizeIdentityConfig(detectorIdentity);
-	return normalized?.id === identity.id;
+function detectorUsesIdentity(detectorIdentity: unknown, identity: IdentityProviderConfig) {
+	const normalized = normalizeDetectorIdentity(detectorIdentity);
+	return normalized?.provider === identity.id;
 }
 
 function configuredIdentities(
 	appIdentities: IdentityMeta[],
-	detectorIdentities: unknown[]
+	configProviders: unknown[]
 ): IdentityMeta[] {
 	const identities = new Map<string, IdentityMeta>();
 
 	for (const identity of appIdentities) {
 		const normalized = normalizeIdentityMeta(identity);
 		if (normalized) {
-			identities.set(identityKey(normalized), normalized);
+			identities.set(identityKey(normalized), {
+				label: normalized.label,
+				...identityProviderConfig(normalized)
+			});
 		}
 	}
 
-	for (const detectorIdentity of detectorIdentities) {
-		const normalized = normalizeIdentityConfig(detectorIdentity);
+	for (const provider of configProviders) {
+		const normalized = normalizeIdentityProvider(provider);
 		if (normalized) {
-			identities.set(identityKey(normalized), {
-				label: normalized.id,
-				...normalized
-			});
+			const key = identityKey(normalized);
+			if (!identities.has(key)) {
+				identities.set(key, {
+					label: normalized.id,
+					...identityProviderConfig(normalized)
+				});
+			}
 		}
 	}
 
@@ -248,7 +262,7 @@ function localIsoSeconds() {
 	return new Date(date.getTime() - offset).toISOString().slice(0, 19);
 }
 
-async function readLocalPreset(file: string): Promise<DetectorIdentityConfig | null> {
+async function readLocalPreset(file: string): Promise<IdentityProviderConfig | null> {
 	const resolvedPath = path.resolve(localIdentityPresetDirectory, file);
 	const relativePath = path.relative(localIdentityPresetDirectory, resolvedPath);
 	if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
@@ -256,16 +270,15 @@ async function readLocalPreset(file: string): Promise<DetectorIdentityConfig | n
 	}
 
 	return readFile(resolvedPath, 'utf8')
-		.then((contents) => JSON.parse(contents) as DetectorIdentityConfig)
+		.then((contents) => JSON.parse(contents) as IdentityProviderConfig)
 		.catch(() => null);
 }
 
 async function findIdentityProvider(providerId: string, databasePath: string) {
 	const { config, app } = await getConfig();
-	const provider = configuredIdentities(
-		app.identities,
-		config.detectors.map((detector) => detector.identity)
-	).find((provider) => provider.id === providerId && provider.database === databasePath);
+	const provider = configuredIdentities(app.identities, config.identity?.providers ?? []).find(
+		(provider) => provider.id === providerId && provider.database === databasePath
+	);
 
 	if (!provider) {
 		error(404, 'Identity provider not found in config');
@@ -275,8 +288,8 @@ async function findIdentityProvider(providerId: string, databasePath: string) {
 }
 
 export const getIdentities = query(async (): Promise<IdentityMeta[]> => {
-	const { app } = await getConfig();
-	return app.identities;
+	const { config, app } = await getConfig();
+	return configuredIdentities(app.identities, config.identity?.providers ?? []);
 });
 
 export const getIdentity = query(
@@ -317,7 +330,7 @@ export const getIdentityPreset = query(
 	v.object({
 		file: v.string()
 	}),
-	async ({ file }): Promise<DetectorIdentityConfig> => {
+	async ({ file }): Promise<IdentityProviderConfig> => {
 		const localPreset = await readLocalPreset(file);
 		if (localPreset) {
 			return localPreset;
@@ -338,7 +351,7 @@ export const getIdentitySchema = query(async () => {
 
 	return {
 		$defs: configSchema.$defs,
-		...(configSchema.$defs.DetectorIdentityConfig as Record<string, unknown>)
+		...(configSchema.$defs.IdentityProviderConfig as Record<string, unknown>)
 	};
 });
 
@@ -351,7 +364,7 @@ export const saveIdentityConfig = command(
 		})
 	}),
 	async ({ original, identity, meta }) => {
-		const normalized = normalizeIdentityConfig(identity);
+		const normalized = normalizeIdentityProvider(identity);
 		if (!normalized) {
 			error(400, 'Identity must have an id and database');
 		}
@@ -371,7 +384,8 @@ export const saveIdentityConfig = command(
 			error(409, 'Identity id already exists');
 		}
 
-		const nextIdentity: IdentityMeta = { label: meta.label, ...cloneIdentity(normalized) };
+		const provider = identityProviderConfig(normalized);
+		const nextIdentity: IdentityMeta = { label: meta.label, ...provider };
 		const index = original
 			? app.identities.findIndex((identity) => identity.label === original)
 			: -1;
@@ -383,10 +397,25 @@ export const saveIdentityConfig = command(
 			app.identities.push(nextIdentity);
 		}
 
+		config.identity ??= { providers: [] };
+		config.identity.providers ??= [];
+		const providerIndex = config.identity.providers.findIndex(
+			(provider) => provider.id === (previousIdentity?.id ?? normalized.id)
+		);
+		if (providerIndex >= 0) {
+			config.identity.providers[providerIndex] = provider;
+		} else {
+			config.identity.providers.push(provider);
+		}
+
 		if (previousIdentity) {
 			for (const detector of config.detectors) {
 				if (detectorUsesIdentity(detector.identity, previousIdentity)) {
-					detector.identity = cloneIdentity(normalized);
+					const detectorIdentity = normalizeDetectorIdentity(detector.identity);
+					detector.identity = {
+						...(detectorIdentity ?? { provider: normalized.id }),
+						provider: normalized.id
+					};
 				}
 			}
 		}
@@ -405,6 +434,15 @@ export const deleteIdentityConfig = command(
 		app.identities = app.identities.filter((identity) => identity.label !== label);
 
 		if (identity) {
+			if (config.identity) {
+				config.identity.providers = config.identity.providers.filter(
+					(provider) => provider.id !== identity.id || provider.database !== identity.database
+				);
+				if (config.identity.providers.length === 0) {
+					delete config.identity;
+				}
+			}
+
 			for (const detector of config.detectors) {
 				if (detectorUsesIdentity(detector.identity, identity)) {
 					delete detector.identity;
@@ -418,10 +456,7 @@ export const deleteIdentityConfig = command(
 
 export const getIdentityStores = query(async (): Promise<IdentityStore[]> => {
 	const { config, app } = await getConfig();
-	return configuredIdentities(
-		app.identities,
-		config.detectors.map((detector) => detector.identity)
-	).map(readStore);
+	return configuredIdentities(app.identities, config.identity?.providers ?? []).map(readStore);
 });
 
 export const renameIdentity = command(

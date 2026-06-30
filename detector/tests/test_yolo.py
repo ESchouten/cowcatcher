@@ -50,6 +50,7 @@ def test_yolo_result_mapper_keeps_all_boxes_above_threshold():
     assert detections is not None
     assert len(detections) == 2
     assert detections[0].confidence == {}
+    assert detections[0].images.crops == []
     assert detections[1].confidence == {"cow": 0.8}
     assert len(detections[1].images.crops) == 2
     assert detections[1].images.crops[0].label == "cow"

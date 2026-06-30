@@ -81,7 +81,7 @@ class TelegramExporter(WebhookExporter):
                 )
 
         thumbs = "\n👍 / 👎" if validated is None else ""
-        identity = best_detection.identity
+        identity = best_detection.identities[0] if best_detection.identities else None
         identity_line = ""
         if len(best_detection.identities) > 1:
             identity_line = "\nIdentities: " + ", ".join(

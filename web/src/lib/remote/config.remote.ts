@@ -5,8 +5,17 @@ import {
 	saveConfig as saveConfigShared
 } from '$lib/server/shared-paths';
 import { readFile } from 'node:fs/promises';
-import type { AppConfig, Config, DetectorConfig, StreamMeta, TelegramConfig } from '$lib/schema';
+import type {
+	AppConfig,
+	Config,
+	DetectorConfig,
+	IdentityMeta,
+	IdentityProviderConfig,
+	StreamMeta,
+	TelegramConfig
+} from '$lib/schema';
 import { DEFAULT_SCHEMA_URL } from '$lib/schema';
+import { identityProviderConfig } from '$lib/identity-provider';
 
 async function readConfigDocument(): Promise<Config | null> {
 	const config = await readFile(CONFIG_PATH, 'utf8')
@@ -27,6 +36,9 @@ async function readConfigDocument(): Promise<Config | null> {
 		);
 		return detector;
 	});
+	if (config.identity) {
+		config.identity.providers ??= [];
+	}
 	return config;
 }
 
@@ -86,6 +98,27 @@ export const getConfig = query(async (): Promise<{ config: Config; app: AppConfi
 	unknownTelegrams.forEach((telegram) => {
 		appConfig.telegrams.push({ label: telegram.chat, token: telegram.token, chat: telegram.chat });
 	});
+
+	const unknownIdentities = (config.identity?.providers ?? []).filter(
+		(provider: IdentityProviderConfig) =>
+			!appConfig.identities.some((identity) => identity.id === provider.id)
+	);
+	unknownIdentities.forEach((identity) => {
+		appConfig.identities.push({ label: identity.id, ...identity });
+	});
+
+	const appIdentityProviders = appConfig.identities.map((identity: IdentityMeta) =>
+		identityProviderConfig(identity)
+	);
+	if (appIdentityProviders.length) {
+		config.identity ??= { providers: [] };
+		config.identity.providers ??= [];
+		for (const identity of appIdentityProviders) {
+			if (!config.identity.providers.some((provider) => provider.id === identity.id)) {
+				config.identity.providers.push(identity);
+			}
+		}
+	}
 
 	await saveConfigShared({ config, app: appConfig });
 	return { config, app: appConfig };

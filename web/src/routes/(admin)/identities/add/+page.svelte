@@ -16,31 +16,30 @@
 		getIdentitySchema,
 		saveIdentityConfig
 	} from '$lib/remote/identity.remote';
-	import type { DetectorIdentityConfig, IdentityMeta } from '$lib/schema';
+	import type { IdentityMeta, IdentityProviderConfig } from '$lib/schema';
 	import { toast } from 'svelte-sonner';
 
-	const EMPTY_IDENTITY: DetectorIdentityConfig = {
+	const EMPTY_IDENTITY: IdentityProviderConfig = {
 		id: 'cow-main',
 		type: 'wildlife_tools',
 		database: 'identities.sqlite',
 		model: 'hf-hub:BVRA/MegaDescriptor-T-224',
-		segment_labels: ['cow'],
-		labels: ['cow']
+		segment_labels: ['cow']
 	};
 
-	function stripMeta(identity?: IdentityMeta): Partial<DetectorIdentityConfig> | undefined {
+	function stripMeta(identity?: IdentityMeta): Partial<IdentityProviderConfig> | undefined {
 		if (!identity) {
 			return undefined;
 		}
 
-		const config = structuredClone(identity) as Partial<DetectorIdentityConfig> & {
+		const config = structuredClone(identity) as Partial<IdentityProviderConfig> & {
 			label?: string;
 		};
 		delete config.label;
 		return config;
 	}
 
-	function mergeWithEmptyIdentity(identity?: Partial<DetectorIdentityConfig>) {
+	function mergeWithEmptyIdentity(identity?: Partial<IdentityProviderConfig>) {
 		return {
 			...EMPTY_IDENTITY,
 			...identity

@@ -127,9 +127,7 @@
 	}
 
 	function identityConfig(identity: IdentityMeta): DetectorIdentityConfig {
-		const config = structuredClone(identity) as DetectorIdentityConfig & { label?: string };
-		delete config.label;
-		return config;
+		return { provider: identity.id };
 	}
 
 	function selectedIdentityLabel() {
@@ -138,8 +136,8 @@
 		}
 
 		return (
-			identities.find((identity) => identity.id === detector.identity?.id)?.label ??
-			detector.identity.id
+			identities.find((identity) => identity.id === detector.identity?.provider)?.label ??
+			detector.identity.provider
 		);
 	}
 

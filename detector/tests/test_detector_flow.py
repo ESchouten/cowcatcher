@@ -54,6 +54,7 @@ def make_detector() -> Detector:
     detector.yolo_config = None
     detector.validator = FakeValidator(True)
     detector.exporters = []
+    detector.identity_enricher = None
     detector.export_executor = ImmediateExecutor()
     detector.last_detection_time = {}
     return detector

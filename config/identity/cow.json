@@ -1,12 +1,11 @@
 {
     "id": "cow-main",
     "type": "wildlife_tools",
-    "database": "identities.sqlite",
+    "database": "identities/cow-main.sqlite",
     "model": "hf-hub:BVRA/MegaDescriptor-T-224",
+    "segment_model": "yolo11n-seg.pt",
+    "segment_imgsz": 960,
     "segment_labels": [
-        "cow"
-    ],
-    "labels": [
         "cow"
     ]
 }

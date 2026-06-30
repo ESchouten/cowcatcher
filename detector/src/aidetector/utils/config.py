@@ -47,6 +47,16 @@ class Crop:
     label: str | None = None
     confidence: float | None = None
 
+    def clone(self) -> "Crop":
+        return Crop(
+            self.x1,
+            self.y1,
+            self.x2,
+            self.y2,
+            label=self.label,
+            confidence=self.confidence,
+        )
+
 
 @dataclass(config=ConfigDict(arbitrary_types_allowed=True))
 class ImageSet:
@@ -54,7 +64,7 @@ class ImageSet:
     crops: list[Crop] = field(default_factory=list)
 
     @property
-    def crop(self) -> Crop | None:
+    def best_crop(self) -> Crop | None:
         return self.crops[0] if self.crops else None
 
     @property
@@ -62,7 +72,7 @@ class ImageSet:
         if not self.crops:
             return None
         if len(self.crops) == 1:
-            return self.crops[0]
+            return self.crops[0].clone()
         return Crop(
             min(crop.x1 for crop in self.crops),
             min(crop.y1 for crop in self.crops),
@@ -76,7 +86,6 @@ class Detection:
     date: datetime
     images: ImageSet
     confidence: Confidence
-    identity: IdentityResult | None = None
     identities: list[IdentityResult] = field(default_factory=list)
 
 
@@ -121,7 +130,7 @@ class IdentityProviderConfig:
     segment_model: str | None = None
     segment_labels: list[str] = field(default_factory=lambda: ["cow"])
     segment_confidence: float = 0.5
-    segment_background: Literal["gray", "black"] = "gray"
+    segment_imgsz: int = 640
     debug_directory: Path | None = None
     match_threshold: float = 0.75
     candidate_threshold: float = 0.75
@@ -130,10 +139,14 @@ class IdentityProviderConfig:
 
 
 @dataclass(kw_only=True)
-class DetectorIdentityConfig(IdentityProviderConfig):
-    labels: list[str] | None = None
+class IdentityConfig:
+    providers: list[IdentityProviderConfig] = field(default_factory=list)
+
+
+@dataclass(kw_only=True)
+class DetectorIdentityConfig:
+    provider: str
     multiple: bool = False
-    samples: int = 1
 
 
 @dataclass(kw_only=True)
@@ -219,6 +232,7 @@ class OnnxConfig:
 class Config:
     detectors: list[DetectorConfig]
     onnx: OnnxConfig = field(default_factory=OnnxConfig)
+    identity: IdentityConfig | None = None
     health: HealthcheckConfig | None = None
 
 

@@ -5,7 +5,7 @@ import tempfile
 
 import cv2
 import numpy as np
-from aidetector.utils.config import Crop, Detection
+from aidetector.utils.config import Crop, Detection, IdentityResult
 from imageio_ffmpeg import get_ffmpeg_exe
 
 logger = logging.getLogger(__name__)
@@ -28,6 +28,7 @@ def generate_mp4(
         if not detections:
             return None
 
+        identity_label = _identity_label_from_detections(detections)
         frames: list[np.ndarray] = []
         if crop:
             crops = [crop for d in detections for crop in d.images.crops]
@@ -49,13 +50,14 @@ def generate_mp4(
                         plot=plot,
                         padding=padding,
                         plot_crops=last_crops if i <= last_crop_index else [],
+                        identity_label=identity_label,
                     )
                     if frame is not None:
                         frames.append(frame)
 
         if not frames:
             frames = [
-                get_plot(d) if plot else d.images.jpg
+                get_plot(d, identity_label=identity_label) if plot else d.images.jpg
                 for d in detections
             ]
 
@@ -211,19 +213,25 @@ def get_image(image: np.ndarray, quality: int = 100) -> bytes:
 def get_plot(
     detection: Detection,
     crops: Crop | list[Crop] | None = None,
+    identity_label: str | None = None,
 ) -> np.ndarray:
     crops = [crops] if isinstance(crops, Crop) else crops
     crops = crops if crops is not None else detection.images.crops
     if not crops:
         return detection.images.jpg
 
+    identity_label = identity_label or _identities_label(detection.identities)
     image = detection.images.jpg.copy()
-    for item in crops:
-        image = draw_crop(image, item)
+    for index, item in enumerate(crops):
+        image = draw_crop(
+            image,
+            item,
+            _crop_identity_label(index, identity_label),
+        )
     return image
 
 
-def draw_crop(image: np.ndarray, crop: Crop) -> np.ndarray:
+def draw_crop(image: np.ndarray, crop: Crop, identity: str | None = None) -> np.ndarray:
     h, w = image.shape[:2]
     color = (255, 0, 0)
     thickness = max(2, round(min(w, h) / 500))
@@ -239,31 +247,115 @@ def draw_crop(image: np.ndarray, crop: Crop) -> np.ndarray:
 
     cv2.rectangle(image, (x1, y1), (x2, y2), color, thickness)
 
-    if crop.label is None or crop.confidence is None:
+    labels = _crop_labels(crop, identity)
+    if not labels:
         return image
 
-    label = f"{crop.label} {crop.confidence:.0%}"
-    (text_w, text_h), baseline = cv2.getTextSize(
-        label,
-        cv2.FONT_HERSHEY_SIMPLEX,
-        font_scale,
-        font_thickness,
-    )
-    label_y1 = max(0, y1 - text_h - baseline - thickness)
-    label_y2 = label_y1 + text_h + baseline + thickness
+    text_sizes = [
+        cv2.getTextSize(
+            label,
+            cv2.FONT_HERSHEY_SIMPLEX,
+            font_scale,
+            font_thickness,
+        )
+        for label in labels
+    ]
+    text_w = max(size[0][0] for size in text_sizes)
+    line_height = max(size[0][1] + size[1] for size in text_sizes)
+    baseline = max(size[1] for size in text_sizes)
+    label_h = line_height * len(labels) + thickness
+    label_y1 = max(0, y1 - label_h)
+    label_y2 = label_y1 + label_h
     label_x2 = min(w - 1, x1 + text_w + thickness * 2)
     cv2.rectangle(image, (x1, label_y1), (label_x2, label_y2), color, -1)
-    cv2.putText(
-        image,
-        label,
-        (x1 + thickness, label_y2 - baseline - max(1, thickness // 2)),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        font_scale,
-        (255, 255, 255),
-        font_thickness,
-        cv2.LINE_AA,
+    for index, label in enumerate(labels):
+        cv2.putText(
+            image,
+            label,
+            (
+                x1 + thickness,
+                label_y1
+                + line_height * (index + 1)
+                - baseline
+                - max(1, thickness // 2),
+            ),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            font_scale,
+            (255, 255, 255),
+            font_thickness,
+            cv2.LINE_AA,
     )
     return image
+
+
+def _crop_labels(crop: Crop, identity: str | None = None) -> list[str]:
+    if crop.label is None or crop.confidence is None:
+        return []
+    labels = [f"{crop.label} {crop.confidence:.0%}"]
+    if identity:
+        labels.insert(0, identity)
+    return labels
+
+
+def _crop_identity_label(crop_index: int, fallback: str | None = None) -> str | None:
+    return fallback if crop_index == 0 else None
+
+
+def _identities_label(identities: list[IdentityResult]) -> str | None:
+    labels = [label for identity in identities if (label := _identity_label(identity))]
+    return ", ".join(labels) if labels else None
+
+
+def _identity_label(identity: IdentityResult | None) -> str | None:
+    if identity is None:
+        return None
+    identity_id = identity.name or identity.identity_id
+    if identity_id is None:
+        return None
+    if identity.similarity is None:
+        return identity_id
+    return f"{identity_id} {identity.similarity:.0%}"
+
+
+def _identity_label_from_detections(detections: list[Detection]) -> str | None:
+    for detection in detections:
+        if label := _identities_label(detection.identities):
+            return label
+    return None
+
+
+def _plot_label_bounds(
+    image_shape,
+    crop: Crop,
+    identity: str | None,
+) -> Crop | None:
+    h, w = image_shape[:2]
+    labels = _crop_labels(crop, identity)
+    if not labels:
+        return None
+
+    thickness = max(2, round(min(w, h) / 500))
+    font_scale = max(0.5, min(w, h) / 1200)
+    font_thickness = max(1, round(thickness / 2))
+    text_sizes = [
+        cv2.getTextSize(
+            label,
+            cv2.FONT_HERSHEY_SIMPLEX,
+            font_scale,
+            font_thickness,
+        )
+        for label in labels
+    ]
+    text_w = max(size[0][0] for size in text_sizes)
+    line_height = max(size[0][1] + size[1] for size in text_sizes)
+    label_h = line_height * len(labels) + thickness
+
+    x1 = max(0, min(w - 1, crop.x1))
+    y1 = max(0, min(h - 1, crop.y1))
+    label_y1 = max(0, y1 - label_h)
+    label_y2 = label_y1 + label_h
+    label_x2 = min(w - 1, x1 + text_w + thickness * 2)
+    return Crop(x1, label_y1, label_x2, label_y2)
 
 
 def shrink_image(image: np.ndarray, width_max: int) -> np.ndarray:
@@ -312,6 +404,7 @@ def get_crop(
     padding: float = 0.1,
     plot: bool = True,
     plot_crops: list[Crop] | None = None,
+    identity_label: str | None = None,
 ) -> np.ndarray | None:
     def centered_range(center: float, size: int, limit: int) -> tuple[int, int]:
         size = max(1, min(size, limit))
@@ -330,7 +423,12 @@ def get_crop(
     crop = crop or detection.images.crop_region
     if crop is None:
         return None
-    img = get_plot(detection, plot_crops) if plot else detection.images.jpg
+    identity_label = identity_label or _identities_label(detection.identities)
+    img = (
+        get_plot(detection, plot_crops, identity_label=identity_label)
+        if plot
+        else detection.images.jpg
+    )
     h, w = img.shape[:2]
     box_w, box_h = (
         max(1, crop.x2 - crop.x1),
@@ -342,6 +440,21 @@ def get_crop(
 
     if x2 <= x1 or y2 <= y1:
         return None
+
+    if plot:
+        plotted_crops = plot_crops if plot_crops is not None else detection.images.crops
+        for index, plotted_crop in enumerate(plotted_crops):
+            label_bounds = _plot_label_bounds(
+                detection.images.jpg.shape,
+                plotted_crop,
+                _crop_identity_label(index, identity_label),
+            )
+            if label_bounds is None:
+                continue
+            x1 = min(x1, label_bounds.x1)
+            y1 = min(y1, label_bounds.y1)
+            x2 = max(x2, label_bounds.x2)
+            y2 = max(y2, label_bounds.y2)
 
     if aspect_ratio and aspect_ratio > 0:
         crop_w = x2 - x1

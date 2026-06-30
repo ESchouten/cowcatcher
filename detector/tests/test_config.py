@@ -1,7 +1,12 @@
 import json
 from pathlib import Path
 
-from aidetector.utils.config import Config, confidence_matches, matching_confidences
+from aidetector.utils.config import (
+    Config,
+    IdentityProviderConfig,
+    confidence_matches,
+    matching_confidences,
+)
 
 
 def test_example_config_validates():
@@ -13,6 +18,17 @@ def test_example_config_validates():
     assert len(config.detectors) == 1
     assert config.detectors[0].detection.source == ["sprong24.mp4"]
     assert config.detectors[0].exporters is not None
+
+
+def test_identity_example_config_validates():
+    repo_root = Path(__file__).resolve().parents[2]
+    config_json = json.loads((repo_root / "config/identity/cow.json").read_text())
+
+    config = IdentityProviderConfig(**config_json)
+
+    assert config.id == "cow-main"
+    assert config.segment_labels == ["cow"]
+    assert config.segment_imgsz == 960
 
 
 def test_confidence_helpers_support_global_and_per_class_thresholds():

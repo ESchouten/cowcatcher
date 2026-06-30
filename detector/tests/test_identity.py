@@ -10,6 +10,8 @@ from aidetector.detection.detector import Detector
 from aidetector.detection.yolo import YoloResultMapper, apply_mask, objects_from_result
 from aidetector.exporters.telegram import TelegramExporter
 from aidetector.exporters.webhook import WebhookExporter
+from aidetector.identity.enricher import IdentityEnricher
+from aidetector.identity.service import IdentityService
 from aidetector.identity.store import SQLiteIdentityStore
 from aidetector.identity.wildlife_tools import (
     WildlifeToolsIdentityProvider,
@@ -18,9 +20,13 @@ from aidetector.identity.wildlife_tools import (
 from aidetector.utils.config import (
     Crop,
     ChatConfig,
+    Config,
     Detection,
+    DetectionConfig,
+    DetectorConfig,
     DetectorIdentityConfig,
     WebhookConfig,
+    IdentityConfig,
     IdentityProviderConfig,
     IdentityResult,
     ImageSet,
@@ -140,6 +146,69 @@ class IdentityStoreTests(unittest.TestCase):
                 store.close()
 
 
+class IdentityServiceTests(unittest.TestCase):
+    def test_service_builds_top_level_providers_for_detector_references(self):
+        with tempfile.TemporaryDirectory() as directory:
+            service = IdentityService.from_config(
+                Config(
+                    identity=IdentityConfig(
+                        providers=[
+                            IdentityProviderConfig(
+                                id="cow-main",
+                                database=Path(directory) / "identities.sqlite",
+                            )
+                        ]
+                    ),
+                    detectors=[
+                        DetectorConfig(
+                            detection=DetectionConfig(source=["video.mp4"]),
+                            identity=DetectorIdentityConfig(provider="cow-main"),
+                        )
+                    ],
+                )
+            )
+            try:
+                self.assertIsNotNone(service)
+                self.assertIn("cow-main", service.providers)
+            finally:
+                if service is not None:
+                    service.close()
+
+    def test_service_rejects_unknown_detector_provider(self):
+        with self.assertRaises(ValueError):
+            IdentityService.from_config(
+                Config(
+                    detectors=[
+                        DetectorConfig(
+                            detection=DetectionConfig(source=["video.mp4"]),
+                            identity=DetectorIdentityConfig(provider="missing"),
+                        )
+                    ],
+                )
+            )
+
+    def test_service_rejects_duplicate_provider_id(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(ValueError):
+                IdentityService.from_config(
+                    Config(
+                        identity=IdentityConfig(
+                            providers=[
+                                IdentityProviderConfig(
+                                    id="cow-main",
+                                    database=Path(directory) / "first.sqlite",
+                                ),
+                                IdentityProviderConfig(
+                                    id="cow-main",
+                                    database=Path(directory) / "second.sqlite",
+                                ),
+                            ]
+                        ),
+                        detectors=[],
+                    )
+                )
+
+
 class DetectorIdentityTests(unittest.TestCase):
     def test_yolo_result_keeps_multiple_crops_per_frame(self):
         mapper = YoloResultMapper({19: ("cow", 0.5)})
@@ -161,25 +230,8 @@ class DetectorIdentityTests(unittest.TestCase):
         assert detections is not None
         detection = detections[0]
         self.assertEqual(len(detection.images.crops), 2)
-        self.assertEqual(detection.images.crop.x1, 5)
+        self.assertEqual(detection.images.best_crop.x1, 5)
         self.assertEqual(detection.confidence, {"cow": 0.9})
-
-    def test_detector_identity_label_filtering(self):
-        detector = Detector.__new__(Detector)
-        detector.identity_config = _detector_identity_config(labels=["cow"])
-
-        self.assertTrue(detector._identity_matches_label(_detection(label="cow")))
-        self.assertFalse(detector._identity_matches_label(_detection(label="deer")))
-        self.assertTrue(
-            detector._identity_matches_label(
-                _detection(label=None, confidence={"cow": 0.9})
-            )
-        )
-        self.assertFalse(
-            detector._identity_matches_label(
-                _detection(label="deer", confidence={"cow": 0.9})
-            )
-        )
 
     def test_identity_failure_does_not_block_export(self):
         detector = _detector_for_export(validated=True)
@@ -192,66 +244,75 @@ class DetectorIdentityTests(unittest.TestCase):
 
     def test_rejected_detection_skips_identity_lookup(self):
         detector = _detector_for_export(validated=False)
-        identity_service = detector.identity_service
+        identity_service = detector.identity_enricher.service
 
         detector._export("source-1")
         detector.export_executor.shutdown(wait=True)
 
         self.assertEqual(identity_service.calls, 0)
 
-    def test_detector_identity_multiple_flag_collects_provider_results(self):
-        detector = Detector.__new__(Detector)
-        detector.identity_config = _detector_identity_config(
-            multiple=True,
-        )
-        detector.identity_service = _ListIdentityService()
+    def test_detector_identity_multiple_flag_collects_provider_results_for_best_crop(self):
+        identity_service = _ListIdentityService()
+        enricher = _identity_enricher(identity_service, multiple=True)
         detection = _detection()
 
-        detector._identify("source-1", detection)
+        enricher.enrich("source-1", detection)
 
-        self.assertTrue(detector.identity_service.multiple)
+        self.assertTrue(identity_service.multiple)
         self.assertEqual(len(detection.identities), 2)
-        self.assertEqual(detection.identity.identity_id, "cow-main-0001")
+        self.assertEqual(detection.identities[0].identity_id, "cow-main-0001")
 
-    def test_detector_identity_samples_event_detections(self):
-        detector = Detector.__new__(Detector)
-        detector.identity_config = _detector_identity_config(
-            samples=3,
-        )
-        detector.identity_service = _RecordingIdentityService()
-        detections = [
-            _detection(date=datetime(2026, 1, 1, 12, 0, 0), confidence={"cow": 0.6}),
-            _detection(date=datetime(2026, 1, 1, 12, 0, 1), confidence={"cow": 0.7}),
-            _detection(date=datetime(2026, 1, 1, 12, 0, 2), confidence={"cow": 0.8}),
-            _detection(date=datetime(2026, 1, 1, 12, 0, 3), confidence={"cow": 0.9}),
-        ]
-        best_detection = detections[2]
-
-        detector._identify("source-1", best_detection, detections)
-
-        identity_input = detector.identity_service.detection
-        self.assertIsInstance(identity_input, list)
-        self.assertEqual(len(identity_input), 3)
-        self.assertTrue(any(sample.date == best_detection.date for sample in identity_input))
-        self.assertEqual(best_detection.identity.identity_id, "cow-main-0001")
-
-    def test_detector_identity_samples_keep_frame_order_after_adding_best(self):
-        detector = Detector.__new__(Detector)
-        detector.identity_config = _detector_identity_config(
-            samples=3,
-        )
-        detections = [
-            _detection(date=datetime(2026, 1, 1, 12, 0, index))
-            for index in range(5)
-        ]
-
-        samples = detector._identity_sample_detections(detections, detections[1])
-
-        self.assertEqual(
-            [sample.date.second for sample in samples],
-            [0, 1, 2],
+    def test_detector_identity_uses_best_crop_only(self):
+        identity_service = _RecordingIdentityService()
+        enricher = _identity_enricher(identity_service, multiple=True)
+        detection = _detection(
+            crops=[
+                Crop(1, 1, 8, 8, label="cow", confidence=0.9),
+                Crop(20, 1, 28, 8, label="cow", confidence=0.8),
+            ]
         )
 
+        enricher.enrich("source-1", detection)
+
+        identity_input = identity_service.detection
+        self.assertIsInstance(identity_input, Detection)
+        self.assertEqual(identity_input.images.best_crop.x1, 1)
+        self.assertEqual(detection.identities[0].identity_id, "cow-main-0001")
+
+    def test_detector_identity_resets_stale_identity_when_lookup_returns_no_result(self):
+        stale_identity = IdentityResult(
+            provider="cow-main",
+            identity_id="stale",
+            name=None,
+            status="matched",
+            similarity=0.9,
+        )
+        detection = _detection(identities=[stale_identity])
+        enricher = _identity_enricher(_EmptyIdentityService())
+
+        enricher.enrich("source-1", detection)
+
+        self.assertEqual(detection.identities, [])
+
+    def test_detector_identity_passes_cloned_crop_to_provider(self):
+        crop = Crop(1, 1, 8, 8, label="cow", confidence=0.9)
+        detection = _detection(crops=[crop])
+        identity_service = _MutatingIdentityService()
+        enricher = _identity_enricher(identity_service)
+
+        enricher.enrich("source-1", detection)
+
+        self.assertEqual(crop, Crop(1, 1, 8, 8, label="cow", confidence=0.9))
+
+    def test_image_set_crop_region_clones_single_crop(self):
+        crop = Crop(1, 1, 8, 8, label="cow", confidence=0.9)
+        image_set = ImageSet(np.zeros((10, 10, 3), dtype=np.uint8), [crop])
+
+        region = image_set.crop_region
+        assert region is not None
+        region.x1 = 2
+
+        self.assertEqual(crop.x1, 1)
 
 class WildlifeToolsIdentityTests(unittest.TestCase):
     def test_objects_from_result_picks_accepted_labels(self):
@@ -304,7 +365,7 @@ class WildlifeToolsIdentityTests(unittest.TestCase):
             finally:
                 provider.close()
 
-        self.assertIsNone(result)
+        self.assertEqual(result, [])
 
     def test_provider_skips_segment_identity_without_crop(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -327,7 +388,7 @@ class WildlifeToolsIdentityTests(unittest.TestCase):
             finally:
                 provider.close()
 
-        self.assertIsNone(result)
+        self.assertEqual(result, [])
 
     def test_provider_crops_to_segmented_object(self):
         image = np.arange(10 * 10 * 3, dtype=np.uint8).reshape((10, 10, 3))
@@ -341,6 +402,7 @@ class WildlifeToolsIdentityTests(unittest.TestCase):
                     database=Path(directory) / "identities.sqlite",
                     segment_model="seg.pt",
                     segment_confidence=0.5,
+                    crop_padding=0,
                 )
             )
             provider.segmenter = _Segmenter([
@@ -351,12 +413,10 @@ class WildlifeToolsIdentityTests(unittest.TestCase):
                     orig_shape=(10, 10),
                 )
             ])
+            detection = _detection(crops=[Crop(0, 0, 10, 10, label="cow", confidence=0.9)])
+            detection.images.jpg = image
             try:
-                segments = provider._mask_identity_images(
-                    image,
-                    "source-1",
-                    "mounting",
-                )
+                segments = provider._identity_images(detection, "source-1", False)
             finally:
                 provider.close()
 
@@ -409,41 +469,14 @@ class WildlifeToolsIdentityTests(unittest.TestCase):
             "cow-main-0002",
         ])
 
-    def test_provider_aggregates_sampled_detections_into_one_identity_event(self):
-        with tempfile.TemporaryDirectory() as directory:
-            provider = WildlifeToolsIdentityProvider(
-                IdentityProviderConfig(
-                    id="cow-main",
-                    database=Path(directory) / "identities.sqlite",
-                    create_after=1,
-                )
-            )
-            embeddings = iter([
-                np.array([1, 0], dtype=np.float32),
-                np.array([0.9, 0.1], dtype=np.float32),
-                np.array([0.8, 0.2], dtype=np.float32),
-            ])
-            provider._embed = lambda image: next(embeddings)
-            try:
-                result = provider.identify(
-                    [_detection(), _detection(), _detection()],
-                    "source-1",
-                )
-                sample_count = provider.store.connection.execute(
-                    "SELECT COUNT(*) FROM samples"
-                ).fetchone()[0]
-            finally:
-                provider.close()
-
-        self.assertIsInstance(result, IdentityResult)
-        self.assertEqual(result.status, "created")
-        self.assertEqual(sample_count, 1)
-
-    def test_provider_uses_tracked_segment_crops_for_sampled_event(self):
-        first_track_mask = np.zeros((7, 7), dtype=bool)
-        first_track_mask[0:4, 0:4] = True
-        second_track_mask = np.zeros((7, 7), dtype=bool)
-        second_track_mask[4:7, 4:7] = True
+    def test_provider_segments_detector_crop_and_selects_centered_cow(self):
+        image = np.zeros((10, 10, 3), dtype=np.uint8)
+        image[2:9, 1:8] = 50
+        image[4:7, 4:6] = 200
+        side_mask = np.zeros((7, 7), dtype=bool)
+        side_mask[0:7, 0:2] = True
+        center_mask = np.zeros((7, 7), dtype=bool)
+        center_mask[2:5, 3:5] = True
 
         with tempfile.TemporaryDirectory() as directory:
             provider = WildlifeToolsIdentityProvider(
@@ -452,7 +485,7 @@ class WildlifeToolsIdentityTests(unittest.TestCase):
                     database=Path(directory) / "identities.sqlite",
                     segment_model="seg.pt",
                     segment_confidence=0.5,
-                    create_after=1,
+                    segment_imgsz=960,
                     crop_padding=0,
                 )
             )
@@ -460,101 +493,27 @@ class WildlifeToolsIdentityTests(unittest.TestCase):
                 _SegmentationResult(
                     names={19: "cow"},
                     boxes=[
-                        _Box(19, 0.9, [0, 0, 4, 4]),
-                        _Box(19, 0.8, [4, 4, 7, 7]),
+                        _Box(19, 0.99, [0, 0, 2, 7]),
+                        _Box(19, 0.6, [3, 2, 5, 5]),
                     ],
-                    masks=[first_track_mask, second_track_mask],
-                    track_ids=[7, 8],
+                    masks=[side_mask, center_mask],
                     orig_shape=(7, 7),
-                ),
-                _SegmentationResult(
-                    names={19: "cow"},
-                    boxes=[_Box(19, 0.85, [0, 0, 4, 4])],
-                    masks=[first_track_mask],
-                    track_ids=[7],
-                    orig_shape=(7, 7),
-                ),
-            ])
-            embedded_shapes = []
-            embeddings = iter([
-                np.array([1, 0], dtype=np.float32),
-                np.array([0.9, 0.1], dtype=np.float32),
-            ])
-
-            def embed(image):
-                embedded_shapes.append(image.shape)
-                return next(embeddings)
-
-            provider._embed = embed
-            try:
-                result = provider.identify(
-                    [
-                        _detection(date=datetime(2026, 1, 1, 12, 0, 0)),
-                        _detection(date=datetime(2026, 1, 1, 12, 0, 1)),
-                    ],
-                    "source-1",
                 )
-                sample_count = provider.store.connection.execute(
-                    "SELECT COUNT(*) FROM samples"
-                ).fetchone()[0]
+            ])
+            detection = _detection(crops=[Crop(1, 2, 8, 9, label="cow", confidence=0.9)])
+            detection.images.jpg = image
+            try:
+                segments = provider._identity_images(detection, "source-1", False)
             finally:
                 provider.close()
 
-        self.assertIsInstance(result, IdentityResult)
-        self.assertEqual(result.status, "created")
-        self.assertEqual(sample_count, 1)
-        self.assertEqual(embedded_shapes, [(4, 4, 3), (4, 4, 3)])
-
-    def test_provider_falls_back_to_best_frame_when_tracking_fails(self):
-        mask = np.zeros((7, 7), dtype=bool)
-        mask[1:5, 1:5] = True
-
-        with tempfile.TemporaryDirectory() as directory:
-            provider = WildlifeToolsIdentityProvider(
-                IdentityProviderConfig(
-                    id="cow-main",
-                    database=Path(directory) / "identities.sqlite",
-                    segment_model="seg.pt",
-                    segment_confidence=0.5,
-                    create_after=1,
-                    crop_padding=0,
-                )
-            )
-            provider.segmenter = _FailingTrackSegmenter([
-                _SegmentationResult(
-                    names={19: "cow"},
-                    boxes=[_Box(19, 0.9, [1, 1, 5, 5])],
-                    masks=[mask],
-                    orig_shape=(7, 7),
-                )
-            ])
-            embedded_shapes = []
-
-            def embed(image):
-                embedded_shapes.append(image.shape)
-                return np.array([1, 0], dtype=np.float32)
-
-            provider._embed = embed
-            try:
-                result = provider.identify(
-                    [
-                        _detection(
-                            date=datetime(2026, 1, 1, 12, 0, 0),
-                            confidence={"cow": 0.7},
-                        ),
-                        _detection(
-                            date=datetime(2026, 1, 1, 12, 0, 1),
-                            confidence={"cow": 0.9},
-                        ),
-                    ],
-                    "source-1",
-                )
-            finally:
-                provider.close()
-
-        self.assertIsInstance(result, IdentityResult)
-        self.assertEqual(result.status, "created")
-        self.assertEqual(embedded_shapes, [(4, 4, 3)])
+        self.assertEqual(len(segments), 1)
+        self.assertEqual(int(segments[0].max()), 200)
+        np.testing.assert_array_equal(
+            provider.segmenter.predict_sources[0],
+            image[2:9, 1:8],
+        )
+        self.assertEqual(provider.segmenter.predict_kwargs[0]["imgsz"], 960)
 
     def test_model_signature_includes_segment_settings(self):
         config = IdentityProviderConfig(
@@ -566,8 +525,8 @@ class WildlifeToolsIdentityTests(unittest.TestCase):
 
         self.assertIn("segment_model=yolo11n-seg.pt", _model_signature(config))
         self.assertIn("segment_labels=cow", _model_signature(config))
+        self.assertIn("segment_imgsz=640", _model_signature(config))
         self.assertIn("segment_crop=mask", _model_signature(config))
-        self.assertNotIn("segment_selection", _model_signature(config))
 
 
 class ExporterIdentityTests(unittest.TestCase):
@@ -586,13 +545,13 @@ class ExporterIdentityTests(unittest.TestCase):
             )
         )
         detection = _detection(
-            identity=IdentityResult(
+            identities=[IdentityResult(
                 provider="cow-main",
                 identity_id="cow-main-0001",
                 name=None,
                 status="matched",
                 similarity=0.82,
-            )
+            )]
         )
 
         payload = exporter.get_payload(detection, [detection], validated=True)
@@ -615,13 +574,13 @@ class ExporterIdentityTests(unittest.TestCase):
             )
         )
         detection = _detection(
-            identity=IdentityResult(
+            identities=[IdentityResult(
                 provider="cow-main",
                 identity_id="cow-main-0001",
                 name=None,
                 status="matched",
                 similarity=0.82,
-            )
+            )]
         )
 
         payload = exporter.get_payload(detection, [detection], validated=True)
@@ -641,17 +600,21 @@ class ExporterIdentityTests(unittest.TestCase):
 def _detection(
     label: str | None = "cow",
     confidence: dict[str, float] | None = None,
-    identity: IdentityResult | None = None,
+    identities: list[IdentityResult] | None = None,
     date: datetime | None = None,
+    crops: list[Crop] | None = None,
 ) -> Detection:
+    if crops is None:
+        crops = [Crop(1, 1, 8, 8, label=label, confidence=0.9)] if label else []
+
     return Detection(
         date=date or datetime(2026, 1, 1, 12, 0, 0),
         images=ImageSet(
             jpg=np.zeros((10, 10, 3), dtype=np.uint8),
-            crops=[Crop(1, 1, 8, 8, label=label, confidence=0.9)] if label else [],
+            crops=crops,
         ),
         confidence=confidence or ({label: 0.9} if label else {}),
-        identity=identity,
+        identities=identities or [],
     )
 
 
@@ -664,7 +627,8 @@ class _Validator:
 
 
 class _FailingIdentityService:
-    calls = 0
+    def __init__(self):
+        self.calls = 0
 
     def identify(self, provider, detection, source, multiple=False):
         self.calls += 1
@@ -699,13 +663,28 @@ class _RecordingIdentityService:
 
     def identify(self, provider, detection, source, multiple=False):
         self.detection = detection
-        return IdentityResult(
-            provider=provider,
-            identity_id="cow-main-0001",
-            name=None,
-            status="matched",
-            similarity=0.9,
-        )
+        return [
+            IdentityResult(
+                provider=provider,
+                identity_id="cow-main-0001",
+                name=None,
+                status="matched",
+                similarity=0.9,
+            )
+        ]
+
+
+class _EmptyIdentityService:
+    def identify(self, provider, detection, source, multiple=False):
+        return []
+
+
+class _MutatingIdentityService:
+    detection = None
+
+    def identify(self, provider, detection, source, multiple=False):
+        self.detection = detection
+        return []
 
 
 class _RecordingExporter:
@@ -717,11 +696,17 @@ class _RecordingExporter:
 
 def _detector_identity_config(**overrides):
     config = {
-        "id": "cow-main",
-        "database": Path("identities.sqlite"),
+        "provider": "cow-main",
     }
     config.update(overrides)
     return DetectorIdentityConfig(**config)
+
+
+def _identity_enricher(identity_service=None, **config_overrides):
+    return IdentityEnricher(
+        identity_service or _RecordingIdentityService(),
+        _detector_identity_config(**config_overrides),
+    )
 
 
 def _detector_for_export(validated: bool | None):
@@ -731,8 +716,7 @@ def _detector_for_export(validated: bool | None):
     detector.yolo_config = None
     detector.validator = _Validator(validated)
     detector.exporters = [_RecordingExporter()]
-    detector.identity_service = _FailingIdentityService()
-    detector.identity_config = _detector_identity_config()
+    detector.identity_enricher = _identity_enricher(_FailingIdentityService())
     detector.export_executor = ThreadPoolExecutor(max_workers=1)
     return detector
 
@@ -750,10 +734,6 @@ class _Box:
         self.cls = _Value(class_id)
         self.conf = _Value(confidence)
         self.xyxy = [xyxy]
-
-
-class _Boxes(list):
-    id = None
 
 
 class _MaskData:
@@ -776,14 +756,9 @@ class _Masks:
 
 
 class _SegmentationResult:
-    def __init__(self, names, boxes, masks, orig_shape=(2, 2), track_ids=None):
+    def __init__(self, names, boxes, masks, orig_shape=(2, 2)):
         self.names = names
-        self.boxes = _Boxes(boxes)
-        self.boxes.id = (
-            [_Value(track_id) for track_id in track_ids]
-            if track_ids is not None
-            else None
-        )
+        self.boxes = boxes
         self.masks = _Masks(masks)
         self.orig_shape = orig_shape
 
@@ -791,17 +766,13 @@ class _SegmentationResult:
 class _Segmenter:
     def __init__(self, results):
         self.results = results
+        self.predict_sources = []
+        self.predict_kwargs = []
 
     def predict(self, **kwargs):
+        self.predict_sources.append(kwargs.get("source"))
+        self.predict_kwargs.append(kwargs)
         return self.results
-
-    def track(self, **kwargs):
-        return self.results
-
-
-class _FailingTrackSegmenter(_Segmenter):
-    def track(self, **kwargs):
-        raise ModuleNotFoundError("lap")
 
 
 if __name__ == "__main__":
