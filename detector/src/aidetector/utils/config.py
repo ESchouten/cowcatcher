@@ -59,13 +59,43 @@ class Crop:
 
 
 @dataclass(config=ConfigDict(arbitrary_types_allowed=True))
+class DetectedObject:
+    crop: Crop
+    mask: ndarray | None = None
+    track_id: int | None = None
+    identity: IdentityResult | None = None
+
+    @property
+    def area(self) -> int:
+        if self.mask is not None:
+            return int(self.mask.sum())
+        return max(0, self.crop.x2 - self.crop.x1) * max(0, self.crop.y2 - self.crop.y1)
+
+    def clone(self) -> "DetectedObject":
+        return DetectedObject(
+            self.crop.clone(),
+            self.mask.copy() if self.mask is not None else None,
+            self.track_id,
+            self.identity,
+        )
+
+
+@dataclass(config=ConfigDict(arbitrary_types_allowed=True))
 class ImageSet:
     jpg: ndarray
-    crops: list[Crop] = field(default_factory=list)
+    objects: list[DetectedObject] = field(default_factory=list)
+
+    @property
+    def crops(self) -> list[Crop]:
+        return [obj.crop for obj in self.objects]
 
     @property
     def best_crop(self) -> Crop | None:
         return self.crops[0] if self.crops else None
+
+    @property
+    def best_object(self) -> DetectedObject | None:
+        return self.objects[0] if self.objects else None
 
     @property
     def crop_region(self) -> Crop | None:
@@ -127,15 +157,9 @@ class IdentityProviderConfig:
     type: Literal["wildlife_tools"] = "wildlife_tools"
     database: Path
     model: str = "hf-hub:BVRA/MegaDescriptor-T-224"
-    segment_model: str | None = None
-    segment_labels: list[str] = field(default_factory=lambda: ["cow"])
-    segment_confidence: float = 0.5
-    segment_imgsz: int = 640
-    debug_directory: Path | None = None
     match_threshold: float = 0.75
     candidate_threshold: float = 0.75
     create_after: int = 3
-    crop_padding: float = 0.1
 
 
 @dataclass(kw_only=True)
@@ -144,9 +168,20 @@ class IdentityConfig:
 
 
 @dataclass(kw_only=True)
+class IdentityFallbackConfig:
+    model: str
+    labels: list[str] = field(default_factory=lambda: ["cow"])
+    confidence: float = 0.5
+    imgsz: int = 640
+
+
+@dataclass(kw_only=True)
 class DetectorIdentityConfig:
     provider: str
+    labels: list[str] | None = None
     multiple: bool = False
+    debug_directory: Path | None = None
+    fallback: IdentityFallbackConfig | None = None
 
 
 @dataclass(kw_only=True)

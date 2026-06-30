@@ -23,8 +23,7 @@
 		id: 'cow-main',
 		type: 'wildlife_tools',
 		database: 'identities.sqlite',
-		model: 'hf-hub:BVRA/MegaDescriptor-T-224',
-		segment_labels: ['cow']
+		model: 'hf-hub:BVRA/MegaDescriptor-T-224'
 	};
 
 	function stripMeta(identity?: IdentityMeta): Partial<IdentityProviderConfig> | undefined {

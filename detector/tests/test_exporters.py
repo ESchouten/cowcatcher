@@ -11,6 +11,7 @@ from aidetector.exporters.webhook import WebhookExporter
 from aidetector.utils.config import (
     ChatConfig,
     Crop,
+    DetectedObject,
     Detection,
     DiskConfig,
     ExporterConfig,
@@ -25,12 +26,18 @@ def make_detections() -> list[Detection]:
     return [
         Detection(
             start,
-            ImageSet(image, [Crop(10, 10, 40, 50, label="cow", confidence=0.7)]),
+            ImageSet(
+                image,
+                [DetectedObject(Crop(10, 10, 40, 50, label="cow", confidence=0.7))],
+            ),
             {"cow": 0.7},
         ),
         Detection(
             start + timedelta(seconds=2),
-            ImageSet(image, [Crop(12, 12, 42, 52, label="cow", confidence=0.9)]),
+            ImageSet(
+                image,
+                [DetectedObject(Crop(12, 12, 42, 52, label="cow", confidence=0.9))],
+            ),
             {"cow": 0.9},
         ),
     ]

@@ -1,18 +1,18 @@
 from typing import Protocol
 
+from numpy import ndarray
+
 from aidetector.utils.config import (
     Config,
-    Detection,
     IdentityResult,
 )
 
 class IdentityProvider(Protocol):
     def identify(
         self,
-        detection: Detection,
+        image: ndarray,
         source: str,
-        multiple: bool = False,
-    ) -> list[IdentityResult]:
+    ) -> IdentityResult:
         pass
 
     def close(self) -> None:
@@ -64,14 +64,13 @@ class IdentityService:
     def identify(
         self,
         provider: str,
-        detection: Detection,
+        images: list[ndarray],
         source: str,
-        multiple: bool = False,
     ) -> list[IdentityResult]:
         identity_provider = self.providers.get(provider)
         if identity_provider is None:
             raise ValueError(f"Unknown identity provider id: {provider}")
-        return identity_provider.identify(detection, source, multiple)
+        return [identity_provider.identify(image, source) for image in images]
 
     def close(self) -> None:
         for provider in self.providers.values():

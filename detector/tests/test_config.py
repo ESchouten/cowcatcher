@@ -27,8 +27,7 @@ def test_identity_example_config_validates():
     config = IdentityProviderConfig(**config_json)
 
     assert config.id == "cow-main"
-    assert config.segment_labels == ["cow"]
-    assert config.segment_imgsz == 960
+    assert config.model == "hf-hub:BVRA/MegaDescriptor-T-224"
 
 
 def test_confidence_helpers_support_global_and_per_class_thresholds():

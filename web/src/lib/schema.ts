@@ -17,6 +17,9 @@ export interface Crop {
 	y1: number;
 	x2: number;
 	y2: number;
+	label?: string | null;
+	confidence?: number | null;
+	identity?: IdentityResult | null;
 }
 
 export interface Metadata {
@@ -58,10 +61,9 @@ export interface IdentityProviderConfig {
 	type?: 'wildlife_tools';
 	database: string;
 	model?: string;
-	segment_model?: string | null;
-	segment_labels?: string[];
-	segment_confidence?: number;
-	segment_imgsz?: number;
+	match_threshold?: number;
+	candidate_threshold?: number;
+	create_after?: number;
 	[key: string]: unknown;
 }
 
@@ -71,7 +73,17 @@ export interface IdentityConfig {
 
 export interface DetectorIdentityConfig {
 	provider: string;
+	labels?: string[];
 	multiple?: boolean;
+	debug_directory?: string | null;
+	fallback?: IdentityFallbackConfig | null;
+}
+
+export interface IdentityFallbackConfig {
+	model: string;
+	labels?: string[];
+	confidence?: number;
+	imgsz?: number;
 }
 
 export interface TelegramConfig {

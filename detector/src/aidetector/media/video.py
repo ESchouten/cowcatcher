@@ -5,7 +5,7 @@ import tempfile
 
 import cv2
 import numpy as np
-from aidetector.utils.config import Crop, Detection, IdentityResult
+from aidetector.utils.config import Crop, DetectedObject, Detection, IdentityResult
 from imageio_ffmpeg import get_ffmpeg_exe
 
 logger = logging.getLogger(__name__)
@@ -31,7 +31,7 @@ def generate_mp4(
         identity_label = _identity_label_from_detections(detections)
         frames: list[np.ndarray] = []
         if crop:
-            crops = [crop for d in detections for crop in d.images.crops]
+            crops = [obj.crop for d in detections for obj in d.images.objects]
             if crops:
                 minX1 = min(crop.x1 for crop in crops)
                 minY1 = min(crop.y1 for crop in crops)
@@ -39,17 +39,17 @@ def generate_mp4(
                 maxY2 = max(crop.y2 for crop in crops)
                 crop_region = Crop(minX1, minY1, maxX2, maxY2)
                 last_crop_index = max(
-                    i for i, d in enumerate(detections) if d.images.crops
+                    i for i, d in enumerate(detections) if d.images.objects
                 )
-                last_crops: list[Crop] = []
+                last_objects: list[DetectedObject] = []
                 for i, detection in enumerate(detections):
-                    last_crops = detection.images.crops or last_crops
+                    last_objects = detection.images.objects or last_objects
                     frame = get_crop(
                         detection,
                         crop=crop_region,
                         plot=plot,
                         padding=padding,
-                        plot_crops=last_crops if i <= last_crop_index else [],
+                        plot_crops=last_objects if i <= last_crop_index else [],
                         identity_label=identity_label,
                     )
                     if frame is not None:
@@ -212,21 +212,19 @@ def get_image(image: np.ndarray, quality: int = 100) -> bytes:
 
 def get_plot(
     detection: Detection,
-    crops: Crop | list[Crop] | None = None,
+    crops: Crop | DetectedObject | list[Crop | DetectedObject] | None = None,
     identity_label: str | None = None,
 ) -> np.ndarray:
-    crops = [crops] if isinstance(crops, Crop) else crops
-    crops = crops if crops is not None else detection.images.crops
-    if not crops:
+    objects = _plot_objects(detection, crops)
+    if not objects:
         return detection.images.jpg
 
-    identity_label = identity_label or _identities_label(detection.identities)
     image = detection.images.jpg.copy()
-    for index, item in enumerate(crops):
+    for index, obj in enumerate(objects):
         image = draw_crop(
             image,
-            item,
-            _crop_identity_label(index, identity_label),
+            obj.crop,
+            _object_identity_label(obj, index, identity_label),
         )
     return image
 
@@ -297,8 +295,12 @@ def _crop_labels(crop: Crop, identity: str | None = None) -> list[str]:
     return labels
 
 
-def _crop_identity_label(crop_index: int, fallback: str | None = None) -> str | None:
-    return fallback if crop_index == 0 else None
+def _object_identity_label(
+    obj: DetectedObject,
+    crop_index: int,
+    fallback: str | None = None,
+) -> str | None:
+    return _identity_label(obj.identity) or (fallback if crop_index == 0 else None)
 
 
 def _identities_label(identities: list[IdentityResult]) -> str | None:
@@ -403,7 +405,7 @@ def get_crop(
     aspect_ratio: float | None = 16 / 9,
     padding: float = 0.1,
     plot: bool = True,
-    plot_crops: list[Crop] | None = None,
+    plot_crops: list[Crop | DetectedObject] | None = None,
     identity_label: str | None = None,
 ) -> np.ndarray | None:
     def centered_range(center: float, size: int, limit: int) -> tuple[int, int]:
@@ -423,7 +425,6 @@ def get_crop(
     crop = crop or detection.images.crop_region
     if crop is None:
         return None
-    identity_label = identity_label or _identities_label(detection.identities)
     img = (
         get_plot(detection, plot_crops, identity_label=identity_label)
         if plot
@@ -442,12 +443,12 @@ def get_crop(
         return None
 
     if plot:
-        plotted_crops = plot_crops if plot_crops is not None else detection.images.crops
-        for index, plotted_crop in enumerate(plotted_crops):
+        plotted_objects = _plot_objects(detection, plot_crops)
+        for index, plotted_obj in enumerate(plotted_objects):
             label_bounds = _plot_label_bounds(
                 detection.images.jpg.shape,
-                plotted_crop,
-                _crop_identity_label(index, identity_label),
+                plotted_obj.crop,
+                _object_identity_label(plotted_obj, index, identity_label),
             )
             if label_bounds is None:
                 continue
@@ -481,3 +482,19 @@ def get_crop(
         y1, y2 = centered_range(center_y, target_h, h)
 
     return img[y1:y2, x1:x2]
+
+
+def _plot_objects(
+    detection: Detection,
+    crops: Crop | DetectedObject | list[Crop | DetectedObject] | None,
+) -> list[DetectedObject]:
+    if crops is None:
+        return detection.images.objects
+    if isinstance(crops, Crop):
+        return [DetectedObject(crops)]
+    if isinstance(crops, DetectedObject):
+        return [crops]
+    return [
+        item if isinstance(item, DetectedObject) else DetectedObject(item)
+        for item in crops
+    ]

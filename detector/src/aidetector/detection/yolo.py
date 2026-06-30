@@ -1,5 +1,4 @@
 import logging
-from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -8,6 +7,7 @@ import numpy as np
 from aidetector.utils.config import (
     Confidence,
     Crop,
+    DetectedObject,
     Detection,
     ImageSet,
     OnnxConfig,
@@ -21,18 +21,7 @@ from ultralytics import YOLO
 
 logger = logging.getLogger(__name__)
 
-
-@dataclass
-class YoloObject:
-    crop: Crop
-    mask: np.ndarray | None = None
-    track_id: int | None = None
-
-    @property
-    def area(self) -> int:
-        if self.mask is not None:
-            return int(self.mask.sum())
-        return max(0, self.crop.x2 - self.crop.x1) * max(0, self.crop.y2 - self.crop.y1)
+YoloObject = DetectedObject
 
 
 def objects_from_result(
@@ -156,8 +145,8 @@ class YoloResultMapper:
         self, result: Any, frames: list[tuple[datetime, ndarray]]
     ) -> list[Detection] | None:
         image_shape = getattr(result, "orig_shape", frames[-1][1].shape[:2])
-        crops, confidences = self._collect_crops(result, image_shape)
-        if not crops:
+        objects, confidences = self._collect_objects(result, image_shape)
+        if not objects:
             return None
 
         detections = [
@@ -167,17 +156,17 @@ class YoloResultMapper:
         detections.append(
             Detection(
                 frames[-1][0],
-                ImageSet(frames[-1][1], _clone_crops(crops)),
+                ImageSet(frames[-1][1], objects=_clone_objects(objects)),
                 confidences,
             )
         )
         return detections
 
-    def _collect_crops(
+    def _collect_objects(
         self,
         result: Any,
         image_shape: tuple[int, int],
-    ) -> tuple[list[Crop], Confidence]:
+    ) -> tuple[list[YoloObject], Confidence]:
         objects = sorted(
             objects_from_result(
                 result,
@@ -187,11 +176,11 @@ class YoloResultMapper:
             key=lambda obj: obj.crop.confidence or 0,
             reverse=True,
         )
-        return [obj.crop for obj in objects], confidences_from_objects(objects)
+        return objects, confidences_from_objects(objects)
 
 
-def _clone_crops(crops: list[Crop]) -> list[Crop]:
-    return [crop.clone() for crop in crops]
+def _clone_objects(objects: list[YoloObject]) -> list[YoloObject]:
+    return [obj.clone() for obj in objects]
 
 
 class YoloRunner:

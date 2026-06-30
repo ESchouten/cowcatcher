@@ -87,12 +87,15 @@ class DiskExporter(Exporter[DiskConfig]):
             else None,
             crops=[
                 {
-                    "x1": crop.x1,
-                    "y1": crop.y1,
-                    "x2": crop.x2,
-                    "y2": crop.y2,
+                    "x1": obj.crop.x1,
+                    "y1": obj.crop.y1,
+                    "x2": obj.crop.x2,
+                    "y2": obj.crop.y2,
+                    "label": obj.crop.label,
+                    "confidence": obj.crop.confidence,
+                    "identity": asdict(obj.identity) if obj.identity else None,
                 }
-                for crop in best_detection.images.crops
+                for obj in best_detection.images.objects
             ],
         )
         metadata_path = timestamped_directory / "metadata.json"
@@ -113,4 +116,4 @@ class Metadata:
     end: str
     duration: float
     crop: dict[str, int] | None = None
-    crops: list[dict[str, int]] = field(default_factory=list)
+    crops: list[dict] = field(default_factory=list)

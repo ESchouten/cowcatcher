@@ -5,14 +5,9 @@ const IDENTITY_PROVIDER_KEYS = [
 	'type',
 	'database',
 	'model',
-	'segment_model',
-	'segment_labels',
-	'segment_confidence',
-	'debug_directory',
 	'match_threshold',
 	'candidate_threshold',
-	'create_after',
-	'crop_padding'
+	'create_after'
 ] as const;
 
 export function identityProviderConfig(identity: IdentityProviderConfig): IdentityProviderConfig {
