@@ -8,7 +8,7 @@ from aidetector.utils.config import Crop, DetectedObject
 
 
 def save_identity_debug(
-    debug_directory: Path | None,
+    directory: Path | None,
     image: np.ndarray,
     objects: list[DetectedObject],
     selected: list[DetectedObject],
@@ -17,11 +17,11 @@ def save_identity_debug(
     identity_images: list[np.ndarray] | None = None,
     target_crop: Crop | None = None,
 ) -> None:
-    if debug_directory is None:
+    if directory is None:
         return
 
     try:
-        debug_directory.mkdir(parents=True, exist_ok=True)
+        directory.mkdir(parents=True, exist_ok=True)
         overlay = image.copy()
         if target_crop is not None:
             cv2.rectangle(
@@ -66,7 +66,7 @@ def save_identity_debug(
             f"{_safe_filename(source)}-{_safe_filename(crop_label or 'unknown')}-"
             f"{'selected' if selected else 'failed'}.jpg"
         )
-        cv2.imwrite(str(debug_directory / filename), overlay)
+        cv2.imwrite(str(directory / filename), overlay)
         for index, identity_image in enumerate(identity_images or [], start=1):
             suffix = (
                 "-megadescriptor.png"
@@ -74,7 +74,7 @@ def save_identity_debug(
                 else f"-megadescriptor-{index}.png"
             )
             cv2.imwrite(
-                str(debug_directory / filename.replace(".jpg", suffix)),
+                str(directory / filename.replace(".jpg", suffix)),
                 identity_image,
             )
     except Exception:

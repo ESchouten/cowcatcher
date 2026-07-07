@@ -20,11 +20,17 @@
 	import { toast } from 'svelte-sonner';
 
 	const EMPTY_IDENTITY: IdentityProviderConfig = {
-		id: 'cow-main',
-		type: 'wildlife_tools',
-		database: 'identities.sqlite',
-		model: 'hf-hub:BVRA/MegaDescriptor-T-224'
-	};
+	id: 'cow-main',
+	type: 'wildlife_tools',
+	database: 'identities.sqlite',
+	model: 'hf-hub:BVRA/MegaDescriptor-T-224',
+	merge: {
+		enabled: true,
+		threshold: 0.97,
+		margin: 0.03,
+		min_samples: 3
+	}
+};
 
 	function stripMeta(identity?: IdentityMeta): Partial<IdentityProviderConfig> | undefined {
 		if (!identity) {

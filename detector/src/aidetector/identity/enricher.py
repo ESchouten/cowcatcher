@@ -24,6 +24,8 @@ class IdentityEnricher:
         self.provider = provider
         self.config = config
         self.labels = set(config.labels) if config.labels is not None else None
+        self.debug_image_dir = config.debug.directory if config.debug else None
+        self.debug_log_file = config.debug.log_file if config.debug else None
         self.fallback = (
             FallbackCandidateExtractor(config.fallback)
             if config.fallback is not None
@@ -313,7 +315,7 @@ class IdentityEnricher:
             if (identity_image := _object_identity_image(image, obj)) is not None
         ]
         save_identity_debug(
-            self.config.debug_directory,
+            self.debug_image_dir,
             image,
             objects,
             objects,
@@ -359,7 +361,7 @@ class IdentityEnricher:
                     self.fallback.config.labels,
                 )
             save_identity_debug(
-                self.config.debug_directory,
+                self.debug_image_dir,
                 image,
                 objects,
                 [],
@@ -382,7 +384,7 @@ class IdentityEnricher:
                 )
 
         save_identity_debug(
-            self.config.debug_directory,
+            self.debug_image_dir,
             image,
             candidates.matched,
             quality_selected,

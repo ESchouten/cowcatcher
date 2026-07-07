@@ -10,6 +10,13 @@ export interface IdentityResult {
 	similarity: number;
 }
 
+export interface MergeConfig {
+	enabled?: boolean;
+	threshold?: number;
+	margin?: number;
+	min_samples?: number;
+}
+
 export interface Crop {
 	x1: number;
 	y1: number;
@@ -64,11 +71,17 @@ export interface IdentityProviderConfig {
 	match_threshold?: number;
 	candidate_threshold?: number;
 	create_after?: number;
+	merge?: MergeConfig;
 	[key: string]: unknown;
 }
 
 export interface IdentityConfig {
 	providers: IdentityProviderConfig[];
+}
+
+export interface IdentityDebugConfig {
+	directory?: string | null;
+	log_file?: string | null;
 }
 
 export interface DetectorIdentityConfig {
@@ -81,7 +94,7 @@ export interface DetectorIdentityConfig {
 	min_identity_area?: number;
 	max_box_overlap_ratio?: number;
 	max_mask_overlap_ratio?: number;
-	debug_directory?: string | null;
+	debug?: IdentityDebugConfig | null;
 	fallback?: IdentityFallbackConfig | null;
 }
 

@@ -39,7 +39,7 @@ class WildlifeToolsIdentityProvider:
         image: np.ndarray,
     ) -> IdentityResult | None:
         with self.lock:
-            return self._identify_embedding(self._embed(image))
+            return self._auto_merge_result(self._identify_embedding(self._embed(image)))
 
     def update_identity(
         self,
@@ -47,10 +47,12 @@ class WildlifeToolsIdentityProvider:
         image: np.ndarray,
     ) -> IdentityResult | None:
         with self.lock:
-            return self.store.update_identity(
-                identity,
-                self._embed(image),
-                match_threshold=self.config.match_threshold,
+            return self._auto_merge_result(
+                self.store.update_identity(
+                    identity,
+                    self._embed(image),
+                    match_threshold=self.config.match_threshold,
+                )
             )
 
     def close(self) -> None:
@@ -88,6 +90,41 @@ class WildlifeToolsIdentityProvider:
             match_threshold=self.config.match_threshold,
             candidate_threshold=self.config.candidate_threshold,
             create_after=self.config.create_after,
+        )
+
+    def _auto_merge_result(self, result: IdentityResult | None) -> IdentityResult | None:
+        if result is None or not self.config.merge.enabled:
+            return result
+
+        merges = self.store.auto_merge(
+            threshold=self.config.merge.threshold,
+            margin=self.config.merge.margin,
+            min_samples=self.config.merge.min_samples,
+        )
+        for merge in merges:
+            self.logger.info(
+                "Merged duplicate identity %s into %s (similarity %.1f%%)",
+                merge.source,
+                merge.target,
+                merge.similarity * 100,
+            )
+
+        identity = self.store.resolve_identity(result.identity)
+        if identity == result.identity:
+            return result
+
+        similarity = next(
+            (
+                merge.similarity
+                for merge in merges
+                if merge.source == result.identity and merge.target == identity
+            ),
+            result.similarity,
+        )
+        return IdentityResult(
+            identity=identity,
+            status="matched",
+            similarity=similarity,
         )
 
 

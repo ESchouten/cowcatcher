@@ -2,6 +2,7 @@ import json
 import logging
 from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from queue import Empty, Full, Queue
 from threading import Lock, Thread
 from typing import Any
@@ -17,6 +18,7 @@ from aidetector.utils.config import (
 
 logger = logging.getLogger(__name__)
 SSE_HOST = "0.0.0.0"
+tracks_log_lock = Lock()
 
 
 class SSEExporter(Exporter[SSEConfig]):
@@ -199,6 +201,17 @@ def _object_payload(obj: DetectedObject) -> dict[str, Any]:
 
 def _identity_payload(identity: IdentityResult) -> dict[str, Any]:
     return asdict(identity)
+
+
+def write_tracks_log(log_file: Path, payload: dict[str, Any]) -> None:
+    try:
+        with tracks_log_lock:
+            log_file.parent.mkdir(parents=True, exist_ok=True)
+            with log_file.open("a", encoding="utf-8") as file:
+                json.dump(payload, file, separators=(",", ":"))
+                file.write("\n")
+    except Exception:
+        logger.exception("Failed to write identity SSE log")
 
 
 def _normalize_endpoint(endpoint: str) -> str:

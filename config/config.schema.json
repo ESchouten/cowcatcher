@@ -249,18 +249,16 @@
           "title": "Max Mask Overlap Ratio",
           "type": "number"
         },
-        "debug_directory": {
+        "debug": {
           "anyOf": [
             {
-              "format": "path",
-              "type": "string"
+              "$ref": "#/$defs/IdentityDebugConfig"
             },
             {
               "type": "null"
             }
           ],
-          "default": null,
-          "title": "Debug Directory"
+          "default": null
         },
         "fallback": {
           "anyOf": [
@@ -490,6 +488,38 @@
       "title": "IdentityConfig",
       "type": "object"
     },
+    "IdentityDebugConfig": {
+      "properties": {
+        "directory": {
+          "anyOf": [
+            {
+              "format": "path",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Directory"
+        },
+        "log_file": {
+          "anyOf": [
+            {
+              "format": "path",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Log File"
+        }
+      },
+      "title": "IdentityDebugConfig",
+      "type": "object"
+    },
     "IdentityFallbackConfig": {
       "properties": {
         "model": {
@@ -556,6 +586,9 @@
           "default": 3,
           "title": "Create After",
           "type": "integer"
+        },
+        "merge": {
+          "$ref": "#/$defs/MergeConfig"
         }
       },
       "required": [
@@ -563,6 +596,32 @@
         "database"
       ],
       "title": "IdentityProviderConfig",
+      "type": "object"
+    },
+    "MergeConfig": {
+      "properties": {
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "threshold": {
+          "default": 0.97,
+          "title": "Threshold",
+          "type": "number"
+        },
+        "margin": {
+          "default": 0.03,
+          "title": "Margin",
+          "type": "number"
+        },
+        "min_samples": {
+          "default": 3,
+          "title": "Min Samples",
+          "type": "integer"
+        }
+      },
+      "title": "MergeConfig",
       "type": "object"
     },
     "OnnxConfig": {

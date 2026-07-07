@@ -187,6 +187,96 @@ class IdentityStoreTests(unittest.TestCase):
         self.assertEqual(sample_count, 1)
         self.assertEqual(sample_rows, 0)
 
+    def test_auto_merge_aliases_duplicate_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SQLiteIdentityStore(
+                Path(directory) / "identities.sqlite", "cow-main"
+            )
+            try:
+                target = store.create_identity(
+                    np.array([1, 0], dtype=np.float32),
+                    sample_count=3,
+                )
+                source = store.create_identity(
+                    np.array([0.999, 0.04], dtype=np.float32),
+                    sample_count=3,
+                )
+                store.create_identity(
+                    np.array([0, 1], dtype=np.float32),
+                    sample_count=5,
+                )
+
+                merges = store.auto_merge(
+                    threshold=0.97,
+                    margin=0.03,
+                    min_samples=3,
+                )
+                result = store.match(
+                    np.array([0.999, 0.04], dtype=np.float32),
+                    match_threshold=0.75,
+                )
+            finally:
+                store.close()
+
+        self.assertEqual(len(merges), 1)
+        self.assertEqual(merges[0].source, source)
+        self.assertEqual(merges[0].target, target)
+        self.assertEqual(result.identity, target)
+
+    def test_auto_merge_requires_enough_samples(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SQLiteIdentityStore(
+                Path(directory) / "identities.sqlite", "cow-main"
+            )
+            try:
+                store.create_identity(
+                    np.array([1, 0], dtype=np.float32),
+                    sample_count=2,
+                )
+                store.create_identity(
+                    np.array([0.999, 0.04], dtype=np.float32),
+                    sample_count=2,
+                )
+
+                merges = store.auto_merge(
+                    threshold=0.97,
+                    margin=0.03,
+                    min_samples=3,
+                )
+            finally:
+                store.close()
+
+        self.assertEqual(merges, [])
+
+    def test_auto_merge_rejects_ambiguous_margin(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SQLiteIdentityStore(
+                Path(directory) / "identities.sqlite", "cow-main"
+            )
+            try:
+                store.create_identity(
+                    np.array([1, 0], dtype=np.float32),
+                    sample_count=3,
+                )
+                store.create_identity(
+                    np.array([0.999, 0.04], dtype=np.float32),
+                    sample_count=3,
+                )
+                store.create_identity(
+                    np.array([0.998, 0.063], dtype=np.float32),
+                    sample_count=3,
+                )
+
+                merges = store.auto_merge(
+                    threshold=0.97,
+                    margin=0.03,
+                    min_samples=3,
+                )
+            finally:
+                store.close()
+
+        self.assertEqual(merges, [])
+
     def test_store_rejects_model_mismatch(self):
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "identities.sqlite"

@@ -9,7 +9,7 @@ from aidetector.detection.validator import Validator
 from aidetector.detection.yolo import YoloRunner
 from aidetector.exporters.disk import DiskExporter
 from aidetector.exporters.exporter import Exporter
-from aidetector.exporters.sse import SSEExporter
+from aidetector.exporters.sse import SSEExporter, tracks_payload, write_tracks_log
 from aidetector.exporters.telegram import TelegramExporter
 from aidetector.exporters.webhook import WebhookExporter
 from aidetector.identity.enricher import IdentityEnricher
@@ -267,17 +267,30 @@ class Detector:
             self._export(source)
 
     def _publish_tracks(self, source: str, detection: Detection) -> None:
+        published = False
         for exporter in self.exporters:
             publish_tracks = getattr(exporter, "publish_tracks", None)
             if publish_tracks is None:
                 continue
             try:
                 publish_tracks(source, detection)
+                published = True
             except Exception:
                 self.logger.exception(
                     "Exporter %s failed to publish tracks",
                     exporter.__class__.__name__,
                 )
+        if published:
+            self._write_tracks_debug_log(source, detection)
+
+    def _write_tracks_debug_log(self, source: str, detection: Detection) -> None:
+        log_file = getattr(self.identity_enricher, "debug_log_file", None)
+        if log_file is None:
+            return
+        write_tracks_log(
+            log_file,
+            tracks_payload(source, detection),
+        )
 
     def _export(self, source: str):
         detections = self.detections[source]

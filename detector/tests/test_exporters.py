@@ -6,7 +6,7 @@ import numpy as np
 
 from aidetector.exporters.disk import DiskExporter
 from aidetector.exporters.exporter import Exporter
-from aidetector.exporters.sse import detection_payload, tracks_payload
+from aidetector.exporters.sse import detection_payload, tracks_payload, write_tracks_log
 from aidetector.exporters.telegram import TelegramExporter
 from aidetector.exporters.webhook import WebhookExporter
 from aidetector.utils.config import (
@@ -152,6 +152,19 @@ def test_sse_tracks_payload_contains_objects_and_identity():
             },
         }
     ]
+
+
+def test_sse_tracks_log_writes_jsonl(tmp_path):
+    log = tmp_path / "identity-sse.jsonl"
+    payload = {
+        "type": "tracks",
+        "source": "camera-1",
+        "objects": [{"track_id": 12, "identity": {"identity": "cow-main-0001"}}],
+    }
+
+    write_tracks_log(log, payload)
+
+    assert json.loads(log.read_text()) == payload
 
 
 def test_sse_detection_payload_contains_detection_summary():

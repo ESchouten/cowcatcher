@@ -1,3 +1,4 @@
+import json
 from collections import defaultdict
 from datetime import datetime, timedelta
 
@@ -234,7 +235,7 @@ def test_tracks_are_published_for_latest_yolo_detection():
     assert processed == [(source, detections)]
 
 
-def test_tracks_are_live_enriched_before_publishing():
+def test_tracks_are_live_enriched_before_publishing(tmp_path):
     source = "camera"
     detected_at = datetime(2026, 1, 1, 12, 0, 0)
     published = RecordingTracksExporter()
@@ -254,6 +255,7 @@ def test_tracks_are_live_enriched_before_publishing():
         {"detections_from_result": lambda *_args, **_kwargs: [detection]},
     )()
     identity_enricher = CachedIdentityEnricher()
+    identity_enricher.debug_log_file = tmp_path / "identity-sse.jsonl"
     detector.identity_enricher = identity_enricher
     detector.exporters = [published]
     detector._process = lambda *_args, **_kwargs: None
@@ -268,6 +270,8 @@ def test_tracks_are_live_enriched_before_publishing():
     assert identity_enricher.calls == [(source, detection)]
     assert published_detection.images.objects[0].identity.identity == "cow-main-0001"
     assert published_detection.identities[0].identity == "cow-main-0001"
+    log = json.loads(identity_enricher.debug_log_file.read_text())
+    assert log["objects"][0]["identity"]["identity"] == "cow-main-0001"
 
 
 def test_empty_tracks_are_published_when_yolo_has_no_detection():

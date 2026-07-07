@@ -151,6 +151,14 @@ class VLMConfig:
 
 
 @dataclass(kw_only=True)
+class MergeConfig:
+    enabled: bool = True
+    threshold: float = 0.97
+    margin: float = 0.03
+    min_samples: int = 3
+
+
+@dataclass(kw_only=True)
 class IdentityProviderConfig:
     id: str
     type: Literal["wildlife_tools"] = "wildlife_tools"
@@ -159,6 +167,7 @@ class IdentityProviderConfig:
     match_threshold: float = 0.75
     candidate_threshold: float = 0.75
     create_after: int = 3
+    merge: MergeConfig = field(default_factory=MergeConfig)
 
 
 @dataclass(kw_only=True)
@@ -175,6 +184,12 @@ class IdentityFallbackConfig:
 
 
 @dataclass(kw_only=True)
+class IdentityDebugConfig:
+    directory: Path | None = None
+    log_file: Path | None = None
+
+
+@dataclass(kw_only=True)
 class DetectorIdentityConfig:
     provider: str
     mode: Literal["query", "build"] = "query"
@@ -185,7 +200,7 @@ class DetectorIdentityConfig:
     min_identity_area: int = 256
     max_box_overlap_ratio: float = 0.35
     max_mask_overlap_ratio: float = 0.05
-    debug_directory: Path | None = None
+    debug: IdentityDebugConfig | None = None
     fallback: IdentityFallbackConfig | None = None
 
 

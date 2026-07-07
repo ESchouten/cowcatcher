@@ -4,6 +4,7 @@ config.**.json
 yolo11**
 detector/identities/
 detector/identity-debug/
+identity-sse*.jsonl
 stream-screenshot-*.png
 app.json
 !example/config.json

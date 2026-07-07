@@ -23,9 +23,17 @@ class CandidateRecord:
     sample_count: int
 
 
+@dataclass
+class IdentityMerge:
+    source: str
+    target: str
+    similarity: float
+
+
 class SQLiteIdentityStore:
     identities: dict[str, IdentityRecord]
     candidates: dict[int, CandidateRecord]
+    aliases: dict[str, str]
 
     def __init__(
         self,
@@ -43,6 +51,7 @@ class SQLiteIdentityStore:
         self._migrate()
         self.identities = {}
         self.candidates = {}
+        self.aliases = {}
         self.reload()
         self._ensure_store_metadata()
 
@@ -70,6 +79,12 @@ class SQLiteIdentityStore:
                 )
                 for row in self.connection.execute(
                     "SELECT candidate_id, centroid, sample_count FROM unknown_candidates"
+                )
+            }
+            self.aliases = {
+                row[0]: row[1]
+                for row in self.connection.execute(
+                    "SELECT source_identity, target_identity FROM identity_aliases"
                 )
             }
 
@@ -128,6 +143,32 @@ class SQLiteIdentityStore:
                         self._prepare_embedding(embedding),
                         match_threshold,
                     )
+            except Exception:
+                self.reload()
+                raise
+
+    def resolve_identity(self, identity: str) -> str:
+        with self.lock:
+            return self._resolve_identity(identity)
+
+    def auto_merge(
+        self,
+        threshold: float,
+        margin: float,
+        min_samples: int,
+    ) -> list[IdentityMerge]:
+        with self.lock:
+            try:
+                with self.connection:
+                    merges: list[IdentityMerge] = []
+                    while merge := self._find_auto_merge(
+                        threshold,
+                        margin,
+                        min_samples,
+                    ):
+                        self._merge_identities(merge)
+                        merges.append(merge)
+                    return merges
             except Exception:
                 self.reload()
                 raise
@@ -200,6 +241,7 @@ class SQLiteIdentityStore:
         embedding: np.ndarray,
         match_threshold: float,
     ) -> IdentityResult | None:
+        identity = self._resolve_identity(identity)
         record = self.identities.get(identity)
         if record is None:
             return None
@@ -219,6 +261,137 @@ class SQLiteIdentityStore:
             identity=updated.identity,
             status="matched",
             similarity=similarity,
+        )
+
+    def _active_identities(self) -> list[IdentityRecord]:
+        return [
+            identity
+            for identity in self.identities.values()
+            if identity.identity not in self.aliases
+        ]
+
+    def _resolve_identity(self, identity: str) -> str:
+        seen: set[str] = set()
+        while identity in self.aliases and identity not in seen:
+            seen.add(identity)
+            identity = self.aliases[identity]
+        return identity
+
+    def _find_auto_merge(
+        self,
+        threshold: float,
+        margin: float,
+        min_samples: int,
+    ) -> IdentityMerge | None:
+        identities = [
+            identity
+            for identity in self._active_identities()
+            if identity.sample_count >= min_samples
+        ]
+        if len(identities) < 2:
+            return None
+
+        nearest: dict[str, tuple[IdentityRecord, float, float | None]] = {}
+        for identity in identities:
+            similarities = sorted(
+                (
+                    (other, _cosine_similarity(identity.centroid, other.centroid))
+                    for other in identities
+                    if other.identity != identity.identity
+                ),
+                key=lambda item: item[1],
+                reverse=True,
+            )
+            if not similarities:
+                continue
+            best, best_similarity = similarities[0]
+            second_similarity = similarities[1][1] if len(similarities) > 1 else None
+            nearest[identity.identity] = (best, best_similarity, second_similarity)
+
+        candidates: list[IdentityMerge] = []
+        seen: set[frozenset[str]] = set()
+        for identity in identities:
+            nearest_match = nearest.get(identity.identity)
+            if nearest_match is None:
+                continue
+
+            best, similarity, second_similarity = nearest_match
+            if similarity < threshold:
+                continue
+            if second_similarity is not None and similarity - second_similarity < margin:
+                continue
+
+            reverse = nearest.get(best.identity)
+            if reverse is None:
+                continue
+
+            reverse_best, reverse_similarity, reverse_second_similarity = reverse
+            if reverse_best.identity != identity.identity:
+                continue
+            if reverse_similarity < threshold:
+                continue
+            if (
+                reverse_second_similarity is not None
+                and reverse_similarity - reverse_second_similarity < margin
+            ):
+                continue
+
+            key = frozenset((identity.identity, best.identity))
+            if key in seen:
+                continue
+
+            seen.add(key)
+            target, source = _merge_target(identity, best)
+            candidates.append(
+                IdentityMerge(
+                    source=source.identity,
+                    target=target.identity,
+                    similarity=similarity,
+                )
+            )
+
+        if not candidates:
+            return None
+        return max(candidates, key=lambda merge: merge.similarity)
+
+    def _merge_identities(self, merge: IdentityMerge) -> None:
+        source = self._resolve_identity(merge.source)
+        target = self._resolve_identity(merge.target)
+        if source == target:
+            return
+
+        source_record = self.identities[source]
+        target_record = self.identities[target]
+        sample_count = source_record.sample_count + target_record.sample_count
+        centroid = _normalize_embedding(
+            source_record.centroid * source_record.sample_count
+            + target_record.centroid * target_record.sample_count
+        )
+        now = _now()
+        self.connection.execute(
+            """
+            INSERT INTO identity_aliases (
+                source_identity, target_identity, similarity, created_at
+            ) VALUES (?, ?, ?, ?)
+            ON CONFLICT(source_identity) DO UPDATE SET
+                target_identity = excluded.target_identity,
+                similarity = excluded.similarity
+            """,
+            (source, target, merge.similarity, now),
+        )
+        self.connection.execute(
+            """
+            UPDATE identities
+            SET centroid = ?, sample_count = ?, updated_at = ?
+            WHERE identity = ?
+            """,
+            (_embedding_to_blob(centroid), sample_count, now, target),
+        )
+        self.aliases[source] = target
+        self.identities[target] = IdentityRecord(
+            identity=target,
+            centroid=centroid,
+            sample_count=sample_count,
         )
 
     def _migrate(self) -> None:
@@ -252,6 +425,13 @@ class SQLiteIdentityStore:
                 embedding BLOB NOT NULL,
                 similarity REAL,
                 status TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS identity_aliases (
+                source_identity TEXT PRIMARY KEY,
+                target_identity TEXT NOT NULL,
+                similarity REAL NOT NULL,
                 created_at TEXT NOT NULL
             );
             """
@@ -314,12 +494,13 @@ class SQLiteIdentityStore:
     def _best_identity(
         self, embedding: np.ndarray
     ) -> tuple[IdentityRecord | None, float]:
-        if not self.identities:
+        identities = self._active_identities()
+        if not identities:
             return None, 0
         return max(
             (
                 (identity, _cosine_similarity(embedding, identity.centroid))
-                for identity in self.identities.values()
+                for identity in identities
             ),
             key=lambda item: item[1],
         )
@@ -548,6 +729,19 @@ def _embedding_from_blob(blob: bytes) -> np.ndarray:
 
 def _cosine_similarity(left: np.ndarray, right: np.ndarray) -> float:
     return float(np.dot(left, right))
+
+
+def _merge_target(
+    left: IdentityRecord,
+    right: IdentityRecord,
+) -> tuple[IdentityRecord, IdentityRecord]:
+    if left.sample_count > right.sample_count:
+        return left, right
+    if right.sample_count > left.sample_count:
+        return right, left
+    if left.identity < right.identity:
+        return left, right
+    return right, left
 
 
 def _now() -> str:
