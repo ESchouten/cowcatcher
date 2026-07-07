@@ -46,10 +46,12 @@ export interface DetectorConfig {
 	yolo?: {
 		model: string;
 		confidence: number;
+		tracking?: boolean;
 		frames_min: number;
 	};
 	exporters?: {
 		telegram?: TelegramConfig[];
+		sse?: SSEConfig[];
 		[key: string]: unknown[] | undefined;
 	};
 	identity?: DetectorIdentityConfig | null;
@@ -75,6 +77,7 @@ export interface DetectorIdentityConfig {
 	provider: string;
 	labels?: string[];
 	multiple?: boolean;
+	live_lookup_interval?: number;
 	debug_directory?: string | null;
 	fallback?: IdentityFallbackConfig | null;
 }
@@ -90,6 +93,12 @@ export interface TelegramConfig {
 	token: string;
 	chat: string;
 	alert_every?: number;
+}
+
+export interface SSEConfig {
+	port?: number;
+	endpoint?: string;
+	keepalive?: number;
 }
 
 export interface Config {

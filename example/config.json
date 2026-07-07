@@ -30,7 +30,8 @@
                 },
                 "disk": {
                     "directory": "mounts"
-                }
+                },
+                "sse": {}
             }
         }
     ]

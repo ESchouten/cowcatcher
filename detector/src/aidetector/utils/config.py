@@ -124,6 +124,7 @@ class YoloConfig:
     model: str
     task: Literal["detect", "segment"] = "detect"
     confidence: float | Confidence = 0
+    tracking: bool = False
     time_max: int = 60
     timeout: int = 5
     cooldown: float | dict[str, float] = 0
@@ -180,6 +181,7 @@ class DetectorIdentityConfig:
     provider: str
     labels: list[str] | None = None
     multiple: bool = False
+    live_lookup_interval: float = 5.0
     debug_directory: Path | None = None
     fallback: IdentityFallbackConfig | None = None
 
@@ -234,11 +236,19 @@ class DiskConfig(ExporterConfig):
     export_rejected: bool = True
 
 
+@dataclass(kw_only=True)
+class SSEConfig(ExporterConfig):
+    port: int = 8765
+    endpoint: str = "/events"
+    keepalive: int = 15
+
+
 @dataclass
 class ExportersConfig:
     disk: DiskConfig | list[DiskConfig] | None = None
     telegram: ChatConfig | list[ChatConfig] | None = None
     webhook: WebhookConfig | list[WebhookConfig] | None = None
+    sse: SSEConfig | list[SSEConfig] | None = None
 
 
 @dataclass(kw_only=True)

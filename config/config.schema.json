@@ -215,6 +215,11 @@
           "title": "Multiple",
           "type": "boolean"
         },
+        "live_lookup_interval": {
+          "default": 5.0,
+          "title": "Live Lookup Interval",
+          "type": "number"
+        },
         "debug_directory": {
           "anyOf": [
             {
@@ -357,6 +362,24 @@
           ],
           "default": null,
           "title": "Webhook"
+        },
+        "sse": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SSEConfig"
+            },
+            {
+              "items": {
+                "$ref": "#/$defs/SSEConfig"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sse"
         }
       },
       "title": "ExportersConfig",
@@ -539,6 +562,55 @@
         }
       },
       "title": "OnnxConfig",
+      "type": "object"
+    },
+    "SSEConfig": {
+      "properties": {
+        "confidence": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "additionalProperties": {
+                "type": "number"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confidence"
+        },
+        "crop_padding": {
+          "default": 0.1,
+          "title": "Crop Padding",
+          "type": "number"
+        },
+        "export_rejected": {
+          "default": false,
+          "title": "Export Rejected",
+          "type": "boolean"
+        },
+        "port": {
+          "default": 8765,
+          "title": "Port",
+          "type": "integer"
+        },
+        "endpoint": {
+          "default": "/events",
+          "title": "Endpoint",
+          "type": "string"
+        },
+        "keepalive": {
+          "default": 15,
+          "title": "Keepalive",
+          "type": "integer"
+        }
+      },
+      "title": "SSEConfig",
       "type": "object"
     },
     "VLMConfig": {
@@ -800,6 +872,11 @@
           ],
           "default": 0,
           "title": "Confidence"
+        },
+        "tracking": {
+          "default": false,
+          "title": "Tracking",
+          "type": "boolean"
         },
         "time_max": {
           "default": 60,

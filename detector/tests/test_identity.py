@@ -283,6 +283,197 @@ class DetectorIdentityTests(unittest.TestCase):
         self.assertEqual(identity_service.images[0].shape, (7, 7, 3))
         self.assertEqual(detection.identities[0].identity_id, "cow-main-0001")
 
+    def test_detector_identity_identifies_tracked_object_once_per_event(self):
+        identity_service = _RecordingIdentityService()
+        enricher = _identity_enricher(identity_service)
+        low_quality = _tracked_detection(
+            Crop(1, 1, 4, 4, label="cow", confidence=0.6),
+            track_id=7,
+        )
+        high_quality = _tracked_detection(
+            Crop(1, 1, 8, 8, label="cow", confidence=0.9),
+            track_id=7,
+        )
+
+        enricher.enrich("source-1", high_quality, [low_quality, high_quality])
+
+        self.assertEqual(len(identity_service.images), 1)
+        self.assertEqual(identity_service.images[0].shape, (7, 7, 3))
+        self.assertEqual(
+            low_quality.images.objects[0].identity.identity_id,
+            "cow-main-0001",
+        )
+        self.assertEqual(
+            high_quality.images.objects[0].identity.identity_id,
+            "cow-main-0001",
+        )
+
+    def test_detector_identity_multiple_identifies_each_track_in_best_frame(self):
+        identity_service = _ListIdentityService()
+        enricher = _identity_enricher(identity_service, multiple=True)
+        first_mask = np.zeros((10, 10), dtype=bool)
+        first_mask[1:4, 1:4] = True
+        second_mask = np.zeros((10, 10), dtype=bool)
+        second_mask[5:9, 5:9] = True
+        detection = Detection(
+            datetime(2026, 1, 1, 12, 0, 0),
+            ImageSet(
+                np.zeros((10, 10, 3), dtype=np.uint8),
+                [
+                    DetectedObject(
+                        Crop(1, 1, 4, 4, label="cow", confidence=0.9),
+                        mask=first_mask,
+                        track_id=1,
+                    ),
+                    DetectedObject(
+                        Crop(5, 5, 9, 9, label="cow", confidence=0.8),
+                        mask=second_mask,
+                        track_id=2,
+                    ),
+                ],
+            ),
+            {"cow": 0.9},
+        )
+
+        enricher.enrich("source-1", detection)
+
+        self.assertEqual(identity_service.image_count, 2)
+        self.assertEqual(
+            detection.images.objects[0].identity.identity_id,
+            "cow-main-0001",
+        )
+        self.assertEqual(
+            detection.images.objects[1].identity.identity_id,
+            "cow-main-0002",
+        )
+
+    def test_detector_identity_reuses_cached_track_identity(self):
+        identity_service = _RecordingIdentityService()
+        enricher = _identity_enricher(identity_service)
+        first = _tracked_detection(
+            Crop(1, 1, 8, 8, label="cow", confidence=0.9),
+            track_id=7,
+        )
+
+        enricher.enrich("source-1", first, [first])
+        enricher.service = _FailingIdentityService()
+        second = _tracked_detection(
+            Crop(2, 1, 9, 8, label="cow", confidence=0.8),
+            track_id=7,
+        )
+
+        enricher.enrich("source-1", second, [second])
+
+        self.assertEqual(enricher.service.calls, 0)
+        self.assertEqual(second.images.objects[0].identity.identity_id, "cow-main-0001")
+        self.assertEqual(second.identities[0].identity_id, "cow-main-0001")
+
+    def test_live_identity_identifies_and_caches_uncached_track(self):
+        identity_service = _RecordingIdentityService()
+        enricher = _identity_enricher(identity_service)
+        first = _tracked_detection(
+            Crop(1, 1, 8, 8, label="cow", confidence=0.9),
+            track_id=7,
+        )
+
+        enricher.enrich_live("source-1", first)
+
+        self.assertEqual(len(identity_service.images), 1)
+        self.assertEqual(first.images.objects[0].identity.identity_id, "cow-main-0001")
+        self.assertEqual(first.identities[0].identity_id, "cow-main-0001")
+
+        enricher.service = _FailingIdentityService()
+        second = _tracked_detection(
+            Crop(2, 1, 9, 8, label="cow", confidence=0.8),
+            track_id=7,
+        )
+
+        enricher.enrich_live("source-1", second)
+
+        self.assertEqual(enricher.service.calls, 0)
+        self.assertEqual(second.images.objects[0].identity.identity_id, "cow-main-0001")
+        self.assertEqual(second.identities[0].identity_id, "cow-main-0001")
+
+    def test_live_identity_throttles_uncached_unknown_track(self):
+        identity_service = _UnknownIdentityService()
+        enricher = _identity_enricher(identity_service)
+        first = _tracked_detection(
+            Crop(1, 1, 8, 8, label="cow", confidence=0.9),
+            track_id=7,
+        )
+        second = _tracked_detection(
+            Crop(2, 1, 9, 8, label="cow", confidence=0.8),
+            track_id=7,
+        )
+
+        enricher.enrich_live("source-1", first)
+        enricher.enrich_live("source-1", second)
+
+        self.assertEqual(identity_service.calls, 1)
+        self.assertEqual(first.identities[0].status, "unknown")
+        self.assertEqual(second.identities, [])
+
+        enricher.enrich("source-1", second)
+
+        self.assertEqual(identity_service.calls, 2)
+        self.assertEqual(second.identities[0].status, "unknown")
+
+    def test_live_identity_interval_is_configurable(self):
+        identity_service = _UnknownIdentityService()
+        enricher = _identity_enricher(
+            identity_service,
+            live_lookup_interval=0,
+        )
+        first = _tracked_detection(
+            Crop(1, 1, 8, 8, label="cow", confidence=0.9),
+            track_id=7,
+        )
+        second = _tracked_detection(
+            Crop(2, 1, 9, 8, label="cow", confidence=0.8),
+            track_id=7,
+        )
+
+        enricher.enrich_live("source-1", first)
+        enricher.enrich_live("source-1", second)
+
+        self.assertEqual(identity_service.calls, 2)
+        self.assertEqual(second.identities[0].status, "unknown")
+
+    def test_fallback_identity_uses_target_track_id_for_event_frames(self):
+        image = np.zeros((10, 10, 3), dtype=np.uint8)
+        image[2:9, 1:8] = 50
+        mask = np.zeros((10, 10), dtype=bool)
+        mask[2:9, 1:8] = True
+        identity_service = _RecordingIdentityService()
+        enricher = _identity_enricher(
+            identity_service,
+            fallback=IdentityFallbackConfig(model="seg.pt"),
+        )
+        enricher.fallback_model = _Segmenter([
+            _SegmentationResult(
+                names={19: "cow"},
+                boxes=[_Box(19, 0.99, [1, 2, 8, 9])],
+                masks=[mask],
+                orig_shape=(10, 10),
+            )
+        ])
+        first = _tracked_detection(
+            Crop(1, 2, 8, 9, label="cow", confidence=0.6),
+            track_id=7,
+        )
+        best = _tracked_detection(
+            Crop(1, 2, 8, 9, label="cow", confidence=0.9),
+            track_id=7,
+        )
+        for detection in [first, best]:
+            detection.images.jpg = image
+            detection.images.objects[0].mask = None
+
+        enricher.enrich("source-1", best, [first, best])
+
+        self.assertEqual(first.images.objects[0].identity.identity_id, "cow-main-0001")
+        self.assertEqual(best.images.objects[0].identity.identity_id, "cow-main-0001")
+
     def test_detector_identity_resets_stale_identity_when_lookup_returns_no_result(self):
         stale_identity = IdentityResult(
             provider="cow-main",
@@ -654,6 +845,19 @@ def _detection(
     )
 
 
+def _tracked_detection(crop: Crop, track_id: int) -> Detection:
+    mask = np.zeros((10, 10), dtype=bool)
+    mask[crop.y1 : crop.y2, crop.x1 : crop.x2] = True
+    return Detection(
+        date=datetime(2026, 1, 1, 12, 0, 0),
+        images=ImageSet(
+            jpg=np.zeros((10, 10, 3), dtype=np.uint8),
+            objects=[DetectedObject(crop, mask=mask, track_id=track_id)],
+        ),
+        confidence={crop.label or "cow": crop.confidence or 0},
+    )
+
+
 class _Validator:
     def __init__(self, validated: bool | None):
         self.validated = validated
@@ -707,6 +911,23 @@ class _RecordingIdentityService:
                 name=None,
                 status="matched",
                 similarity=0.9,
+            )
+        ]
+
+
+class _UnknownIdentityService:
+    def __init__(self):
+        self.calls = 0
+
+    def identify(self, provider, images, source):
+        self.calls += 1
+        return [
+            IdentityResult(
+                provider=provider,
+                identity_id=None,
+                name=None,
+                status="unknown",
+                similarity=0.2,
             )
         ]
 

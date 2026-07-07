@@ -9,6 +9,7 @@ from aidetector.detection.validator import Validator
 from aidetector.detection.yolo import YoloRunner
 from aidetector.exporters.disk import DiskExporter
 from aidetector.exporters.exporter import Exporter
+from aidetector.exporters.sse import SSEExporter
 from aidetector.exporters.telegram import TelegramExporter
 from aidetector.exporters.webhook import WebhookExporter
 from aidetector.identity.enricher import IdentityEnricher
@@ -24,6 +25,7 @@ from aidetector.utils.config import (
     DiskConfig,
     ImageSet,
     OnnxConfig,
+    SSEConfig,
     VLMConfig,
     WebhookConfig,
     YoloConfig,
@@ -93,6 +95,7 @@ class Detector:
                 "telegram": (ChatConfig, TelegramExporter),
                 "webhook": (WebhookConfig, WebhookExporter),
                 "disk": (DiskConfig, DiskExporter),
+                "sse": (SSEConfig, SSEExporter),
             }
 
             for config_name, (config_cls, exporter_cls) in config_exporter_map.items():
@@ -142,6 +145,22 @@ class Detector:
         self.last_frame_time = datetime.now()
 
         if self.yolo_runner and self.yolo_config:
+            if self.yolo_config.tracking:
+                for source, source_frames in batch.items():
+                    if self.yolo_config.strategy == "LATEST":
+                        frames = [source_frames[-1][1]]
+                        results = self.yolo_runner.predict(frames, source=source)
+                        for result in results:
+                            self._handle_yolo_result(source, result, source_frames)
+                    else:
+                        frames = [frame[1] for frame in source_frames]
+                        results = self.yolo_runner.predict(frames, source=source)
+                        for i, result in enumerate(results):
+                            self._handle_yolo_result(
+                                source, result, source_frames[i : i + 1]
+                            )
+                return
+
             if self.yolo_config.strategy == "LATEST":
                 frames = [frames[-1][1] for frames in batch.values()]
             else:
@@ -174,10 +193,18 @@ class Detector:
 
         detections = self.yolo_runner.detections_from_result(result, frames)
         if detections:
+            latest_detection = detections[-1]
+            if self.identity_enricher:
+                self.identity_enricher.enrich_live(source, latest_detection)
+            self._publish_tracks(source, latest_detection)
             self._process(source, detections)
             return
 
         self.logger.debug("Confidence does not match")
+        self._publish_tracks(
+            source,
+            Detection(frames[-1][0], ImageSet(frames[-1][1]), {}),
+        )
         latest_detection = self._latest_detection(source)
         if not latest_detection:
             return
@@ -232,6 +259,19 @@ class Detector:
         if self._time_exceeded(source):
             self._export(source)
 
+    def _publish_tracks(self, source: str, detection: Detection) -> None:
+        for exporter in self.exporters:
+            publish_tracks = getattr(exporter, "publish_tracks", None)
+            if publish_tracks is None:
+                continue
+            try:
+                publish_tracks(source, detection)
+            except Exception:
+                self.logger.exception(
+                    "Exporter %s failed to publish tracks",
+                    exporter.__class__.__name__,
+                )
+
     def _export(self, source: str):
         detections = self.detections[source]
         if self._has_min_detections(source):
@@ -262,7 +302,8 @@ class Detector:
                 validated = self.validator.validate(best_detection, detections)
                 if validated is not False and self.identity_enricher:
                     try:
-                        self.identity_enricher.enrich(source, best_detection)
+                        self.identity_enricher.enrich(source, best_detection, detections)
+                        self._publish_tracks(source, best_detection)
                     except Exception:
                         self.logger.exception("Identity lookup failed")
 

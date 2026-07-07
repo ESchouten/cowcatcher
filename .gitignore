@@ -2,6 +2,9 @@ detections
 config.json
 config.**.json
 yolo11**
+detector/identities/
+detector/identity-debug/
+stream-screenshot-*.png
 app.json
 !example/config.json
 !web/src/routes/(admin)/detections

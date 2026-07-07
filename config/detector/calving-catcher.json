@@ -24,6 +24,7 @@
     "exporters": {
         "disk": {
             "directory": "calvings"
-        }
+        },
+        "sse": {}
     }
 }

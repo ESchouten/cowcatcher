@@ -185,6 +185,8 @@ def _clone_objects(objects: list[YoloObject]) -> list[YoloObject]:
 
 class YoloRunner:
     model: YOLO
+    model_path: str
+    tracking_models: dict[str, YOLO]
     class_confidences: dict[int, tuple[str, float]]
     mapper: YoloResultMapper
 
@@ -195,11 +197,10 @@ class YoloRunner:
         source_count: int,
     ):
         self.config = config
-        self.model = YOLO(
-            self._model_path(config, onnx_config, source_count),
-            task=config.task,
-        )
-        self._setup_predictor()
+        self.model_path = self._model_path(config, onnx_config, source_count)
+        self.model = self._new_model()
+        self._setup_predictor(self.model)
+        self.tracking_models = {}
         self.class_confidences = self._resolve_class_confidences(config.confidence)
         self.mapper = YoloResultMapper(self.class_confidences)
 
@@ -221,29 +222,48 @@ class YoloRunner:
             )
         )
 
-    def _setup_predictor(self) -> None:
-        if self.model.predictor is not None:
-            return
-        self.model.predictor = self.model._smart_load("predictor")(
-            overrides=self.model.overrides,
-            _callbacks=self.model.callbacks,
-        )
-        self.model.predictor.setup_model(model=self.model.model, verbose=False)
+    def _new_model(self) -> YOLO:
+        return YOLO(self.model_path, task=self.config.task)
 
-    def predict(self, frames: list[ndarray]) -> list[Any]:
-        then = datetime.now()
-        results = self.model.predict(
-            source=frames,
-            conf=min_confidence(self.config.confidence),
-            stream=False,
-            classes=list(self.class_confidences.keys()) or None,
-            imgsz=self.config.imgsz,
-            rect=should_rect(),
-            batch=len(frames),
+    def _setup_predictor(self, model: YOLO) -> None:
+        if model.predictor is not None:
+            return
+        model.predictor = model._smart_load("predictor")(
+            overrides=model.overrides,
+            _callbacks=model.callbacks,
         )
+        model.predictor.setup_model(model=model.model, verbose=False)
+
+    def _tracking_model(self, source: str | None) -> YOLO:
+        key = source or "__default__"
+        if key not in self.tracking_models:
+            if not self.tracking_models:
+                model = self.model
+            else:
+                model = self._new_model()
+                self._setup_predictor(model)
+            self.tracking_models[key] = model
+        return self.tracking_models[key]
+
+    def predict(self, frames: list[ndarray], source: str | None = None) -> list[Any]:
+        then = datetime.now()
+        kwargs = {
+            "source": frames,
+            "conf": min_confidence(self.config.confidence),
+            "stream": False,
+            "classes": list(self.class_confidences.keys()) or None,
+            "imgsz": self.config.imgsz,
+            "rect": should_rect(),
+            "batch": len(frames),
+        }
+        if self.config.tracking:
+            results = self._tracking_model(source).track(**kwargs, persist=True)
+        else:
+            results = self.model.predict(**kwargs)
         now = datetime.now()
         logger.info(
-            "Detection time: %dms for %d frame(s). Avg: %dms",
+            "%s time: %dms for %d frame(s). Avg: %dms",
+            "Tracking" if self.config.tracking else "Detection",
             (now - then).total_seconds() * 1000,
             len(frames),
             (now - then).total_seconds() * 1000 / len(frames),

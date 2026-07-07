@@ -25,6 +25,18 @@ export const getStreams = query(async () => {
 	}));
 });
 
+export const getStreamSettings = query(async () => {
+	const { config } = await getConfig();
+	const sseExporters = config.detectors.flatMap((detector) => detector.exporters?.sse ?? []);
+	const sse = sseExporters[0];
+	const endpoint = sse?.endpoint?.trim() || '/events';
+
+	return {
+		tracksEndpoint: endpoint,
+		tracksPort: sse?.port ?? 8765
+	};
+});
+
 export const saveStream = form(
 	v.object({
 		original: v.optional(v.string()),

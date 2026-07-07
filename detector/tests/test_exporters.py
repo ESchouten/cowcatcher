@@ -6,6 +6,7 @@ import numpy as np
 
 from aidetector.exporters.disk import DiskExporter
 from aidetector.exporters.exporter import Exporter
+from aidetector.exporters.sse import detection_payload, tracks_payload
 from aidetector.exporters.telegram import TelegramExporter
 from aidetector.exporters.webhook import WebhookExporter
 from aidetector.utils.config import (
@@ -15,6 +16,7 @@ from aidetector.utils.config import (
     Detection,
     DiskConfig,
     ExporterConfig,
+    IdentityResult,
     ImageSet,
     WebhookConfig,
 )
@@ -119,6 +121,63 @@ def test_webhook_exporter_sends_no_body_for_none_data_type(monkeypatch):
             {"headers": {"X-Test": "1"}, "timeout": 5},
         )
     ]
+
+
+def test_sse_tracks_payload_contains_objects_and_identity():
+    identity = IdentityResult(
+        provider="cow-main",
+        identity_id="cow-main-0001",
+        name=None,
+        status="matched",
+        similarity=0.92,
+    )
+    detection = make_detections()[-1]
+    detection.images.objects[0].track_id = 12
+    detection.images.objects[0].identity = identity
+
+    payload = tracks_payload("camera-1", detection)
+
+    assert payload["type"] == "tracks"
+    assert payload["source"] == "camera-1"
+    assert payload["width"] == 120
+    assert payload["height"] == 80
+    assert payload["objects"] == [
+        {
+            "track_id": 12,
+            "label": "cow",
+            "confidence": 0.9,
+            "crop": {"x1": 12, "y1": 12, "x2": 42, "y2": 52},
+            "identity": {
+                "provider": "cow-main",
+                "identity_id": "cow-main-0001",
+                "name": None,
+                "status": "matched",
+                "similarity": 0.92,
+            },
+        }
+    ]
+
+
+def test_sse_detection_payload_contains_detection_summary():
+    detections = make_detections()
+    detections[-1].identities = [
+        IdentityResult(
+            provider="cow-main",
+            identity_id="cow-main-0001",
+            name=None,
+            status="matched",
+            similarity=0.92,
+        )
+    ]
+
+    payload = detection_payload(detections[-1], detections, True)
+
+    assert payload["type"] == "detection"
+    assert payload["confidence"] == 0.9
+    assert payload["validated"] is True
+    assert payload["duration"] == 2
+    assert payload["identity"]["identity_id"] == "cow-main-0001"
+    assert payload["identities"][0]["similarity"] == 0.92
 
 
 def test_webhook_explicit_body_overrides_generated_payload(monkeypatch):
