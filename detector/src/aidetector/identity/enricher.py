@@ -5,15 +5,15 @@ from threading import Lock
 from time import monotonic
 
 import numpy as np
-from aidetector.detection.yolo import apply_mask, objects_from_result
+from aidetector.detection.yolo import apply_mask
 from aidetector.identity.debug import format_detected_labels, save_identity_debug
+from aidetector.identity.fallback import FallbackCandidateExtractor
 from aidetector.identity.provider import IdentityProvider
 from aidetector.utils.config import (
     Crop,
     DetectedObject,
     Detection,
     DetectorIdentityConfig,
-    IdentityFallbackConfig,
     IdentityResult,
 )
 
@@ -25,8 +25,11 @@ class IdentityEnricher:
         self.provider = provider
         self.config = config
         self.labels = set(config.labels) if config.labels is not None else None
-        self.fallback_model = None
-        self.fallback_lock = Lock()
+        self.fallback = (
+            FallbackCandidateExtractor(config.fallback)
+            if config.fallback is not None
+            else None
+        )
         self.identity_lock = Lock()
         self.identities_by_track: dict[tuple[str, int], IdentityResult] = {}
         self.lookup_attempts: dict[tuple[str, int], float] = {}
@@ -81,9 +84,8 @@ class IdentityEnricher:
             return
 
         self.logger.info(
-            "Looking up %d identity image(s) with provider %s",
+            "Looking up %d identity image(s)",
             len(lookups),
-            self.config.provider,
         )
         identified_lookups: list[IdentityLookup] = []
         identities: list[IdentityResult] = []
@@ -167,9 +169,8 @@ class IdentityEnricher:
             return
 
         self.logger.info(
-            "Updating %d cached identity sample(s) with provider %s",
+            "Updating %d cached identity sample(s)",
             len(updates),
-            self.config.provider,
         )
         for update in updates:
             identity = self.provider.update_identity(update.identity, update.image)
@@ -244,11 +245,10 @@ class IdentityEnricher:
                 debug_label="detector",
             )
 
-        if self.config.fallback is not None:
+        if self.fallback is not None:
             return self._fallback_identity_lookups(
                 detection,
                 source,
-                self.config.fallback,
                 lookup_objects[0],
             )
 
@@ -294,7 +294,7 @@ class IdentityEnricher:
             if (identity_image := _object_identity_image(image, obj)) is not None
         ]
         save_identity_debug(
-            self.config,
+            self.config.debug_directory,
             image,
             objects,
             objects,
@@ -308,31 +308,33 @@ class IdentityEnricher:
         self,
         detection: Detection,
         source: str,
-        config: IdentityFallbackConfig,
         target: DetectedObject,
     ) -> list["IdentityLookup"]:
+        if self.fallback is None:
+            return []
+
         image = detection.images.jpg
         crop = target.crop
 
-        detected, matched, selected = self._fallback_objects(image, config, crop)
-        if not selected:
-            objects = matched or detected
-            if matched:
+        candidates = self.fallback.extract(image, crop, self.config.multiple)
+        if not candidates.selected:
+            objects = candidates.matched or candidates.detected
+            if candidates.matched:
                 self.logger.info(
                     "Skipping identity fallback: %s found %s, but none were centered in %s crop",
-                    config.model,
-                    format_detected_labels(matched),
+                    self.fallback.config.model,
+                    format_detected_labels(candidates.matched),
                     crop.label,
                 )
             else:
                 self.logger.info(
                     "Identity fallback model %s found labels %s, but none matched %s with masks",
-                    config.model,
-                    format_detected_labels(detected),
-                    config.labels,
+                    self.fallback.config.model,
+                    format_detected_labels(candidates.detected),
+                    self.fallback.config.labels,
                 )
             save_identity_debug(
-                self.config,
+                self.config.debug_directory,
                 image,
                 objects,
                 [],
@@ -343,7 +345,7 @@ class IdentityEnricher:
             return []
 
         lookups: list[IdentityLookup] = []
-        for obj in selected:
+        for obj in candidates.selected:
             identity_image = _object_identity_image(image, obj)
             if identity_image is not None:
                 lookups.append(
@@ -355,55 +357,16 @@ class IdentityEnricher:
                 )
 
         save_identity_debug(
-            self.config,
+            self.config.debug_directory,
             image,
-            matched,
-            selected,
+            candidates.matched,
+            candidates.selected,
             source,
             crop.label,
             [lookup.image for lookup in lookups],
             target_crop=crop,
         )
         return lookups
-
-    def _fallback_objects(
-        self,
-        image: np.ndarray,
-        config: IdentityFallbackConfig,
-        crop: Crop,
-    ) -> tuple[list[DetectedObject], list[DetectedObject], list[DetectedObject]]:
-        from ultralytics import YOLO
-
-        with self.fallback_lock:
-            if self.fallback_model is None:
-                self.fallback_model = YOLO(config.model, task="segment")
-                self.logger.info("Loaded identity fallback segment model %s", config.model)
-
-            results = self.fallback_model.predict(
-                source=image,
-                conf=config.confidence,
-                imgsz=config.imgsz,
-                stream=False,
-                verbose=False,
-            )
-        if not results:
-            return [], [], []
-
-        detected = objects_from_result(results[0], image.shape[:2])
-        labels = set(config.labels)
-        matched = [
-            obj
-            for obj in detected
-            if obj.mask is not None
-            and _label_matches(obj.crop.label, labels)
-            and (obj.crop.confidence or 0) >= config.confidence
-        ]
-        centered = sorted(
-            [obj for obj in matched if _object_center_in_crop(obj, crop)],
-            key=lambda obj: _center_distance_to_crop(obj, crop),
-        )
-        selected = centered if self.config.multiple else centered[:1]
-        return detected, matched, selected
 
 
 @dataclass
@@ -479,17 +442,3 @@ def _crop_to_mask(image: np.ndarray, mask: np.ndarray) -> np.ndarray | None:
     if x2 <= x1 or y2 <= y1:
         return None
     return image[y1:y2, x1:x2]
-
-
-def _center_distance_to_crop(obj: DetectedObject, crop: Crop) -> float:
-    target_x = (crop.x1 + crop.x2) / 2
-    target_y = (crop.y1 + crop.y2) / 2
-    crop_center_x = (obj.crop.x1 + obj.crop.x2) / 2
-    crop_center_y = (obj.crop.y1 + obj.crop.y2) / 2
-    return (crop_center_x - target_x) ** 2 + (crop_center_y - target_y) ** 2
-
-
-def _object_center_in_crop(obj: DetectedObject, crop: Crop) -> bool:
-    center_x = (obj.crop.x1 + obj.crop.x2) / 2
-    center_y = (obj.crop.y1 + obj.crop.y2) / 2
-    return crop.x1 <= center_x <= crop.x2 and crop.y1 <= center_y <= crop.y2

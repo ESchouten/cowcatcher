@@ -524,7 +524,7 @@ class DetectorIdentityTests(unittest.TestCase):
             identity_provider,
             fallback=IdentityFallbackConfig(model="seg.pt"),
         )
-        enricher.fallback_model = _Segmenter([
+        enricher.fallback.model = _Segmenter([
             _SegmentationResult(
                 names={19: "cow"},
                 boxes=[_Box(19, 0.99, [1, 2, 8, 9])],
@@ -593,12 +593,12 @@ class DetectorIdentityTests(unittest.TestCase):
             identity_provider,
             fallback=IdentityFallbackConfig(model="seg.pt"),
         )
-        enricher.fallback_model = _Segmenter([])
+        enricher.fallback.model = _Segmenter([])
 
         enricher.enrich("source-1", detection)
 
         self.assertEqual(identity_provider.images[0].shape, (6, 5, 3))
-        self.assertEqual(enricher.fallback_model.predict_sources, [])
+        self.assertEqual(enricher.fallback.model.predict_sources, [])
         self.assertEqual(detection.images.objects[0].identity.identity, "cow-main-0001")
 
     def test_image_set_crop_region_clones_single_crop(self):
@@ -656,7 +656,7 @@ class WildlifeToolsIdentityTests(unittest.TestCase):
             identity_provider,
             fallback=IdentityFallbackConfig(model="seg.pt"),
         )
-        enricher.fallback_model = _Segmenter([])
+        enricher.fallback.model = _Segmenter([])
 
         enricher.enrich("source-1", _detection())
 
@@ -668,7 +668,7 @@ class WildlifeToolsIdentityTests(unittest.TestCase):
             identity_provider,
             fallback=IdentityFallbackConfig(model="seg.pt"),
         )
-        enricher.fallback_model = _Segmenter([
+        enricher.fallback.model = _Segmenter([
             _SegmentationResult(
                 names={19: "cow"},
                 boxes=[_Box(19, 0.9, [0, 0, 2, 2])],
@@ -692,7 +692,7 @@ class WildlifeToolsIdentityTests(unittest.TestCase):
                 confidence=0.5,
             ),
         )
-        enricher.fallback_model = _Segmenter([
+        enricher.fallback.model = _Segmenter([
             _SegmentationResult(
                 names={19: "cow"},
                 boxes=[_Box(19, 0.9, [1, 2, 6, 8])],
@@ -726,7 +726,7 @@ class WildlifeToolsIdentityTests(unittest.TestCase):
                 confidence=0.5,
             ),
         )
-        enricher.fallback_model = _Segmenter([
+        enricher.fallback.model = _Segmenter([
             _SegmentationResult(
                 names={19: "cow"},
                 boxes=[
@@ -768,7 +768,7 @@ class WildlifeToolsIdentityTests(unittest.TestCase):
                 imgsz=960,
             ),
         )
-        enricher.fallback_model = _Segmenter([
+        enricher.fallback.model = _Segmenter([
             _SegmentationResult(
                 names={19: "cow"},
                 boxes=[
@@ -788,10 +788,10 @@ class WildlifeToolsIdentityTests(unittest.TestCase):
         self.assertEqual(len(images), 1)
         self.assertEqual(int(images[0].max()), 200)
         np.testing.assert_array_equal(
-            enricher.fallback_model.predict_sources[0],
+            enricher.fallback.model.predict_sources[0],
             image,
         )
-        self.assertEqual(enricher.fallback_model.predict_kwargs[0]["imgsz"], 960)
+        self.assertEqual(enricher.fallback.model.predict_kwargs[0]["imgsz"], 960)
 
     def test_enricher_skips_fallback_cows_outside_target_crop(self):
         image = np.zeros((10, 10, 3), dtype=np.uint8)
@@ -803,7 +803,7 @@ class WildlifeToolsIdentityTests(unittest.TestCase):
             identity_provider,
             fallback=IdentityFallbackConfig(model="seg.pt"),
         )
-        enricher.fallback_model = _Segmenter([
+        enricher.fallback.model = _Segmenter([
             _SegmentationResult(
                 names={19: "cow"},
                 boxes=[_Box(19, 0.9, [0, 0, 2, 2])],
