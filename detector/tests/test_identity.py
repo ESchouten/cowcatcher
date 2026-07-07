@@ -658,6 +658,39 @@ class DetectorIdentityTests(unittest.TestCase):
             "cow-main-0002",
         ])
 
+    def test_box_overlap_is_ignored_when_masks_do_not_overlap(self):
+        first_mask = np.zeros((12, 12), dtype=bool)
+        first_mask[2:4, 2:4] = True
+        second_mask = np.zeros((12, 12), dtype=bool)
+        second_mask[6:8, 6:8] = True
+        identity_provider = _ListIdentityProvider()
+        enricher = _identity_enricher(
+            identity_provider,
+            multiple=True,
+            max_box_overlap_ratio=0,
+            max_mask_overlap_ratio=0,
+            fallback=IdentityFallbackConfig(model="seg.pt"),
+        )
+        enricher.fallback.model = _Segmenter([
+            _SegmentationResult(
+                names={19: "cow"},
+                boxes=[
+                    _Box(19, 0.9, [2, 2, 9, 9]),
+                    _Box(19, 0.8, [3, 3, 10, 10]),
+                ],
+                masks=[first_mask, second_mask],
+                orig_shape=(12, 12),
+            )
+        ])
+        detection = _detection(
+            crops=[Crop(1, 1, 11, 11, label="cow", confidence=0.9)]
+        )
+        detection.images.jpg = np.zeros((12, 12, 3), dtype=np.uint8)
+
+        enricher.enrich("source-1", detection)
+
+        self.assertEqual(identity_provider.image_count, 2)
+
     def test_min_identity_area_is_configurable(self):
         mask = np.zeros((100, 100), dtype=bool)
         mask[10:13, 10:13] = True

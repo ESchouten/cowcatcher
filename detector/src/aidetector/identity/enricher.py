@@ -447,14 +447,10 @@ def _quality_ok(
     for other in candidates:
         if other is obj:
             continue
-        if _box_overlap_ratio(obj.crop, other.crop) > config.max_box_overlap_ratio:
-            return False
-        if (
-            obj.mask is not None
-            and other.mask is not None
-            and _mask_overlap_ratio(obj.mask, other.mask)
-            > config.max_mask_overlap_ratio
-        ):
+        if obj.mask is not None and other.mask is not None:
+            if _mask_overlap_ratio(obj.mask, other.mask) > config.max_mask_overlap_ratio:
+                return False
+        elif _box_overlap_ratio(obj.crop, other.crop) > config.max_box_overlap_ratio:
             return False
 
     return True
