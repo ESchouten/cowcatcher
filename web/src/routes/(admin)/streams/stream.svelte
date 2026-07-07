@@ -161,7 +161,7 @@
 	function trackBadgeStyle(object: TrackObject, payload: TracksPayload) {
 		if (frameWidth <= 0 || frameHeight <= 0) {
 			const x = ((object.crop.x1 + object.crop.x2) / 2 / payload.width) * 100;
-			const y = (object.crop.y1 / payload.height) * 100;
+			const y = ((object.crop.y1 + object.crop.y2) / 2 / payload.height) * 100;
 			return `left:${x}%;top:${y}%;`;
 		}
 
@@ -181,9 +181,16 @@
 		}
 
 		const x = offsetX + (((object.crop.x1 + object.crop.x2) / 2) / payload.width) * renderedWidth;
-		const y = offsetY + (object.crop.y1 / payload.height) * renderedHeight;
+		const y = offsetY + (((object.crop.y1 + object.crop.y2) / 2) / payload.height) * renderedHeight;
 
-		return `left:${clamp(x, 16, frameWidth - 16)}px;top:${clamp(y + 8, 18, frameHeight - 18)}px;`;
+		return `left:${clamp(x, 16, frameWidth - 16)}px;top:${clamp(y, 18, frameHeight - 18)}px;`;
+	}
+
+	function trackObjectKey(object: TrackObject, index: number) {
+		if (object.track_id !== null) {
+			return `track-${object.track_id}`;
+		}
+		return `object-${object.identity?.identity ?? object.label ?? 'unknown'}-${index}`;
 	}
 
 	$effect(() => {
@@ -248,13 +255,13 @@
 
 		{#if showTracks && tracks && tracks.width > 0 && tracks.height > 0}
 			<div class="pointer-events-none absolute inset-0" aria-hidden="true">
-				{#each tracks.objects as object, index (`${object.track_id ?? index}-${object.crop.x1}-${object.crop.y1}-${object.crop.x2}-${object.crop.y2}`)}
+				{#each tracks.objects as object, index (trackObjectKey(object, index))}
 					{@const identity = object.identity}
 					{@const label = identityLabel(identity)}
 					{#if identity && label}
 						{@const detail = identityDetail(identity)}
 						<div
-							class="absolute z-10 flex -translate-x-1/2 -translate-y-1/2 items-center drop-shadow-[0_1px_4px_rgba(0,0,0,0.55)]"
+							class="absolute z-10 flex -translate-x-1/2 -translate-y-1/2 items-center drop-shadow-[0_1px_4px_rgba(0,0,0,0.55)] transition-[left,top] duration-500 ease-linear"
 							style={trackBadgeStyle(object, tracks)}
 						>
 							<Badge

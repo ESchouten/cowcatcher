@@ -17,7 +17,6 @@ from aidetector.utils.config import (
     IdentityResult,
 )
 
-
 class IdentityEnricher:
     logger = logging.getLogger(__name__)
 
@@ -90,7 +89,7 @@ class IdentityEnricher:
         identified_lookups: list[IdentityLookup] = []
         identities: list[IdentityResult] = []
         for lookup in lookups:
-            identity = self.provider.identify(lookup.image)
+            identity = self._identify(lookup.image)
             if identity is None:
                 continue
             identified_lookups.append(lookup)
@@ -164,6 +163,9 @@ class IdentityEnricher:
         source: str,
         lookup_time: float,
     ) -> None:
+        if self.config.mode != "build":
+            return
+
         updates = self._identity_updates(detection, source, lookup_time)
         if not updates:
             return
@@ -196,6 +198,8 @@ class IdentityEnricher:
         updates: list[IdentityUpdate] = []
         for obj in _select_objects(objects, self.config.multiple):
             if not self._update_due(source, obj.track_id, lookup_time):
+                continue
+            if not _quality_ok(detection.images.jpg, obj, objects, self.config):
                 continue
             image = _object_identity_image(detection.images.jpg, obj)
             if image is not None and obj.identity:
@@ -240,7 +244,12 @@ class IdentityEnricher:
         if masked_objects:
             return self._object_lookups(
                 detection.images.jpg,
-                masked_objects,
+                _quality_objects(
+                    detection.images.jpg,
+                    masked_objects,
+                    objects,
+                    self.config,
+                ),
                 source,
                 debug_label="detector",
             )
@@ -254,10 +263,20 @@ class IdentityEnricher:
 
         return self._object_lookups(
             detection.images.jpg,
-            lookup_objects,
+            _quality_objects(
+                detection.images.jpg,
+                lookup_objects,
+                objects,
+                self.config,
+            ),
             source,
             debug_label="detector",
         )
+
+    def _identify(self, image: np.ndarray) -> IdentityResult | None:
+        if self.config.mode == "build":
+            return self.provider.identify(image)
+        return self.provider.match(image)
 
     def _lookup_due(self, source: str, track_id: int, now: float) -> bool:
         key = (source, track_id)
@@ -317,11 +336,17 @@ class IdentityEnricher:
         crop = target.crop
 
         candidates = self.fallback.extract(image, crop, self.config.multiple)
-        if not candidates.selected:
+        quality_selected = _quality_objects(
+            image,
+            candidates.selected,
+            candidates.matched,
+            self.config,
+        )
+        if not quality_selected:
             objects = candidates.matched or candidates.detected
             if candidates.matched:
                 self.logger.info(
-                    "Skipping identity fallback: %s found %s, but none were centered in %s crop",
+                    "Skipping identity fallback: %s found %s, but none were centered or clean enough in %s crop",
                     self.fallback.config.model,
                     format_detected_labels(candidates.matched),
                     crop.label,
@@ -345,7 +370,7 @@ class IdentityEnricher:
             return []
 
         lookups: list[IdentityLookup] = []
-        for obj in candidates.selected:
+        for obj in quality_selected:
             identity_image = _object_identity_image(image, obj)
             if identity_image is not None:
                 lookups.append(
@@ -360,7 +385,7 @@ class IdentityEnricher:
             self.config.debug_directory,
             image,
             candidates.matched,
-            candidates.selected,
+            quality_selected,
             source,
             crop.label,
             [lookup.image for lookup in lookups],
@@ -397,6 +422,77 @@ def _select_objects(
 
 def _needs_lookup(obj: DetectedObject) -> bool:
     return obj.track_id is None or obj.identity is None
+
+
+def _quality_objects(
+    image: np.ndarray,
+    objects: list[DetectedObject],
+    candidates: list[DetectedObject],
+    config: DetectorIdentityConfig,
+) -> list[DetectedObject]:
+    return [obj for obj in objects if _quality_ok(image, obj, candidates, config)]
+
+
+def _quality_ok(
+    image: np.ndarray,
+    obj: DetectedObject,
+    candidates: list[DetectedObject],
+    config: DetectorIdentityConfig,
+) -> bool:
+    if _crop_touches_edge(image, obj.crop):
+        return False
+    if obj.area < _min_identity_area(image, config):
+        return False
+
+    for other in candidates:
+        if other is obj:
+            continue
+        if _box_overlap_ratio(obj.crop, other.crop) > config.max_box_overlap_ratio:
+            return False
+        if (
+            obj.mask is not None
+            and other.mask is not None
+            and _mask_overlap_ratio(obj.mask, other.mask)
+            > config.max_mask_overlap_ratio
+        ):
+            return False
+
+    return True
+
+
+def _crop_touches_edge(image: np.ndarray, crop: Crop) -> bool:
+    height, width = image.shape[:2]
+    return crop.x1 <= 0 or crop.y1 <= 0 or crop.x2 >= width or crop.y2 >= height
+
+
+def _box_overlap_ratio(left: Crop, right: Crop) -> float:
+    x1 = max(left.x1, right.x1)
+    y1 = max(left.y1, right.y1)
+    x2 = min(left.x2, right.x2)
+    y2 = min(left.y2, right.y2)
+    if x2 <= x1 or y2 <= y1:
+        return 0
+
+    overlap = (x2 - x1) * (y2 - y1)
+    smaller = min(_crop_area(left), _crop_area(right))
+    return overlap / smaller if smaller else 0
+
+
+def _mask_overlap_ratio(left: np.ndarray, right: np.ndarray) -> float:
+    intersection = int(np.logical_and(left, right).sum())
+    if intersection == 0:
+        return 0
+    smaller = min(int(left.sum()), int(right.sum()))
+    return intersection / smaller if smaller else 0
+
+
+def _crop_area(crop: Crop) -> int:
+    return max(0, crop.x2 - crop.x1) * max(0, crop.y2 - crop.y1)
+
+
+def _min_identity_area(image: np.ndarray, config: DetectorIdentityConfig) -> int:
+    height, width = image.shape[:2]
+    return min(config.min_identity_area, max(4, int(height * width * 0.001)))
 
 
 def _unique_identities(identities: Iterable[IdentityResult | None]) -> list[IdentityResult]:

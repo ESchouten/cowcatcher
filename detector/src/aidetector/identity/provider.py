@@ -6,6 +6,9 @@ from aidetector.utils.config import Config, IdentityProviderConfig, IdentityResu
 
 
 class IdentityProvider(Protocol):
+    def match(self, image: ndarray) -> IdentityResult | None:
+        pass
+
     def identify(self, image: ndarray) -> IdentityResult | None:
         pass
 

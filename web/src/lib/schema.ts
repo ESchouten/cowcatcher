@@ -73,10 +73,14 @@ export interface IdentityConfig {
 
 export interface DetectorIdentityConfig {
 	provider: string;
+	mode?: 'query' | 'build';
 	labels?: string[];
 	multiple?: boolean;
 	lookup_interval?: number;
 	update_interval?: number;
+	min_identity_area?: number;
+	max_box_overlap_ratio?: number;
+	max_mask_overlap_ratio?: number;
 	debug_directory?: string | null;
 	fallback?: IdentityFallbackConfig | null;
 }

@@ -177,10 +177,14 @@ class IdentityFallbackConfig:
 @dataclass(kw_only=True)
 class DetectorIdentityConfig:
     provider: str
+    mode: Literal["query", "build"] = "query"
     labels: list[str] | None = None
     multiple: bool = False
     lookup_interval: float = 5.0
     update_interval: float = 30.0
+    min_identity_area: int = 256
+    max_box_overlap_ratio: float = 0.35
+    max_mask_overlap_ratio: float = 0.05
     debug_directory: Path | None = None
     fallback: IdentityFallbackConfig | None = None
 

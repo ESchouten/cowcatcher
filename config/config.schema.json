@@ -195,6 +195,15 @@
           "title": "Provider",
           "type": "string"
         },
+        "mode": {
+          "default": "query",
+          "enum": [
+            "query",
+            "build"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
         "labels": {
           "anyOf": [
             {
@@ -223,6 +232,21 @@
         "update_interval": {
           "default": 30.0,
           "title": "Update Interval",
+          "type": "number"
+        },
+        "min_identity_area": {
+          "default": 256,
+          "title": "Min Identity Area",
+          "type": "integer"
+        },
+        "max_box_overlap_ratio": {
+          "default": 0.35,
+          "title": "Max Box Overlap Ratio",
+          "type": "number"
+        },
+        "max_mask_overlap_ratio": {
+          "default": 0.05,
+          "title": "Max Mask Overlap Ratio",
           "type": "number"
         },
         "debug_directory": {

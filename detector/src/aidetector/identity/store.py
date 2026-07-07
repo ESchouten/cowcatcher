@@ -103,6 +103,17 @@ class SQLiteIdentityStore:
                 self.reload()
                 raise
 
+    def match(
+        self,
+        embedding: np.ndarray,
+        match_threshold: float,
+    ) -> IdentityResult | None:
+        with self.lock:
+            return self._match_identity(
+                self._prepare_embedding(embedding),
+                match_threshold,
+            )
+
     def update_identity(
         self,
         identity: str,
@@ -168,6 +179,20 @@ class SQLiteIdentityStore:
             similarity=None,
         )
         return None
+
+    def _match_identity(
+        self,
+        embedding: np.ndarray,
+        match_threshold: float,
+    ) -> IdentityResult | None:
+        record, similarity = self._best_identity(embedding)
+        if record is None or similarity < match_threshold:
+            return None
+        return IdentityResult(
+            identity=record.identity,
+            status="matched",
+            similarity=similarity,
+        )
 
     def _update_known_identity(
         self,

@@ -110,6 +110,29 @@ class IdentityStoreTests(unittest.TestCase):
         self.assertEqual(result.status, "matched")
         self.assertEqual(result.identity, identity)
 
+    def test_match_does_not_create_candidates_or_samples(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SQLiteIdentityStore(
+                Path(directory) / "identities.sqlite", "cow-main"
+            )
+            try:
+                result = store.match(
+                    np.array([1, 0], dtype=np.float32),
+                    match_threshold=0.75,
+                )
+                candidate_count = store.connection.execute(
+                    "SELECT COUNT(*) FROM unknown_candidates"
+                ).fetchone()[0]
+                sample_count = store.connection.execute(
+                    "SELECT COUNT(*) FROM samples"
+                ).fetchone()[0]
+            finally:
+                store.close()
+
+        self.assertIsNone(result)
+        self.assertEqual(candidate_count, 0)
+        self.assertEqual(sample_count, 0)
+
     def test_update_identity_refreshes_known_identity_sample(self):
         with tempfile.TemporaryDirectory() as directory:
             store = SQLiteIdentityStore(
@@ -418,6 +441,58 @@ class DetectorIdentityTests(unittest.TestCase):
         self.assertEqual(second.images.objects[0].identity.identity, "cow-main-0001")
         self.assertEqual(second.identities[0].identity, "cow-main-0001")
 
+    def test_query_mode_matches_without_building_identity(self):
+        identity_provider = _ModeIdentityProvider()
+        enricher = _identity_enricher(identity_provider, mode="query")
+        detection = _tracked_detection(
+            Crop(2, 2, 9, 9, label="cow", confidence=0.9),
+            track_id=7,
+        )
+
+        enricher.enrich("source-1", detection)
+
+        self.assertEqual(identity_provider.match_calls, 1)
+        self.assertEqual(identity_provider.identify_calls, 0)
+        self.assertEqual(detection.identities[0].identity, "cow-main-0001")
+
+    def test_build_mode_identifies_and_can_create_identity(self):
+        identity_provider = _ModeIdentityProvider()
+        enricher = _identity_enricher(identity_provider, mode="build")
+        detection = _tracked_detection(
+            Crop(2, 2, 9, 9, label="cow", confidence=0.9),
+            track_id=7,
+        )
+
+        enricher.enrich("source-1", detection)
+
+        self.assertEqual(identity_provider.match_calls, 0)
+        self.assertEqual(identity_provider.identify_calls, 1)
+        self.assertEqual(detection.identities[0].identity, "cow-main-0001")
+
+    def test_query_mode_keeps_cached_identity_without_updating_database(self):
+        identity_provider = _UpdatingIdentityProvider()
+        enricher = _identity_enricher(
+            identity_provider,
+            mode="query",
+            update_interval=0,
+        )
+        cached = IdentityResult(
+            identity="cow-main-0001",
+            status="matched",
+            similarity=0.9,
+        )
+        enricher.identities_by_track[("source-1", 7)] = cached
+        detection = _tracked_detection(
+            Crop(2, 2, 9, 9, label="cow", confidence=0.9),
+            track_id=7,
+        )
+
+        enricher.enrich_live("source-1", detection)
+
+        self.assertEqual(identity_provider.updates, [])
+        self.assertEqual(detection.images.objects[0].identity, cached)
+        self.assertEqual(detection.identities, [cached])
+
     def test_live_identityentifies_and_caches_uncached_track(self):
         identity_provider = _RecordingIdentityProvider()
         enricher = _identity_enricher(identity_provider)
@@ -513,6 +588,102 @@ class DetectorIdentityTests(unittest.TestCase):
         self.assertEqual(identity, "cow-main-0001")
         self.assertEqual(image.shape, (7, 7, 3))
         self.assertEqual(second.images.objects[0].identity.similarity, 0.95)
+
+    def test_overlapping_fallback_cows_are_not_used_for_identity(self):
+        first_mask = np.zeros((12, 12), dtype=bool)
+        first_mask[2:8, 2:8] = True
+        second_mask = np.zeros((12, 12), dtype=bool)
+        second_mask[3:9, 3:9] = True
+        identity_provider = _RecordingIdentityProvider()
+        enricher = _identity_enricher(
+            identity_provider,
+            multiple=True,
+            fallback=IdentityFallbackConfig(model="seg.pt"),
+        )
+        enricher.fallback.model = _Segmenter([
+            _SegmentationResult(
+                names={19: "cow"},
+                boxes=[
+                    _Box(19, 0.9, [2, 2, 8, 8]),
+                    _Box(19, 0.8, [3, 3, 9, 9]),
+                ],
+                masks=[first_mask, second_mask],
+                orig_shape=(12, 12),
+            )
+        ])
+        detection = _detection(
+            crops=[Crop(1, 1, 11, 11, label="cow", confidence=0.9)]
+        )
+        detection.images.jpg = np.zeros((12, 12, 3), dtype=np.uint8)
+
+        enricher.enrich("source-1", detection)
+
+        self.assertEqual(identity_provider.images, [])
+        self.assertEqual(detection.identities, [])
+
+    def test_overlap_thresholds_are_configurable(self):
+        first_mask = np.zeros((12, 12), dtype=bool)
+        first_mask[2:8, 2:8] = True
+        second_mask = np.zeros((12, 12), dtype=bool)
+        second_mask[3:9, 3:9] = True
+        identity_provider = _ListIdentityProvider()
+        enricher = _identity_enricher(
+            identity_provider,
+            multiple=True,
+            max_box_overlap_ratio=1,
+            max_mask_overlap_ratio=1,
+            fallback=IdentityFallbackConfig(model="seg.pt"),
+        )
+        enricher.fallback.model = _Segmenter([
+            _SegmentationResult(
+                names={19: "cow"},
+                boxes=[
+                    _Box(19, 0.9, [2, 2, 8, 8]),
+                    _Box(19, 0.8, [3, 3, 9, 9]),
+                ],
+                masks=[first_mask, second_mask],
+                orig_shape=(12, 12),
+            )
+        ])
+        detection = _detection(
+            crops=[Crop(1, 1, 11, 11, label="cow", confidence=0.9)]
+        )
+        detection.images.jpg = np.zeros((12, 12, 3), dtype=np.uint8)
+
+        enricher.enrich("source-1", detection)
+
+        self.assertEqual(identity_provider.image_count, 2)
+        self.assertEqual([identity.identity for identity in detection.identities], [
+            "cow-main-0001",
+            "cow-main-0002",
+        ])
+
+    def test_min_identity_area_is_configurable(self):
+        mask = np.zeros((100, 100), dtype=bool)
+        mask[10:13, 10:13] = True
+        detection = Detection(
+            datetime(2026, 1, 1, 12, 0, 0),
+            ImageSet(
+                np.zeros((100, 100, 3), dtype=np.uint8),
+                [
+                    DetectedObject(
+                        Crop(10, 10, 13, 13, label="cow", confidence=0.9),
+                        mask=mask,
+                    )
+                ],
+            ),
+            {"cow": 0.9},
+        )
+        strict_provider = _RecordingIdentityProvider()
+        strict = _identity_enricher(strict_provider)
+        lenient_provider = _RecordingIdentityProvider()
+        lenient = _identity_enricher(lenient_provider, min_identity_area=4)
+
+        strict.enrich("source-1", detection)
+        lenient.enrich("source-1", detection)
+
+        self.assertEqual(strict_provider.images, [])
+        self.assertEqual(len(lenient_provider.images), 1)
 
     def test_fallback_identity_uses_target_track_id_for_event_frames(self):
         image = np.zeros((10, 10, 3), dtype=np.uint8)
@@ -712,10 +883,10 @@ class WildlifeToolsIdentityTests(unittest.TestCase):
         np.testing.assert_array_equal(segmented[0, 0], image[2, 1])
 
     def test_enricher_returns_multiple_fallback_identities_on_detector_box(self):
-        first_mask = np.zeros((7, 7), dtype=bool)
-        first_mask[0:4, 0:4] = True
-        second_mask = np.zeros((7, 7), dtype=bool)
-        second_mask[4:7, 4:7] = True
+        first_mask = np.zeros((10, 10), dtype=bool)
+        first_mask[1:4, 1:4] = True
+        second_mask = np.zeros((10, 10), dtype=bool)
+        second_mask[6:9, 6:9] = True
 
         identity_provider = _ListIdentityProvider()
         enricher = _identity_enricher(
@@ -730,11 +901,11 @@ class WildlifeToolsIdentityTests(unittest.TestCase):
             _SegmentationResult(
                 names={19: "cow"},
                 boxes=[
-                    _Box(19, 0.9, [0, 0, 4, 4]),
-                    _Box(19, 0.8, [4, 4, 7, 7]),
+                    _Box(19, 0.9, [1, 1, 4, 4]),
+                    _Box(19, 0.8, [6, 6, 9, 9]),
                 ],
                 masks=[first_mask, second_mask],
-                orig_shape=(7, 7),
+                orig_shape=(10, 10),
             )
         ])
 
@@ -937,6 +1108,10 @@ class _FailingIdentityProvider:
     def __init__(self):
         self.calls = 0
 
+    def match(self, image):
+        self.calls += 1
+        raise RuntimeError("identity failed")
+
     def identify(self, image):
         self.calls += 1
         raise RuntimeError("identity failed")
@@ -959,6 +1134,9 @@ class _ListIdentityProvider:
             similarity=0.9 if index == 1 else 0.8,
         )
 
+    def match(self, image):
+        return self.identify(image)
+
 
 class _RecordingIdentityProvider:
     def __init__(self):
@@ -970,6 +1148,31 @@ class _RecordingIdentityProvider:
             identity="cow-main-0001",
             status="matched",
             similarity=0.9,
+        )
+
+    def match(self, image):
+        return self.identify(image)
+
+
+class _ModeIdentityProvider:
+    def __init__(self):
+        self.match_calls = 0
+        self.identify_calls = 0
+
+    def match(self, image):
+        self.match_calls += 1
+        return IdentityResult(
+            identity="cow-main-0001",
+            status="matched",
+            similarity=0.9,
+        )
+
+    def identify(self, image):
+        self.identify_calls += 1
+        return IdentityResult(
+            identity="cow-main-0001",
+            status="created",
+            similarity=1,
         )
 
 
@@ -991,12 +1194,19 @@ class _UnknownIdentityProvider:
     def __init__(self):
         self.calls = 0
 
+    def match(self, image):
+        self.calls += 1
+        return None
+
     def identify(self, image):
         self.calls += 1
         return None
 
 
 class _EmptyIdentityProvider:
+    def match(self, image):
+        return None
+
     def identify(self, image):
         return None
 
@@ -1010,6 +1220,9 @@ class _MutatingIdentityProvider:
         image[:] = 255
         return None
 
+    def match(self, image):
+        return self.identify(image)
+
 
 class _RecordingExporter:
     called = False
@@ -1021,6 +1234,7 @@ class _RecordingExporter:
 def _detector_identity_config(**overrides):
     config = {
         "provider": "cow-main",
+        "mode": "build",
     }
     config.update(overrides)
     return DetectorIdentityConfig(**config)

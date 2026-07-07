@@ -24,6 +24,16 @@ class WildlifeToolsIdentityProvider:
         self.extractor = None
         self.device = None
 
+    def match(
+        self,
+        image: np.ndarray,
+    ) -> IdentityResult | None:
+        with self.lock:
+            return self.store.match(
+                self._embed(image),
+                match_threshold=self.config.match_threshold,
+            )
+
     def identify(
         self,
         image: np.ndarray,
