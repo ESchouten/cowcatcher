@@ -5,11 +5,9 @@ export const DEFAULT_SCHEMA_URL =
 	'https://raw.githubusercontent.com/ESchouten/ai-detector/main/config/config.schema.json';
 
 export interface IdentityResult {
-	provider: string;
-	identity_id: string | null;
-	name: string | null;
-	status: 'matched' | 'created' | 'unknown';
-	similarity?: number | null;
+	identity: string;
+	status: 'matched' | 'created';
+	similarity: number;
 }
 
 export interface Crop {
@@ -77,7 +75,8 @@ export interface DetectorIdentityConfig {
 	provider: string;
 	labels?: string[];
 	multiple?: boolean;
-	live_lookup_interval?: number;
+	lookup_interval?: number;
+	update_interval?: number;
 	debug_directory?: string | null;
 	fallback?: IdentityFallbackConfig | null;
 }

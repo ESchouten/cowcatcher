@@ -13,8 +13,7 @@ import { getConfig, getConfigSchema, saveConfig } from './config.remote';
 type SQLiteRow = Record<string, unknown>;
 
 export type IdentityRow = {
-	identityId: string;
-	name: string | null;
+	identity: string;
 	sampleCount: number;
 	sampleRows: number;
 	lastSampleAt: string | null;
@@ -206,23 +205,21 @@ function readStore(provider: IdentityMeta): IdentityStore {
 				.prepare(
 					`
 					SELECT
-						identities.identity_id AS identityId,
-						identities.name AS name,
+						identities.identity AS identity,
 						identities.sample_count AS sampleCount,
 						identities.created_at AS createdAt,
 						identities.updated_at AS updatedAt,
 						COUNT(samples.sample_id) AS sampleRows,
 						MAX(samples.created_at) AS lastSampleAt
 					FROM identities
-					LEFT JOIN samples ON samples.identity_id = identities.identity_id
-					GROUP BY identities.identity_id
-					ORDER BY identities.identity_id
+					LEFT JOIN samples ON samples.identity = identities.identity
+					GROUP BY identities.identity
+					ORDER BY identities.identity
 					`
 				)
 				.all()
 				.map((row) => ({
-					identityId: readString(row, 'identityId'),
-					name: readNullableString(row, 'name'),
+					identity: readString(row, 'identity'),
 					sampleCount: readNumber(row, 'sampleCount'),
 					sampleRows: readNumber(row, 'sampleRows'),
 					lastSampleAt: readNullableString(row, 'lastSampleAt'),
@@ -463,11 +460,11 @@ export const renameIdentity = command(
 	v.object({
 		providerId: v.string(),
 		database: v.string(),
-		identityId: v.string(),
-		nextIdentityId: v.pipe(v.string(), v.trim(), v.minLength(1))
+		identity: v.string(),
+		nextIdentity: v.pipe(v.string(), v.trim(), v.minLength(1))
 	}),
-	async ({ providerId, database, identityId, nextIdentityId }) => {
-		if (nextIdentityId === identityId) {
+	async ({ providerId, database, identity, nextIdentity }) => {
+		if (nextIdentity === identity) {
 			return;
 		}
 
@@ -483,17 +480,17 @@ export const renameIdentity = command(
 			ensureIdentitySchema(sqlite);
 
 			const current = sqlite
-				.prepare('SELECT identity_id FROM identities WHERE identity_id = ?')
-				.get(identityId);
+				.prepare('SELECT identity FROM identities WHERE identity = ?')
+				.get(identity);
 			if (!current) {
 				error(404, 'Identity not found');
 			}
 
 			const conflict = sqlite
-				.prepare('SELECT identity_id FROM identities WHERE identity_id = ?')
-				.get(nextIdentityId);
+				.prepare('SELECT identity FROM identities WHERE identity = ?')
+				.get(nextIdentity);
 			if (conflict) {
-				error(409, 'Identity ID already exists');
+				error(409, 'Identity already exists');
 			}
 
 			sqlite.exec('BEGIN IMMEDIATE');
@@ -502,14 +499,14 @@ export const renameIdentity = command(
 					.prepare(
 						`
 						UPDATE identities
-						SET identity_id = ?, updated_at = ?
-						WHERE identity_id = ?
+						SET identity = ?, updated_at = ?
+						WHERE identity = ?
 						`
 					)
-					.run(nextIdentityId, localIsoSeconds(), identityId);
+					.run(nextIdentity, localIsoSeconds(), identity);
 				sqlite
-					.prepare('UPDATE samples SET identity_id = ? WHERE identity_id = ?')
-					.run(nextIdentityId, identityId);
+					.prepare('UPDATE samples SET identity = ? WHERE identity = ?')
+					.run(nextIdentity, identity);
 				sqlite.exec('COMMIT');
 			} catch (transactionError) {
 				sqlite.exec('ROLLBACK');

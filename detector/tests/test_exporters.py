@@ -125,9 +125,7 @@ def test_webhook_exporter_sends_no_body_for_none_data_type(monkeypatch):
 
 def test_sse_tracks_payload_contains_objects_and_identity():
     identity = IdentityResult(
-        provider="cow-main",
-        identity_id="cow-main-0001",
-        name=None,
+        identity="cow-main-0001",
         status="matched",
         similarity=0.92,
     )
@@ -148,9 +146,7 @@ def test_sse_tracks_payload_contains_objects_and_identity():
             "confidence": 0.9,
             "crop": {"x1": 12, "y1": 12, "x2": 42, "y2": 52},
             "identity": {
-                "provider": "cow-main",
-                "identity_id": "cow-main-0001",
-                "name": None,
+                "identity": "cow-main-0001",
                 "status": "matched",
                 "similarity": 0.92,
             },
@@ -162,9 +158,7 @@ def test_sse_detection_payload_contains_detection_summary():
     detections = make_detections()
     detections[-1].identities = [
         IdentityResult(
-            provider="cow-main",
-            identity_id="cow-main-0001",
-            name=None,
+            identity="cow-main-0001",
             status="matched",
             similarity=0.92,
         )
@@ -176,7 +170,7 @@ def test_sse_detection_payload_contains_detection_summary():
     assert payload["confidence"] == 0.9
     assert payload["validated"] is True
     assert payload["duration"] == 2
-    assert payload["identity"]["identity_id"] == "cow-main-0001"
+    assert payload["identity"]["identity"] == "cow-main-0001"
     assert payload["identities"][0]["similarity"] == 0.92
 
 

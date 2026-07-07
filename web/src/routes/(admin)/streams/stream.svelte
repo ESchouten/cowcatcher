@@ -29,10 +29,9 @@
 	}: Props = $props();
 
 	type TrackIdentity = {
-		identity_id: string | null;
-		name: string | null;
-		status: 'matched' | 'created' | 'unknown';
-		similarity?: number | null;
+		identity: string;
+		status: 'matched' | 'created';
+		similarity: number;
 	};
 
 	type TrackObject = {
@@ -138,14 +137,7 @@
 		if (!identity) {
 			return null;
 		}
-		if (identity.status === 'unknown') {
-			return 'unknown';
-		}
-		const name = identity.name ?? identity.identity_id;
-		if (!name) {
-			return null;
-		}
-		return name;
+		return identity.identity;
 	}
 
 	function identityDetail(identity: TrackIdentity) {
@@ -158,9 +150,6 @@
 	function identityTone(identity: TrackIdentity) {
 		if (identity.status === 'created') {
 			return 'bg-emerald-600 text-white';
-		}
-		if (identity.status === 'unknown') {
-			return 'bg-amber-500 text-white';
 		}
 		return 'bg-blue-600 text-white';
 	}

@@ -31,11 +31,9 @@ HttpMethod = Literal["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]
 
 @dataclass
 class IdentityResult:
-    provider: str
-    identity_id: str | None
-    name: str | None
-    status: Literal["matched", "created", "unknown"]
-    similarity: float | None = None
+    identity: str
+    status: Literal["matched", "created"]
+    similarity: float
 
 
 @dataclass
@@ -181,7 +179,8 @@ class DetectorIdentityConfig:
     provider: str
     labels: list[str] | None = None
     multiple: bool = False
-    live_lookup_interval: float = 5.0
+    lookup_interval: float = 5.0
+    update_interval: float = 30.0
     debug_directory: Path | None = None
     fallback: IdentityFallbackConfig | None = None
 

@@ -13,7 +13,7 @@ from aidetector.exporters.sse import SSEExporter
 from aidetector.exporters.telegram import TelegramExporter
 from aidetector.exporters.webhook import WebhookExporter
 from aidetector.identity.enricher import IdentityEnricher
-from aidetector.identity.service import IdentityService
+from aidetector.identity.provider import IdentityProvider
 from aidetector.sources.source import SourceProvider
 from aidetector.utils.config import (
     ChatConfig,
@@ -58,7 +58,7 @@ class Detector:
         validator: Validator,
         exporters: list[Exporter],
         onnx_config: OnnxConfig,
-        identity_service: IdentityService | None = None,
+        identity_provider: IdentityProvider | None = None,
         identity_config: DetectorIdentityConfig | None = None,
     ):
         self.detections = defaultdict(list)
@@ -73,8 +73,8 @@ class Detector:
         self.validator = validator
         self.exporters = exporters
         self.identity_enricher = (
-            IdentityEnricher(identity_service, identity_config)
-            if identity_service is not None and identity_config is not None
+            IdentityEnricher(identity_provider, identity_config)
+            if identity_provider is not None and identity_config is not None
             else None
         )
         self.running = True
@@ -87,7 +87,7 @@ class Detector:
         cls,
         config: Config,
         detector: DetectorConfig,
-        identity_service: IdentityService | None = None,
+        identity_providers: dict[str, IdentityProvider] | None = None,
     ) -> list[Self]:
         exporters: list[Exporter] = []
         if detector.exporters is not None:
@@ -111,6 +111,13 @@ class Detector:
             if isinstance(detector.vlm, VLMConfig)
             else detector.vlm or []
         )
+        identity_provider = None
+        if detector.identity is not None:
+            identity_provider = (identity_providers or {}).get(detector.identity.provider)
+            if identity_provider is None:
+                raise ValueError(
+                    f"Unknown identity provider id: {detector.identity.provider}"
+                )
 
         return [
             cls(
@@ -119,7 +126,7 @@ class Detector:
                 validator,
                 exporters,
                 config.onnx,
-                identity_service,
+                identity_provider,
                 detector.identity,
             )
         ]

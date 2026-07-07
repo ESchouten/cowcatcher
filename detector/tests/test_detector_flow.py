@@ -67,9 +67,7 @@ class CachedIdentityEnricher:
     def enrich_live(self, source, detection):
         self.calls.append((source, detection))
         identity = IdentityResult(
-            provider="cow-main",
-            identity_id="cow-main-0001",
-            name=None,
+            identity="cow-main-0001",
             status="matched",
             similarity=0.9,
         )
@@ -268,8 +266,8 @@ def test_tracks_are_live_enriched_before_publishing():
 
     published_detection = published.calls[0][1]
     assert identity_enricher.calls == [(source, detection)]
-    assert published_detection.images.objects[0].identity.identity_id == "cow-main-0001"
-    assert published_detection.identities[0].identity_id == "cow-main-0001"
+    assert published_detection.images.objects[0].identity.identity == "cow-main-0001"
+    assert published_detection.identities[0].identity == "cow-main-0001"
 
 
 def test_empty_tracks_are_published_when_yolo_has_no_detection():

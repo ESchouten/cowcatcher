@@ -311,12 +311,7 @@ def _identities_label(identities: list[IdentityResult]) -> str | None:
 def _identity_label(identity: IdentityResult | None) -> str | None:
     if identity is None:
         return None
-    identity_id = identity.name or identity.identity_id
-    if identity_id is None:
-        return None
-    if identity.similarity is None:
-        return identity_id
-    return f"{identity_id} {identity.similarity:.0%}"
+    return f"{identity.identity} {identity.similarity:.0%}"
 
 
 def _identity_label_from_detections(detections: list[Detection]) -> str | None:

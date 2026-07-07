@@ -27,10 +27,21 @@ class WildlifeToolsIdentityProvider:
     def identify(
         self,
         image: np.ndarray,
-        source: str,
-    ) -> IdentityResult:
+    ) -> IdentityResult | None:
         with self.lock:
-            return self._identify_embedding(self._embed(image), source)
+            return self._identify_embedding(self._embed(image))
+
+    def update_identity(
+        self,
+        identity: str,
+        image: np.ndarray,
+    ) -> IdentityResult | None:
+        with self.lock:
+            return self.store.update_identity(
+                identity,
+                self._embed(image),
+                match_threshold=self.config.match_threshold,
+            )
 
     def close(self) -> None:
         self.store.close()
@@ -61,10 +72,9 @@ class WildlifeToolsIdentityProvider:
         features = self.extractor(_SingleImageDataset(tensor)).features
         return np.asarray(features[0], dtype=np.float32).reshape(-1)
 
-    def _identify_embedding(self, embedding: np.ndarray, source: str) -> IdentityResult:
+    def _identify_embedding(self, embedding: np.ndarray) -> IdentityResult | None:
         return self.store.identify(
             embedding,
-            source=source,
             match_threshold=self.config.match_threshold,
             candidate_threshold=self.config.candidate_threshold,
             create_after=self.config.create_after,

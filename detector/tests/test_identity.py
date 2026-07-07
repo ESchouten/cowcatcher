@@ -6,12 +6,12 @@ from datetime import datetime
 from pathlib import Path
 
 import numpy as np
+from aidetector.detection.manager import Manager
 from aidetector.detection.detector import Detector
 from aidetector.detection.yolo import YoloResultMapper, apply_mask, objects_from_result
 from aidetector.exporters.telegram import TelegramExporter
 from aidetector.exporters.webhook import WebhookExporter
 from aidetector.identity.enricher import IdentityEnricher
-from aidetector.identity.service import IdentityService
 from aidetector.identity.store import SQLiteIdentityStore
 from aidetector.identity.wildlife_tools import _model_signature
 from aidetector.utils.config import (
@@ -37,14 +37,13 @@ class IdentityStoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "identities.sqlite"
             store = SQLiteIdentityStore(database, "cow-main")
-            identity_id = store.create_identity(np.array([1, 0], dtype=np.float32))
+            identity = store.create_identity(np.array([1, 0], dtype=np.float32))
             store.close()
 
             reloaded = SQLiteIdentityStore(database, "cow-main")
             try:
                 result = reloaded.identify(
                     np.array([1, 0], dtype=np.float32),
-                    source="source-1",
                     match_threshold=0.75,
                     candidate_threshold=0.75,
                     create_after=3,
@@ -52,8 +51,8 @@ class IdentityStoreTests(unittest.TestCase):
             finally:
                 reloaded.close()
 
-        self.assertEqual(identity_id, "cow-main-0001")
-        self.assertEqual(result.identity_id, identity_id)
+        self.assertEqual(identity, "cow-main-0001")
+        self.assertEqual(result.identity, identity)
         self.assertEqual(result.status, "matched")
 
     def test_open_set_flow_creates_identity_after_repeated_sightings(self):
@@ -66,7 +65,6 @@ class IdentityStoreTests(unittest.TestCase):
                 results = [
                     store.identify(
                         np.array([1, 0], dtype=np.float32),
-                        source="source-1",
                         match_threshold=0.75,
                         candidate_threshold=0.75,
                         create_after=3,
@@ -74,18 +72,21 @@ class IdentityStoreTests(unittest.TestCase):
                     for _ in range(3)
                 ]
                 sample_count = store.connection.execute(
-                    "SELECT COUNT(*) FROM samples WHERE identity_id = ?",
+                    "SELECT COUNT(*) FROM samples WHERE identity = ?",
                     ("cow-main-0001",),
                 ).fetchone()[0]
             finally:
                 store.close()
 
-        self.assertEqual([result.status for result in results], [
-            "unknown",
-            "unknown",
-            "created",
-        ])
-        self.assertEqual(results[-1].identity_id, "cow-main-0001")
+        self.assertEqual(
+            [result.status if result else None for result in results],
+            [
+                None,
+                None,
+                "created",
+            ],
+        )
+        self.assertEqual(results[-1].identity, "cow-main-0001")
         self.assertEqual(sample_count, 3)
 
     def test_known_identity_above_threshold_matches(self):
@@ -94,12 +95,11 @@ class IdentityStoreTests(unittest.TestCase):
                 Path(directory) / "identities.sqlite", "cow-main"
             )
             try:
-                identity_id = store.create_identity(
+                identity = store.create_identity(
                     np.array([1, 0], dtype=np.float32)
                 )
                 result = store.identify(
                     np.array([0.9, 0.1], dtype=np.float32),
-                    source="source-1",
                     match_threshold=0.75,
                     candidate_threshold=0.75,
                     create_after=3,
@@ -108,7 +108,61 @@ class IdentityStoreTests(unittest.TestCase):
                 store.close()
 
         self.assertEqual(result.status, "matched")
-        self.assertEqual(result.identity_id, identity_id)
+        self.assertEqual(result.identity, identity)
+
+    def test_update_identity_refreshes_known_identity_sample(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SQLiteIdentityStore(
+                Path(directory) / "identities.sqlite", "cow-main"
+            )
+            try:
+                identity = store.create_identity(
+                    np.array([1, 0], dtype=np.float32)
+                )
+                result = store.update_identity(
+                    identity,
+                    np.array([0.9, 0.1], dtype=np.float32),
+                    match_threshold=0.75,
+                )
+                sample_count = store.identities[identity].sample_count
+                sample_rows = store.connection.execute(
+                    "SELECT COUNT(*) FROM samples WHERE identity = ?",
+                    (identity,),
+                ).fetchone()[0]
+            finally:
+                store.close()
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.identity, identity)
+        self.assertEqual(result.status, "matched")
+        self.assertEqual(sample_count, 2)
+        self.assertEqual(sample_rows, 1)
+
+    def test_update_identity_rejects_low_similarity_sample(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SQLiteIdentityStore(
+                Path(directory) / "identities.sqlite", "cow-main"
+            )
+            try:
+                identity = store.create_identity(
+                    np.array([1, 0], dtype=np.float32)
+                )
+                result = store.update_identity(
+                    identity,
+                    np.array([0, 1], dtype=np.float32),
+                    match_threshold=0.75,
+                )
+                sample_count = store.identities[identity].sample_count
+                sample_rows = store.connection.execute(
+                    "SELECT COUNT(*) FROM samples WHERE identity = ?",
+                    (identity,),
+                ).fetchone()[0]
+            finally:
+                store.close()
+
+        self.assertIsNone(result)
+        self.assertEqual(sample_count, 1)
+        self.assertEqual(sample_rows, 0)
 
     def test_store_rejects_model_mismatch(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -127,7 +181,6 @@ class IdentityStoreTests(unittest.TestCase):
             try:
                 store.identify(
                     np.array([1, 0], dtype=np.float32),
-                    source="source-1",
                     match_threshold=0.75,
                     candidate_threshold=0.75,
                     create_after=3,
@@ -136,7 +189,6 @@ class IdentityStoreTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     store.identify(
                         np.array([1, 0, 0], dtype=np.float32),
-                        source="source-1",
                         match_threshold=0.75,
                         candidate_threshold=0.75,
                         create_after=3,
@@ -145,10 +197,10 @@ class IdentityStoreTests(unittest.TestCase):
                 store.close()
 
 
-class IdentityServiceTests(unittest.TestCase):
-    def test_service_builds_top_level_providers_for_detector_references(self):
+class IdentityProviderConfigTests(unittest.TestCase):
+    def test_provider_builds_top_level_providers_for_detector_references(self):
         with tempfile.TemporaryDirectory() as directory:
-            service = IdentityService.from_config(
+            manager = Manager.from_config(
                 Config(
                     identity=IdentityConfig(
                         providers=[
@@ -167,15 +219,13 @@ class IdentityServiceTests(unittest.TestCase):
                 )
             )
             try:
-                self.assertIsNotNone(service)
-                self.assertIn("cow-main", service.providers)
+                self.assertIn("cow-main", manager.identity_providers)
             finally:
-                if service is not None:
-                    service.close()
+                manager.stop()
 
-    def test_service_rejects_unknown_detector_provider(self):
+    def test_provider_rejects_unknown_detector_provider(self):
         with self.assertRaises(ValueError):
-            IdentityService.from_config(
+            Manager.from_config(
                 Config(
                     detectors=[
                         DetectorConfig(
@@ -186,10 +236,10 @@ class IdentityServiceTests(unittest.TestCase):
                 )
             )
 
-    def test_service_rejects_duplicate_provider_id(self):
+    def test_provider_rejects_duplicate_provider_id(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(ValueError):
-                IdentityService.from_config(
+                Manager.from_config(
                     Config(
                         identity=IdentityConfig(
                             providers=[
@@ -243,16 +293,16 @@ class DetectorIdentityTests(unittest.TestCase):
 
     def test_rejected_detection_skips_identity_lookup(self):
         detector = _detector_for_export(validated=False)
-        identity_service = detector.identity_enricher.service
+        identity_provider = detector.identity_enricher.provider
 
         detector._export("source-1")
         detector.export_executor.shutdown(wait=True)
 
-        self.assertEqual(identity_service.calls, 0)
+        self.assertEqual(identity_provider.calls, 0)
 
     def test_detector_identity_multiple_collects_all_detector_candidates(self):
-        identity_service = _ListIdentityService()
-        enricher = _identity_enricher(identity_service, multiple=True)
+        identity_provider = _ListIdentityProvider()
+        enricher = _identity_enricher(identity_provider, multiple=True)
         detection = _detection(
             crops=[
                 Crop(1, 1, 4, 4, label="cow", confidence=0.9),
@@ -262,15 +312,15 @@ class DetectorIdentityTests(unittest.TestCase):
 
         enricher.enrich("source-1", detection)
 
-        self.assertEqual(identity_service.image_count, 2)
+        self.assertEqual(identity_provider.image_count, 2)
         self.assertEqual(len(detection.identities), 2)
-        self.assertEqual(detection.identities[0].identity_id, "cow-main-0001")
-        self.assertEqual(detection.images.objects[0].identity.identity_id, "cow-main-0001")
-        self.assertEqual(detection.images.objects[1].identity.identity_id, "cow-main-0002")
+        self.assertEqual(detection.identities[0].identity, "cow-main-0001")
+        self.assertEqual(detection.images.objects[0].identity.identity, "cow-main-0001")
+        self.assertEqual(detection.images.objects[1].identity.identity, "cow-main-0002")
 
     def test_detector_identity_uses_best_crop_when_multiple_is_false(self):
-        identity_service = _RecordingIdentityService()
-        enricher = _identity_enricher(identity_service, multiple=False)
+        identity_provider = _RecordingIdentityProvider()
+        enricher = _identity_enricher(identity_provider, multiple=False)
         detection = _detection(
             crops=[
                 Crop(1, 1, 8, 8, label="cow", confidence=0.9),
@@ -280,12 +330,12 @@ class DetectorIdentityTests(unittest.TestCase):
 
         enricher.enrich("source-1", detection)
 
-        self.assertEqual(identity_service.images[0].shape, (7, 7, 3))
-        self.assertEqual(detection.identities[0].identity_id, "cow-main-0001")
+        self.assertEqual(identity_provider.images[0].shape, (7, 7, 3))
+        self.assertEqual(detection.identities[0].identity, "cow-main-0001")
 
-    def test_detector_identity_identifies_tracked_object_once_per_event(self):
-        identity_service = _RecordingIdentityService()
-        enricher = _identity_enricher(identity_service)
+    def test_detector_identityentifies_tracked_object_once_per_event(self):
+        identity_provider = _RecordingIdentityProvider()
+        enricher = _identity_enricher(identity_provider)
         low_quality = _tracked_detection(
             Crop(1, 1, 4, 4, label="cow", confidence=0.6),
             track_id=7,
@@ -297,20 +347,20 @@ class DetectorIdentityTests(unittest.TestCase):
 
         enricher.enrich("source-1", high_quality, [low_quality, high_quality])
 
-        self.assertEqual(len(identity_service.images), 1)
-        self.assertEqual(identity_service.images[0].shape, (7, 7, 3))
+        self.assertEqual(len(identity_provider.images), 1)
+        self.assertEqual(identity_provider.images[0].shape, (7, 7, 3))
         self.assertEqual(
-            low_quality.images.objects[0].identity.identity_id,
+            low_quality.images.objects[0].identity.identity,
             "cow-main-0001",
         )
         self.assertEqual(
-            high_quality.images.objects[0].identity.identity_id,
+            high_quality.images.objects[0].identity.identity,
             "cow-main-0001",
         )
 
     def test_detector_identity_multiple_identifies_each_track_in_best_frame(self):
-        identity_service = _ListIdentityService()
-        enricher = _identity_enricher(identity_service, multiple=True)
+        identity_provider = _ListIdentityProvider()
+        enricher = _identity_enricher(identity_provider, multiple=True)
         first_mask = np.zeros((10, 10), dtype=bool)
         first_mask[1:4, 1:4] = True
         second_mask = np.zeros((10, 10), dtype=bool)
@@ -337,26 +387,26 @@ class DetectorIdentityTests(unittest.TestCase):
 
         enricher.enrich("source-1", detection)
 
-        self.assertEqual(identity_service.image_count, 2)
+        self.assertEqual(identity_provider.image_count, 2)
         self.assertEqual(
-            detection.images.objects[0].identity.identity_id,
+            detection.images.objects[0].identity.identity,
             "cow-main-0001",
         )
         self.assertEqual(
-            detection.images.objects[1].identity.identity_id,
+            detection.images.objects[1].identity.identity,
             "cow-main-0002",
         )
 
     def test_detector_identity_reuses_cached_track_identity(self):
-        identity_service = _RecordingIdentityService()
-        enricher = _identity_enricher(identity_service)
+        identity_provider = _RecordingIdentityProvider()
+        enricher = _identity_enricher(identity_provider)
         first = _tracked_detection(
             Crop(1, 1, 8, 8, label="cow", confidence=0.9),
             track_id=7,
         )
 
         enricher.enrich("source-1", first, [first])
-        enricher.service = _FailingIdentityService()
+        enricher.provider = _FailingIdentityProvider()
         second = _tracked_detection(
             Crop(2, 1, 9, 8, label="cow", confidence=0.8),
             track_id=7,
@@ -364,13 +414,13 @@ class DetectorIdentityTests(unittest.TestCase):
 
         enricher.enrich("source-1", second, [second])
 
-        self.assertEqual(enricher.service.calls, 0)
-        self.assertEqual(second.images.objects[0].identity.identity_id, "cow-main-0001")
-        self.assertEqual(second.identities[0].identity_id, "cow-main-0001")
+        self.assertEqual(enricher.provider.calls, 0)
+        self.assertEqual(second.images.objects[0].identity.identity, "cow-main-0001")
+        self.assertEqual(second.identities[0].identity, "cow-main-0001")
 
-    def test_live_identity_identifies_and_caches_uncached_track(self):
-        identity_service = _RecordingIdentityService()
-        enricher = _identity_enricher(identity_service)
+    def test_live_identityentifies_and_caches_uncached_track(self):
+        identity_provider = _RecordingIdentityProvider()
+        enricher = _identity_enricher(identity_provider)
         first = _tracked_detection(
             Crop(1, 1, 8, 8, label="cow", confidence=0.9),
             track_id=7,
@@ -378,11 +428,11 @@ class DetectorIdentityTests(unittest.TestCase):
 
         enricher.enrich_live("source-1", first)
 
-        self.assertEqual(len(identity_service.images), 1)
-        self.assertEqual(first.images.objects[0].identity.identity_id, "cow-main-0001")
-        self.assertEqual(first.identities[0].identity_id, "cow-main-0001")
+        self.assertEqual(len(identity_provider.images), 1)
+        self.assertEqual(first.images.objects[0].identity.identity, "cow-main-0001")
+        self.assertEqual(first.identities[0].identity, "cow-main-0001")
 
-        enricher.service = _FailingIdentityService()
+        enricher.provider = _FailingIdentityProvider()
         second = _tracked_detection(
             Crop(2, 1, 9, 8, label="cow", confidence=0.8),
             track_id=7,
@@ -390,13 +440,13 @@ class DetectorIdentityTests(unittest.TestCase):
 
         enricher.enrich_live("source-1", second)
 
-        self.assertEqual(enricher.service.calls, 0)
-        self.assertEqual(second.images.objects[0].identity.identity_id, "cow-main-0001")
-        self.assertEqual(second.identities[0].identity_id, "cow-main-0001")
+        self.assertEqual(enricher.provider.calls, 0)
+        self.assertEqual(second.images.objects[0].identity.identity, "cow-main-0001")
+        self.assertEqual(second.identities[0].identity, "cow-main-0001")
 
-    def test_live_identity_throttles_uncached_unknown_track(self):
-        identity_service = _UnknownIdentityService()
-        enricher = _identity_enricher(identity_service)
+    def test_live_identity_throttles_uncached_track_without_result(self):
+        identity_provider = _UnknownIdentityProvider()
+        enricher = _identity_enricher(identity_provider)
         first = _tracked_detection(
             Crop(1, 1, 8, 8, label="cow", confidence=0.9),
             track_id=7,
@@ -409,20 +459,20 @@ class DetectorIdentityTests(unittest.TestCase):
         enricher.enrich_live("source-1", first)
         enricher.enrich_live("source-1", second)
 
-        self.assertEqual(identity_service.calls, 1)
-        self.assertEqual(first.identities[0].status, "unknown")
+        self.assertEqual(identity_provider.calls, 1)
+        self.assertEqual(first.identities, [])
         self.assertEqual(second.identities, [])
 
         enricher.enrich("source-1", second)
 
-        self.assertEqual(identity_service.calls, 2)
-        self.assertEqual(second.identities[0].status, "unknown")
+        self.assertEqual(identity_provider.calls, 2)
+        self.assertEqual(second.identities, [])
 
-    def test_live_identity_interval_is_configurable(self):
-        identity_service = _UnknownIdentityService()
+    def test_identity_lookup_interval_is_configurable(self):
+        identity_provider = _UnknownIdentityProvider()
         enricher = _identity_enricher(
-            identity_service,
-            live_lookup_interval=0,
+            identity_provider,
+            lookup_interval=0,
         )
         first = _tracked_detection(
             Crop(1, 1, 8, 8, label="cow", confidence=0.9),
@@ -436,17 +486,42 @@ class DetectorIdentityTests(unittest.TestCase):
         enricher.enrich_live("source-1", first)
         enricher.enrich_live("source-1", second)
 
-        self.assertEqual(identity_service.calls, 2)
-        self.assertEqual(second.identities[0].status, "unknown")
+        self.assertEqual(identity_provider.calls, 2)
+        self.assertEqual(second.identities, [])
+
+    def test_live_identity_updates_cached_segmented_track(self):
+        identity_provider = _UpdatingIdentityProvider()
+        enricher = _identity_enricher(
+            identity_provider,
+            update_interval=0,
+        )
+        first = _tracked_detection(
+            Crop(1, 1, 8, 8, label="cow", confidence=0.9),
+            track_id=7,
+        )
+        second = _tracked_detection(
+            Crop(2, 1, 9, 8, label="cow", confidence=0.8),
+            track_id=7,
+        )
+
+        enricher.enrich_live("source-1", first)
+        enricher.enrich_live("source-1", second)
+
+        self.assertEqual(len(identity_provider.images), 1)
+        self.assertEqual(len(identity_provider.updates), 1)
+        identity, image = identity_provider.updates[0]
+        self.assertEqual(identity, "cow-main-0001")
+        self.assertEqual(image.shape, (7, 7, 3))
+        self.assertEqual(second.images.objects[0].identity.similarity, 0.95)
 
     def test_fallback_identity_uses_target_track_id_for_event_frames(self):
         image = np.zeros((10, 10, 3), dtype=np.uint8)
         image[2:9, 1:8] = 50
         mask = np.zeros((10, 10), dtype=bool)
         mask[2:9, 1:8] = True
-        identity_service = _RecordingIdentityService()
+        identity_provider = _RecordingIdentityProvider()
         enricher = _identity_enricher(
-            identity_service,
+            identity_provider,
             fallback=IdentityFallbackConfig(model="seg.pt"),
         )
         enricher.fallback_model = _Segmenter([
@@ -471,19 +546,17 @@ class DetectorIdentityTests(unittest.TestCase):
 
         enricher.enrich("source-1", best, [first, best])
 
-        self.assertEqual(first.images.objects[0].identity.identity_id, "cow-main-0001")
-        self.assertEqual(best.images.objects[0].identity.identity_id, "cow-main-0001")
+        self.assertEqual(first.images.objects[0].identity.identity, "cow-main-0001")
+        self.assertEqual(best.images.objects[0].identity.identity, "cow-main-0001")
 
     def test_detector_identity_resets_stale_identity_when_lookup_returns_no_result(self):
         stale_identity = IdentityResult(
-            provider="cow-main",
-            identity_id="stale",
-            name=None,
+            identity="stale",
             status="matched",
             similarity=0.9,
         )
         detection = _detection(identities=[stale_identity])
-        enricher = _identity_enricher(_EmptyIdentityService())
+        enricher = _identity_enricher(_EmptyIdentityProvider())
 
         enricher.enrich("source-1", detection)
 
@@ -492,8 +565,8 @@ class DetectorIdentityTests(unittest.TestCase):
     def test_detector_identity_does_not_mutate_crop(self):
         crop = Crop(1, 1, 8, 8, label="cow", confidence=0.9)
         detection = _detection(crops=[crop])
-        identity_service = _MutatingIdentityService()
-        enricher = _identity_enricher(identity_service)
+        identity_provider = _MutatingIdentityProvider()
+        enricher = _identity_enricher(identity_provider)
 
         enricher.enrich("source-1", detection)
 
@@ -515,18 +588,18 @@ class DetectorIdentityTests(unittest.TestCase):
             ),
             {"cow": 0.9},
         )
-        identity_service = _RecordingIdentityService()
+        identity_provider = _RecordingIdentityProvider()
         enricher = _identity_enricher(
-            identity_service,
+            identity_provider,
             fallback=IdentityFallbackConfig(model="seg.pt"),
         )
         enricher.fallback_model = _Segmenter([])
 
         enricher.enrich("source-1", detection)
 
-        self.assertEqual(identity_service.images[0].shape, (6, 5, 3))
+        self.assertEqual(identity_provider.images[0].shape, (6, 5, 3))
         self.assertEqual(enricher.fallback_model.predict_sources, [])
-        self.assertEqual(detection.images.objects[0].identity.identity_id, "cow-main-0001")
+        self.assertEqual(detection.images.objects[0].identity.identity, "cow-main-0001")
 
     def test_image_set_crop_region_clones_single_crop(self):
         crop = Crop(1, 1, 8, 8, label="cow", confidence=0.9)
@@ -578,21 +651,21 @@ class WildlifeToolsIdentityTests(unittest.TestCase):
         np.testing.assert_array_equal(masked[1, 0], np.array([127, 127, 127]))
 
     def test_enricher_skips_identity_when_fallback_finds_no_mask(self):
-        identity_service = _RecordingIdentityService()
+        identity_provider = _RecordingIdentityProvider()
         enricher = _identity_enricher(
-            identity_service,
+            identity_provider,
             fallback=IdentityFallbackConfig(model="seg.pt"),
         )
         enricher.fallback_model = _Segmenter([])
 
         enricher.enrich("source-1", _detection())
 
-        self.assertEqual(identity_service.images, [])
+        self.assertEqual(identity_provider.images, [])
 
     def test_enricher_skips_fallback_identity_without_crop(self):
-        identity_service = _RecordingIdentityService()
+        identity_provider = _RecordingIdentityProvider()
         enricher = _identity_enricher(
-            identity_service,
+            identity_provider,
             fallback=IdentityFallbackConfig(model="seg.pt"),
         )
         enricher.fallback_model = _Segmenter([
@@ -605,7 +678,7 @@ class WildlifeToolsIdentityTests(unittest.TestCase):
 
         enricher.enrich("source-1", _detection(label=None))
 
-        self.assertEqual(identity_service.images, [])
+        self.assertEqual(identity_provider.images, [])
 
     def test_enricher_crops_to_fallback_segmented_object(self):
         image = np.arange(10 * 10 * 3, dtype=np.uint8).reshape((10, 10, 3))
@@ -613,7 +686,7 @@ class WildlifeToolsIdentityTests(unittest.TestCase):
         mask[2:8, 1:6] = True
 
         enricher = _identity_enricher(
-            _RecordingIdentityService(),
+            _RecordingIdentityProvider(),
             fallback=IdentityFallbackConfig(
                 model="seg.pt",
                 confidence=0.5,
@@ -644,9 +717,9 @@ class WildlifeToolsIdentityTests(unittest.TestCase):
         second_mask = np.zeros((7, 7), dtype=bool)
         second_mask[4:7, 4:7] = True
 
-        identity_service = _ListIdentityService()
+        identity_provider = _ListIdentityProvider()
         enricher = _identity_enricher(
-            identity_service,
+            identity_provider,
             multiple=True,
             fallback=IdentityFallbackConfig(
                 model="seg.pt",
@@ -670,13 +743,13 @@ class WildlifeToolsIdentityTests(unittest.TestCase):
         enricher.enrich("source-1", detection)
         results = detection.identities
 
-        self.assertEqual(identity_service.image_count, 2)
+        self.assertEqual(identity_provider.image_count, 2)
         self.assertEqual(detection.images.objects, [original_object])
-        self.assertEqual([result.identity_id for result in results], [
+        self.assertEqual([result.identity for result in results], [
             "cow-main-0001",
             "cow-main-0002",
         ])
-        self.assertEqual(original_object.identity.identity_id, "cow-main-0001")
+        self.assertEqual(original_object.identity.identity, "cow-main-0001")
 
     def test_enricher_fallback_selects_centered_cow(self):
         image = np.zeros((10, 10, 3), dtype=np.uint8)
@@ -688,7 +761,7 @@ class WildlifeToolsIdentityTests(unittest.TestCase):
         center_mask[4:7, 4:6] = True
 
         enricher = _identity_enricher(
-            _RecordingIdentityService(),
+            _RecordingIdentityProvider(),
             fallback=IdentityFallbackConfig(
                 model="seg.pt",
                 confidence=0.5,
@@ -725,9 +798,9 @@ class WildlifeToolsIdentityTests(unittest.TestCase):
         mask = np.zeros((10, 10), dtype=bool)
         mask[0:2, 0:2] = True
 
-        identity_service = _RecordingIdentityService()
+        identity_provider = _RecordingIdentityProvider()
         enricher = _identity_enricher(
-            identity_service,
+            identity_provider,
             fallback=IdentityFallbackConfig(model="seg.pt"),
         )
         enricher.fallback_model = _Segmenter([
@@ -744,7 +817,7 @@ class WildlifeToolsIdentityTests(unittest.TestCase):
         lookups = enricher._identity_lookups(detection, "source-1")
 
         self.assertEqual(lookups, [])
-        self.assertEqual(identity_service.images, [])
+        self.assertEqual(identity_provider.images, [])
 
     def test_model_signature_only_includes_embedding_model(self):
         config = IdentityProviderConfig(
@@ -773,9 +846,7 @@ class ExporterIdentityTests(unittest.TestCase):
         )
         detection = _detection(
             identities=[IdentityResult(
-                provider="cow-main",
-                identity_id="cow-main-0001",
-                name=None,
+                identity="cow-main-0001",
                 status="matched",
                 similarity=0.82,
             )]
@@ -802,9 +873,7 @@ class ExporterIdentityTests(unittest.TestCase):
         )
         detection = _detection(
             identities=[IdentityResult(
-                provider="cow-main",
-                identity_id="cow-main-0001",
-                name=None,
+                identity="cow-main-0001",
                 status="matched",
                 similarity=0.82,
             )]
@@ -815,9 +884,7 @@ class ExporterIdentityTests(unittest.TestCase):
         self.assertEqual(
             payload["identity"],
             {
-                "provider": "cow-main",
-                "identity_id": "cow-main-0001",
-                "name": None,
+                "identity": "cow-main-0001",
                 "status": "matched",
                 "similarity": 0.82,
             },
@@ -866,86 +933,82 @@ class _Validator:
         return self.validated
 
 
-class _FailingIdentityService:
+class _FailingIdentityProvider:
     def __init__(self):
         self.calls = 0
 
-    def identify(self, provider, images, source):
+    def identify(self, image):
         self.calls += 1
         raise RuntimeError("identity failed")
 
 
-class _ListIdentityService:
-    image_count = 0
-
-    def identify(self, provider, images, source):
-        self.image_count = len(images)
-        return [
-            IdentityResult(
-                provider=provider,
-                identity_id="cow-main-0001",
-                name=None,
-                status="matched",
-                similarity=0.9,
-            ),
-            IdentityResult(
-                provider=provider,
-                identity_id="cow-main-0002",
-                name=None,
-                status="matched",
-                similarity=0.8,
-            ),
-        ]
-
-
-class _RecordingIdentityService:
+class _ListIdentityProvider:
     def __init__(self):
         self.images = []
 
-    def identify(self, provider, images, source):
-        self.images = images
-        return [
-            IdentityResult(
-                provider=provider,
-                identity_id="cow-main-0001",
-                name=None,
-                status="matched",
-                similarity=0.9,
-            )
-        ]
+    @property
+    def image_count(self):
+        return len(self.images)
+
+    def identify(self, image):
+        self.images.append(image)
+        index = len(self.images)
+        return IdentityResult(
+            identity=f"cow-main-{index:04d}",
+            status="matched",
+            similarity=0.9 if index == 1 else 0.8,
+        )
 
 
-class _UnknownIdentityService:
+class _RecordingIdentityProvider:
+    def __init__(self):
+        self.images = []
+
+    def identify(self, image):
+        self.images.append(image)
+        return IdentityResult(
+            identity="cow-main-0001",
+            status="matched",
+            similarity=0.9,
+        )
+
+
+class _UpdatingIdentityProvider(_RecordingIdentityProvider):
+    def __init__(self):
+        super().__init__()
+        self.updates = []
+
+    def update_identity(self, identity, image):
+        self.updates.append((identity, image))
+        return IdentityResult(
+            identity=identity,
+            status="matched",
+            similarity=0.95,
+        )
+
+
+class _UnknownIdentityProvider:
     def __init__(self):
         self.calls = 0
 
-    def identify(self, provider, images, source):
+    def identify(self, image):
         self.calls += 1
-        return [
-            IdentityResult(
-                provider=provider,
-                identity_id=None,
-                name=None,
-                status="unknown",
-                similarity=0.2,
-            )
-        ]
+        return None
 
 
-class _EmptyIdentityService:
-    def identify(self, provider, images, source):
-        return []
+class _EmptyIdentityProvider:
+    def identify(self, image):
+        return None
 
 
-class _MutatingIdentityService:
+class _MutatingIdentityProvider:
     def __init__(self):
         self.images = []
 
-    def identify(self, provider, images, source):
-        self.images = images
-        for image in images:
-            image[:] = 255
-        return []
+    def identify(self, image):
+        self.images.append(image)
+        image[:] = 255
+        return None
 
 
 class _RecordingExporter:
@@ -963,9 +1026,9 @@ def _detector_identity_config(**overrides):
     return DetectorIdentityConfig(**config)
 
 
-def _identity_enricher(identity_service=None, **config_overrides):
+def _identity_enricher(identity_provider=None, **config_overrides):
     return IdentityEnricher(
-        identity_service or _RecordingIdentityService(),
+        identity_provider or _RecordingIdentityProvider(),
         _detector_identity_config(**config_overrides),
     )
 
@@ -977,7 +1040,7 @@ def _detector_for_export(validated: bool | None):
     detector.yolo_config = None
     detector.validator = _Validator(validated)
     detector.exporters = [_RecordingExporter()]
-    detector.identity_enricher = _identity_enricher(_FailingIdentityService())
+    detector.identity_enricher = _identity_enricher(_FailingIdentityProvider())
     detector.export_executor = ThreadPoolExecutor(max_workers=1)
     return detector
 

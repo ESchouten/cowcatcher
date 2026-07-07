@@ -11,8 +11,7 @@ from aidetector.utils.config import IdentityResult
 
 @dataclass
 class IdentityRecord:
-    identity_id: str
-    name: str | None
+    identity: str
     centroid: np.ndarray
     sample_count: int
 
@@ -55,13 +54,12 @@ class SQLiteIdentityStore:
         with self.lock:
             self.identities = {
                 row[0]: IdentityRecord(
-                    identity_id=row[0],
-                    name=row[1],
-                    centroid=_embedding_from_blob(row[2]),
-                    sample_count=row[3],
+                    identity=row[0],
+                    centroid=_embedding_from_blob(row[1]),
+                    sample_count=row[2],
                 )
                 for row in self.connection.execute(
-                    "SELECT identity_id, name, centroid, sample_count FROM identities"
+                    "SELECT identity, centroid, sample_count FROM identities"
                 )
             }
             self.candidates = {
@@ -75,14 +73,12 @@ class SQLiteIdentityStore:
                 )
             }
 
-    def create_identity(
-        self, embedding: np.ndarray, name: str | None = None, sample_count: int = 1
-    ) -> str:
+    def create_identity(self, embedding: np.ndarray, sample_count: int = 1) -> str:
         with self.lock:
             try:
                 with self.connection:
                     embedding = self._prepare_embedding(embedding)
-                    return self._create_identity(embedding, name, sample_count)
+                    return self._create_identity(embedding, sample_count)
             except Exception:
                 self.reload()
                 raise
@@ -90,17 +86,15 @@ class SQLiteIdentityStore:
     def identify(
         self,
         embedding: np.ndarray,
-        source: str,
         match_threshold: float,
         candidate_threshold: float,
         create_after: int,
-    ) -> IdentityResult:
+    ) -> IdentityResult | None:
         with self.lock:
             try:
                 with self.connection:
                     return self._identify(
                         self._prepare_embedding(embedding),
-                        source,
                         match_threshold,
                         candidate_threshold,
                         create_after,
@@ -109,28 +103,42 @@ class SQLiteIdentityStore:
                 self.reload()
                 raise
 
+    def update_identity(
+        self,
+        identity: str,
+        embedding: np.ndarray,
+        match_threshold: float,
+    ) -> IdentityResult | None:
+        with self.lock:
+            try:
+                with self.connection:
+                    return self._update_known_identity(
+                        identity,
+                        self._prepare_embedding(embedding),
+                        match_threshold,
+                    )
+            except Exception:
+                self.reload()
+                raise
+
     def _identify(
         self,
         embedding: np.ndarray,
-        source: str,
         match_threshold: float,
         candidate_threshold: float,
         create_after: int,
-    ) -> IdentityResult:
-        identity, identity_similarity = self._best_identity(embedding)
-        if identity and identity_similarity >= match_threshold:
-            self._update_identity(identity, embedding)
+    ) -> IdentityResult | None:
+        record, identity_similarity = self._best_identity(embedding)
+        if record and identity_similarity >= match_threshold:
+            self._update_identity(record, embedding)
             self._insert_sample(
                 embedding,
-                source,
                 status="matched",
-                identity_id=identity.identity_id,
+                identity=record.identity,
                 similarity=identity_similarity,
             )
             return IdentityResult(
-                provider=self.provider_id,
-                identity_id=identity.identity_id,
-                name=identity.name,
+                identity=record.identity,
                 status="matched",
                 similarity=identity_similarity,
             )
@@ -139,40 +147,53 @@ class SQLiteIdentityStore:
         if candidate and candidate_similarity >= candidate_threshold:
             updated = self._update_candidate(candidate, embedding)
             if updated.sample_count >= create_after:
-                return self._promote_candidate(updated, source, candidate_similarity)
+                return self._promote_candidate(updated, candidate_similarity)
 
             self._insert_sample(
                 embedding,
-                source,
-                status="unknown",
+                status="candidate",
                 candidate_id=updated.candidate_id,
                 similarity=candidate_similarity,
             )
-            return IdentityResult(
-                provider=self.provider_id,
-                identity_id=None,
-                name=None,
-                status="unknown",
-                similarity=candidate_similarity,
-            )
+            return None
 
         candidate = self._create_candidate(embedding)
         if candidate.sample_count >= create_after:
-            return self._promote_candidate(candidate, source, None)
+            return self._promote_candidate(candidate, None)
 
         self._insert_sample(
             embedding,
-            source,
-            status="unknown",
+            status="candidate",
             candidate_id=candidate.candidate_id,
             similarity=None,
         )
+        return None
+
+    def _update_known_identity(
+        self,
+        identity: str,
+        embedding: np.ndarray,
+        match_threshold: float,
+    ) -> IdentityResult | None:
+        record = self.identities.get(identity)
+        if record is None:
+            return None
+
+        similarity = _cosine_similarity(embedding, record.centroid)
+        if similarity < match_threshold:
+            return None
+
+        updated = self._update_identity(record, embedding)
+        self._insert_sample(
+            embedding,
+            status="matched",
+            identity=updated.identity,
+            similarity=similarity,
+        )
         return IdentityResult(
-            provider=self.provider_id,
-            identity_id=None,
-            name=None,
-            status="unknown",
-            similarity=None,
+            identity=updated.identity,
+            status="matched",
+            similarity=similarity,
         )
 
     def _migrate(self) -> None:
@@ -184,8 +205,7 @@ class SQLiteIdentityStore:
             );
 
             CREATE TABLE IF NOT EXISTS identities (
-                identity_id TEXT PRIMARY KEY,
-                name TEXT,
+                identity TEXT PRIMARY KEY,
                 centroid BLOB NOT NULL,
                 sample_count INTEGER NOT NULL,
                 created_at TEXT NOT NULL,
@@ -202,9 +222,8 @@ class SQLiteIdentityStore:
 
             CREATE TABLE IF NOT EXISTS samples (
                 sample_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                identity_id TEXT,
+                identity TEXT,
                 candidate_id INTEGER,
-                source TEXT NOT NULL,
                 embedding BLOB NOT NULL,
                 similarity REAL,
                 status TEXT NOT NULL,
@@ -304,22 +323,21 @@ class SQLiteIdentityStore:
             """
             UPDATE identities
             SET centroid = ?, sample_count = ?, updated_at = ?
-            WHERE identity_id = ?
+            WHERE identity = ?
             """,
             (
                 _embedding_to_blob(centroid),
                 sample_count,
                 _now(),
-                identity.identity_id,
+                identity.identity,
             ),
         )
         updated = IdentityRecord(
-            identity_id=identity.identity_id,
-            name=identity.name,
+            identity=identity.identity,
             centroid=centroid,
             sample_count=sample_count,
         )
-        self.identities[identity.identity_id] = updated
+        self.identities[identity.identity] = updated
         return updated
 
     def _create_candidate(self, embedding: np.ndarray) -> CandidateRecord:
@@ -373,16 +391,15 @@ class SQLiteIdentityStore:
     def _promote_candidate(
         self,
         candidate: CandidateRecord,
-        source: str,
         similarity: float | None,
     ) -> IdentityResult:
-        identity_id = self._create_identity(
+        identity = self._create_identity(
             candidate.centroid,
             sample_count=candidate.sample_count,
         )
         self.connection.execute(
-            "UPDATE samples SET identity_id = ? WHERE candidate_id = ?",
-            (identity_id, candidate.candidate_id),
+            "UPDATE samples SET identity = ? WHERE candidate_id = ?",
+            (identity, candidate.candidate_id),
         )
         self.connection.execute(
             "DELETE FROM unknown_candidates WHERE candidate_id = ?",
@@ -391,39 +408,34 @@ class SQLiteIdentityStore:
         del self.candidates[candidate.candidate_id]
         self._insert_sample(
             candidate.centroid,
-            source,
             status="created",
-            identity_id=identity_id,
+            identity=identity,
             candidate_id=candidate.candidate_id,
-            similarity=similarity,
+            similarity=1.0 if similarity is None else similarity,
         )
         return IdentityResult(
-            provider=self.provider_id,
-            identity_id=identity_id,
-            name=None,
+            identity=identity,
             status="created",
-            similarity=similarity,
+            similarity=1.0 if similarity is None else similarity,
         )
 
     def _insert_sample(
         self,
         embedding: np.ndarray,
-        source: str,
         status: str,
-        identity_id: str | None = None,
+        identity: str | None = None,
         candidate_id: int | None = None,
         similarity: float | None = None,
     ) -> None:
         self.connection.execute(
             """
             INSERT INTO samples (
-                identity_id, candidate_id, source, embedding, similarity, status, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                identity, candidate_id, embedding, similarity, status, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
-                identity_id,
+                identity,
                 candidate_id,
-                source,
                 _embedding_to_blob(embedding),
                 similarity,
                 status,
@@ -431,12 +443,12 @@ class SQLiteIdentityStore:
             ),
         )
 
-    def _next_identity_id(self) -> str:
+    def _next_identity(self) -> str:
         prefix = f"{self.provider_id}-"
         max_number = 0
         pattern = re.compile(rf"^{re.escape(prefix)}(\d+)$")
-        for identity_id in self.identities:
-            match = pattern.match(identity_id)
+        for identity in self.identities:
+            match = pattern.match(identity)
             if match:
                 max_number = max(max_number, int(match.group(1)))
         return f"{prefix}{max_number + 1:04d}"
@@ -444,34 +456,31 @@ class SQLiteIdentityStore:
     def _create_identity(
         self,
         embedding: np.ndarray,
-        name: str | None = None,
         sample_count: int = 1,
     ) -> str:
-        identity_id = self._next_identity_id()
+        identity = self._next_identity()
         centroid = _normalize_embedding(embedding)
         now = _now()
         self.connection.execute(
             """
             INSERT INTO identities (
-                identity_id, name, centroid, sample_count, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?)
+                identity, centroid, sample_count, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?)
             """,
             (
-                identity_id,
-                name,
+                identity,
                 _embedding_to_blob(centroid),
                 sample_count,
                 now,
                 now,
             ),
         )
-        self.identities[identity_id] = IdentityRecord(
-            identity_id=identity_id,
-            name=name,
+        self.identities[identity] = IdentityRecord(
+            identity=identity,
             centroid=centroid,
             sample_count=sample_count,
         )
-        return identity_id
+        return identity
 
     def _get_metadata(self, key: str) -> str | None:
         row = self.connection.execute(

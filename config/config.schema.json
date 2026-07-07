@@ -215,9 +215,14 @@
           "title": "Multiple",
           "type": "boolean"
         },
-        "live_lookup_interval": {
+        "lookup_interval": {
           "default": 5.0,
-          "title": "Live Lookup Interval",
+          "title": "Lookup Interval",
+          "type": "number"
+        },
+        "update_interval": {
+          "default": 30.0,
+          "title": "Update Interval",
           "type": "number"
         },
         "debug_directory": {

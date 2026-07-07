@@ -7,7 +7,7 @@ from time import monotonic
 import numpy as np
 from aidetector.detection.yolo import apply_mask, objects_from_result
 from aidetector.identity.debug import format_detected_labels, save_identity_debug
-from aidetector.identity.service import IdentityService
+from aidetector.identity.provider import IdentityProvider
 from aidetector.utils.config import (
     Crop,
     DetectedObject,
@@ -21,15 +21,16 @@ from aidetector.utils.config import (
 class IdentityEnricher:
     logger = logging.getLogger(__name__)
 
-    def __init__(self, service: IdentityService, config: DetectorIdentityConfig):
-        self.service = service
+    def __init__(self, provider: IdentityProvider, config: DetectorIdentityConfig):
+        self.provider = provider
         self.config = config
         self.labels = set(config.labels) if config.labels is not None else None
         self.fallback_model = None
         self.fallback_lock = Lock()
         self.identity_lock = Lock()
         self.identities_by_track: dict[tuple[str, int], IdentityResult] = {}
-        self.live_lookup_attempts: dict[tuple[str, int], float] = {}
+        self.lookup_attempts: dict[tuple[str, int], float] = {}
+        self.update_attempts: dict[tuple[str, int], float] = {}
 
     def enrich(
         self,
@@ -50,7 +51,7 @@ class IdentityEnricher:
                 source,
                 detection,
                 [detection],
-                live_lookup_time=monotonic(),
+                lookup_time=monotonic(),
                 log_empty=False,
             )
 
@@ -59,16 +60,19 @@ class IdentityEnricher:
         source: str,
         detection: Detection,
         detections: list[Detection],
-        live_lookup_time: float | None = None,
+        lookup_time: float | None = None,
         log_empty: bool = True,
     ) -> None:
         self._reset_identities(detections)
         self._apply_cached_identities(source, detections)
 
+        if lookup_time is not None:
+            self._update_cached_identities(detection, source, lookup_time)
+
         lookups = self._identity_lookups(
             detection,
             source,
-            live_lookup_time=live_lookup_time,
+            lookup_time=lookup_time,
         )
         if not lookups:
             if log_empty:
@@ -81,24 +85,27 @@ class IdentityEnricher:
             len(lookups),
             self.config.provider,
         )
-        identities = self.service.identify(
-            self.config.provider,
-            [lookup.image for lookup in lookups],
-            source,
-        )
+        identified_lookups: list[IdentityLookup] = []
+        identities: list[IdentityResult] = []
+        for lookup in lookups:
+            identity = self.provider.identify(lookup.image)
+            if identity is None:
+                continue
+            identified_lookups.append(lookup)
+            identities.append(identity)
         if not identities:
             if log_empty:
                 self.logger.info("Identity provider returned no result")
             self._set_detection_identities(detections)
             return
 
-        self._apply_lookup_results(source, detections, lookups, identities)
+        self._apply_lookup_results(source, detections, identified_lookups, identities)
 
         primary = identities[0]
         self.logger.info(
             "Identity result: status=%s id=%s similarity=%s",
             primary.status,
-            primary.identity_id,
+            primary.identity,
             primary.similarity,
         )
         self._set_detection_identities(detections)
@@ -141,8 +148,7 @@ class IdentityEnricher:
                     lookup.target.identity = identity
                 continue
 
-            if _cacheable_identity(identity):
-                self.identities_by_track[(source, lookup.track_id)] = identity
+            self.identities_by_track[(source, lookup.track_id)] = identity
             identities_by_track_id[lookup.track_id] = identity
 
         for detection in detections:
@@ -150,11 +156,63 @@ class IdentityEnricher:
                 if obj.track_id in identities_by_track_id:
                     obj.identity = identities_by_track_id[obj.track_id]
 
+    def _update_cached_identities(
+        self,
+        detection: Detection,
+        source: str,
+        lookup_time: float,
+    ) -> None:
+        updates = self._identity_updates(detection, source, lookup_time)
+        if not updates:
+            return
+
+        self.logger.info(
+            "Updating %d cached identity sample(s) with provider %s",
+            len(updates),
+            self.config.provider,
+        )
+        for update in updates:
+            identity = self.provider.update_identity(update.identity, update.image)
+            if identity is None:
+                continue
+            update.target.identity = identity
+            self.identities_by_track[(source, update.track_id)] = identity
+
+    def _identity_updates(
+        self,
+        detection: Detection,
+        source: str,
+        lookup_time: float,
+    ) -> list["IdentityUpdate"]:
+        objects = [
+            obj
+            for obj in detection.images.objects
+            if obj.track_id is not None
+            and obj.mask is not None
+            and obj.identity is not None
+            and _label_matches(obj.crop.label, self.labels)
+        ]
+        updates: list[IdentityUpdate] = []
+        for obj in _select_objects(objects, self.config.multiple):
+            if not self._update_due(source, obj.track_id, lookup_time):
+                continue
+            image = _object_identity_image(detection.images.jpg, obj)
+            if image is not None and obj.identity:
+                updates.append(
+                    IdentityUpdate(
+                        target=obj,
+                        image=image,
+                        track_id=obj.track_id,
+                        identity=obj.identity.identity,
+                    )
+                )
+        return updates
+
     def _identity_lookups(
         self,
         detection: Detection,
         source: str,
-        live_lookup_time: float | None = None,
+        lookup_time: float | None = None,
     ) -> list["IdentityLookup"]:
         objects = [
             obj
@@ -167,12 +225,12 @@ class IdentityEnricher:
 
         selected = _select_objects(objects, self.config.multiple)
         lookup_objects = [obj for obj in selected if _needs_lookup(obj)]
-        if live_lookup_time is not None:
+        if lookup_time is not None:
             lookup_objects = [
                 obj
                 for obj in lookup_objects
                 if obj.track_id is not None
-                and self._live_lookup_due(source, obj.track_id, live_lookup_time)
+                and self._lookup_due(source, obj.track_id, lookup_time)
             ]
         if not lookup_objects:
             return []
@@ -201,15 +259,26 @@ class IdentityEnricher:
             debug_label="detector",
         )
 
-    def _live_lookup_due(self, source: str, track_id: int, now: float) -> bool:
+    def _lookup_due(self, source: str, track_id: int, now: float) -> bool:
         key = (source, track_id)
-        last_attempt = self.live_lookup_attempts.get(key)
+        last_attempt = self.lookup_attempts.get(key)
         if (
             last_attempt is not None
-            and now - last_attempt < self.config.live_lookup_interval
+            and now - last_attempt < self.config.lookup_interval
         ):
             return False
-        self.live_lookup_attempts[key] = now
+        self.lookup_attempts[key] = now
+        return True
+
+    def _update_due(self, source: str, track_id: int, now: float) -> bool:
+        key = (source, track_id)
+        last_attempt = self.update_attempts.get(key, self.lookup_attempts.get(key))
+        if (
+            last_attempt is not None
+            and now - last_attempt < self.config.update_interval
+        ):
+            return False
+        self.update_attempts[key] = now
         return True
 
     def _object_lookups(
@@ -344,6 +413,14 @@ class IdentityLookup:
     track_id: int | None = None
 
 
+@dataclass
+class IdentityUpdate:
+    target: DetectedObject
+    image: np.ndarray
+    track_id: int
+    identity: str
+
+
 def _label_matches(label: str | None, labels: set[str] | None) -> bool:
     return labels is None or label in labels
 
@@ -361,20 +438,16 @@ def _needs_lookup(obj: DetectedObject) -> bool:
 
 def _unique_identities(identities: Iterable[IdentityResult | None]) -> list[IdentityResult]:
     unique: list[IdentityResult] = []
-    seen: set[tuple[str, str | None, str | None]] = set()
+    seen: set[str] = set()
     for identity in identities:
         if identity is None:
             continue
-        key = (identity.provider, identity.identity_id, identity.name)
+        key = identity.identity
         if key in seen:
             continue
         seen.add(key)
         unique.append(identity)
     return unique
-
-
-def _cacheable_identity(identity: IdentityResult) -> bool:
-    return identity.identity_id is not None or identity.name is not None
 
 
 def _object_identity_image(image: np.ndarray, obj: DetectedObject) -> np.ndarray | None:

@@ -88,18 +88,11 @@ class TelegramExporter(WebhookExporter):
                 _format_identity(identity) for identity in best_detection.identities
             )
         elif identity is not None:
-            similarity = (
-                f" ({int(identity.similarity * 100)}%)"
-                if identity.similarity is not None
-                else ""
-            )
-            if identity.status == "created" and identity.identity_id is not None:
-                identity_line = f"\nNew identity: {identity.identity_id}{similarity}"
-            elif identity.status == "matched" and identity.identity_id is not None:
-                identity_name = identity.name or identity.identity_id
-                identity_line = f"\nIdentity: {identity_name}{similarity}"
+            similarity = f" ({int(identity.similarity * 100)}%)"
+            if identity.status == "created":
+                identity_line = f"\nNew identity: {identity.identity}{similarity}"
             else:
-                identity_line = "\nIdentity: unknown"
+                identity_line = f"\nIdentity: {identity.identity}{similarity}"
         media[0]["caption"] = (
             f"{int(max_confidence(best_detection.confidence) * 100)}%{' ✅' if validated else ' ❌' if validated is False else ''}\n{round((detections[-1].date - detections[0].date).total_seconds())} second(s){identity_line}{thumbs}"
         )
@@ -112,9 +105,4 @@ class TelegramExporter(WebhookExporter):
 
 
 def _format_identity(identity) -> str:
-    identity_id = identity.name or identity.identity_id
-    if identity_id is None:
-        return "unknown"
-    if identity.similarity is None:
-        return identity_id
-    return f"{identity_id} ({int(identity.similarity * 100)}%)"
+    return f"{identity.identity} ({int(identity.similarity * 100)}%)"

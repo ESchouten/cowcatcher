@@ -27,33 +27,33 @@
 	const identities = $derived(await identitiesQuery);
 	const stores = $derived(await storesQuery);
 
-	let draftIdentityIds = $state<Record<string, string>>({});
+	let draftIdentities = $state<Record<string, string>>({});
 	let saveErrors = $state<Record<string, string>>({});
 	let savingKeys = new SvelteSet<string>();
 
 	function rowKey(store: IdentityStore, identity: IdentityRow) {
-		return [store.providerId, store.database, identity.identityId]
+		return [store.providerId, store.database, identity.identity]
 			.map(encodeURIComponent)
 			.join('__');
 	}
 
-	function draftIdentityId(store: IdentityStore, identity: IdentityRow) {
-		return draftIdentityIds[rowKey(store, identity)] ?? identity.identityId;
+	function draftIdentity(store: IdentityStore, identity: IdentityRow) {
+		return draftIdentities[rowKey(store, identity)] ?? identity.identity;
 	}
 
-	function setDraftIdentityId(store: IdentityStore, identity: IdentityRow, value: string) {
-		draftIdentityIds = {
-			...draftIdentityIds,
+	function setDraftIdentity(store: IdentityStore, identity: IdentityRow, value: string) {
+		draftIdentities = {
+			...draftIdentities,
 			[rowKey(store, identity)]: value
 		};
 	}
 
 	function clearRowState(key: string) {
-		const nextDrafts = { ...draftIdentityIds };
+		const nextDrafts = { ...draftIdentities };
 		const nextErrors = { ...saveErrors };
 		delete nextDrafts[key];
 		delete nextErrors[key];
-		draftIdentityIds = nextDrafts;
+		draftIdentities = nextDrafts;
 		saveErrors = nextErrors;
 	}
 
@@ -70,7 +70,7 @@
 
 	async function saveIdentity(store: IdentityStore, identity: IdentityRow) {
 		const key = rowKey(store, identity);
-		const nextIdentityId = draftIdentityId(store, identity).trim();
+		const nextIdentity = draftIdentity(store, identity).trim();
 
 		savingKeys.add(key);
 		saveErrors = { ...saveErrors, [key]: '' };
@@ -79,12 +79,12 @@
 			await renameIdentity({
 				providerId: store.providerId,
 				database: store.database,
-				identityId: identity.identityId,
-				nextIdentityId
+				identity: identity.identity,
+				nextIdentity
 			}).updates(storesQuery);
 			clearRowState(key);
 			toast.warning(
-				`Identity '${nextIdentityId}' saved. Restart the detector service for the new ID to take effect.`,
+				`Identity '${nextIdentity}' saved. Restart the detector service for the new identity to take effect.`,
 				{ duration: Number.POSITIVE_INFINITY, closeButton: true }
 			);
 		} catch (saveError) {
@@ -240,8 +240,7 @@
 						<Table.Root>
 							<Table.Header>
 								<Table.Row>
-									<Table.Head class="min-w-72">Identity ID</Table.Head>
-									<Table.Head>Name</Table.Head>
+									<Table.Head class="min-w-72">Identity</Table.Head>
 									<Table.Head>Samples</Table.Head>
 									<Table.Head>Last sample</Table.Head>
 									<Table.Head>Updated</Table.Head>
@@ -249,9 +248,9 @@
 								</Table.Row>
 							</Table.Header>
 							<Table.Body>
-								{#each store.identities as identity (identity.identityId)}
+								{#each store.identities as identity (identity.identity)}
 									{@const key = rowKey(store, identity)}
-									{@const draft = draftIdentityId(store, identity)}
+									{@const draft = draftIdentity(store, identity)}
 									<Table.Row>
 										<Table.Cell class="min-w-72 align-top">
 											<form
@@ -262,22 +261,19 @@
 													saveIdentity(store, identity);
 												}}
 											>
-												<Label for={`identity-${key}`} class="sr-only">Identity ID</Label>
+												<Label for={`identity-${key}`} class="sr-only">Identity</Label>
 												<Input
 													id={`identity-${key}`}
 													class="font-mono"
 													value={draft}
 													aria-invalid={saveErrors[key] ? 'true' : undefined}
 													oninput={(event) =>
-														setDraftIdentityId(store, identity, event.currentTarget.value)}
+														setDraftIdentity(store, identity, event.currentTarget.value)}
 												/>
 												{#if saveErrors[key]}
 													<p class="text-xs text-destructive">{saveErrors[key]}</p>
 												{/if}
 											</form>
-										</Table.Cell>
-										<Table.Cell class="align-top">
-											{identity.name ?? '-'}
 										</Table.Cell>
 										<Table.Cell class="align-top">
 											<div class="space-y-0.5">
@@ -295,7 +291,7 @@
 											<Button
 												type="submit"
 												form={`rename-${key}`}
-												disabled={savingKeys.has(key) || draft.trim() === identity.identityId}
+												disabled={savingKeys.has(key) || draft.trim() === identity.identity}
 											>
 												<SaveIcon />
 												Save

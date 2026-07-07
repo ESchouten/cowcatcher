@@ -56,9 +56,7 @@ def test_get_plot_draws_multiple_crops():
 def test_get_plot_draws_identity_above_detection_label():
     detection = make_detection([Crop(10, 60, 50, 90, label="cow", confidence=0.9)])
     detection.images.objects[0].identity = IdentityResult(
-        provider="cow-main",
-        identity_id="cow-main-0001",
-        name=None,
+        identity="cow-main-0001",
         status="matched",
         similarity=0.8,
     )
@@ -108,9 +106,7 @@ def test_generate_mp4_carries_event_identity_label(monkeypatch):
     first = make_detection([Crop(10, 20, 30, 40, label="mounting", confidence=0.9)])
     first.identities.append(
         IdentityResult(
-            provider="cow-main",
-            identity_id="cow-main-0001",
-            name=None,
+            identity="cow-main-0001",
             status="matched",
             similarity=0.8,
         )
