@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 import numpy as np
 
 from aidetector.detection.detector import Detector
+from aidetector.detection.yolo import TrackedSourceResult
 from aidetector.exporters.disk import DiskExporter
 from aidetector.exporters.telegram import TelegramExporter
 from aidetector.exporters.webhook import WebhookExporter
@@ -48,6 +49,22 @@ class RecordingExporter:
         self.calls.append((best_detection, detections, validated))
 
 
+class RecordingYoloRunner:
+    def __init__(self):
+        self.calls = []
+
+    def detect(self, frames):
+        self.calls.append(("detect", len(frames)))
+        return [f"batch-{index}" for index in range(len(frames))]
+
+    def track_sources(self, batch):
+        self.calls.append(("track_sources", list(batch)))
+        return [
+            TrackedSourceResult(source, f"{source}-tracked", frames)
+            for source, frames in batch.items()
+        ]
+
+
 def make_detector() -> Detector:
     detector = Detector.__new__(Detector)
     detector.detections = defaultdict(list)
@@ -56,6 +73,7 @@ def make_detector() -> Detector:
     detector.exporters = []
     detector.export_executor = ImmediateExecutor()
     detector.last_detection_time = {}
+    detector.last_frame_time = datetime.min
     return detector
 
 
@@ -128,3 +146,56 @@ def test_trailing_frames_are_included_after_latest_detection():
     trailing = processed[0][1]
     assert len(trailing) == 1
     assert trailing[0].confidence == {}
+
+
+def test_detector_batches_sources_when_tracking_is_disabled():
+    detector = make_detector()
+    detector.detection = DetectionConfig(source=["camera-1", "camera-2"])
+    detector.yolo_config = YoloConfig(model="model.pt", tracking=False)
+    detector.yolo_runner = RecordingYoloRunner()
+    handled = []
+    detector._handle_yolo_result = (
+        lambda source, result, frames: handled.append((source, result, len(frames)))
+    )
+    frame = np.zeros((80, 120, 3), dtype=np.uint8)
+
+    detector._handle_frame_batch(
+        {
+            "camera-1": [(datetime(2026, 1, 1, 12, 0, 0), frame)],
+            "camera-2": [(datetime(2026, 1, 1, 12, 0, 1), frame)],
+        }
+    )
+
+    assert detector.yolo_runner.calls == [("detect", 2)]
+    assert handled == [
+        ("camera-1", "batch-0", 1),
+        ("camera-2", "batch-1", 1),
+    ]
+
+
+def test_detector_tracks_sources_as_stream_batch_when_tracking_is_enabled():
+    detector = make_detector()
+    detector.detection = DetectionConfig(source=["camera-1", "camera-2"])
+    detector.yolo_config = YoloConfig(model="model.pt", tracking=True)
+    detector.yolo_runner = RecordingYoloRunner()
+    handled = []
+    detector._handle_yolo_result = (
+        lambda source, result, frames: handled.append((source, result, len(frames)))
+    )
+    frame = np.zeros((80, 120, 3), dtype=np.uint8)
+
+    detector._handle_frame_batch(
+        {
+            "camera-1": [
+                (datetime(2026, 1, 1, 12, 0, 0), frame),
+                (datetime(2026, 1, 1, 12, 0, 1), frame),
+            ],
+            "camera-2": [(datetime(2026, 1, 1, 12, 0, 2), frame)],
+        }
+    )
+
+    assert detector.yolo_runner.calls == [("track_sources", ["camera-1", "camera-2"])]
+    assert handled == [
+        ("camera-1", "camera-1-tracked", 2),
+        ("camera-2", "camera-2-tracked", 1),
+    ]

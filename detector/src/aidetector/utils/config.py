@@ -70,13 +70,13 @@ class YoloConfig:
     model: str
     task: Literal["detect", "segment"] = "detect"
     confidence: float | Confidence = 0
+    tracking: bool = False
     time_max: int = 60
     timeout: int = 5
     cooldown: float | dict[str, float] = 0
     include_trailing_time: int = 1
     frames_min: int = field(default_factory=_default_frames_min)
     imgsz: int = 640
-    strategy: Literal["LATEST", "ALL"] = "LATEST"
 
 
 @dataclass(kw_only=True)

@@ -645,6 +645,11 @@
           "default": 0,
           "title": "Confidence"
         },
+        "tracking": {
+          "default": false,
+          "title": "Tracking",
+          "type": "boolean"
+        },
         "time_max": {
           "default": 60,
           "title": "Time Max",
@@ -683,15 +688,6 @@
           "default": 640,
           "title": "Imgsz",
           "type": "integer"
-        },
-        "strategy": {
-          "default": "LATEST",
-          "enum": [
-            "LATEST",
-            "ALL"
-          ],
-          "title": "Strategy",
-          "type": "string"
         }
       },
       "required": [

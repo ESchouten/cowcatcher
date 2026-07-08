@@ -58,7 +58,7 @@ class Detector:
         self.yolo_config = yolo_config
         self.source_provider = SourceProvider(detection)
         self.yolo_runner = (
-            YoloRunner(yolo_config, onnx_config, len(self.source_provider.sources))
+            YoloRunner(yolo_config, onnx_config, self.source_provider.sources)
             if yolo_config is not None
             else None
         )
@@ -118,22 +118,20 @@ class Detector:
         self.last_frame_time = datetime.now()
 
         if self.yolo_runner and self.yolo_config:
-            if self.yolo_config.strategy == "LATEST":
-                frames = [frames[-1][1] for frames in batch.values()]
-            else:
-                frames = [frame[1] for frames in batch.values() for frame in frames]
+            if self.yolo_config.tracking:
+                tracked_results = self.yolo_runner.track_sources(batch)
+                for tracked in tracked_results:
+                    self._handle_yolo_result(
+                        tracked.source,
+                        tracked.result,
+                        tracked.frames,
+                    )
+                return
 
-            results = self.yolo_runner.predict(frames)
-            if self.yolo_config.strategy == "LATEST":
-                for source, result in zip(batch.keys(), results):
-                    self._handle_yolo_result(source, result, batch[source])
-            else:
-                for source in batch.keys():
-                    for i in range(len(batch[source])):
-                        result = results.pop(0)
-                        self._handle_yolo_result(
-                            source, result, batch[source][i : i + 1]
-                        )
+            frames = [frames[-1][1] for frames in batch.values()]
+            results = self.yolo_runner.detect(frames)
+            for source, result in zip(batch.keys(), results):
+                self._handle_yolo_result(source, result, batch[source])
             return
 
         for source, frames in batch.items():
