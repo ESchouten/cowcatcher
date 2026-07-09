@@ -6,6 +6,7 @@
         "time_max": 50
     },
     "exporters": {
+        "sse": {},
         "disk": {
             "directory": "mounts"
         }

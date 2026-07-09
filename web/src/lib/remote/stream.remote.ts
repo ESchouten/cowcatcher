@@ -8,6 +8,15 @@ function getRedirectTarget(next: string | undefined, fallback: string) {
 	return next?.startsWith('/') && !next.startsWith('//') ? next : fallback;
 }
 
+function defaultSseEndpoint(detectorIndex: number) {
+	return `/events/${detectorIndex}`;
+}
+
+function getSseEndpoint(endpoint: string | null | undefined, detectorIndex: number) {
+	const configured = endpoint?.trim();
+	return configured || defaultSseEndpoint(detectorIndex);
+}
+
 export const getStreams = query(async () => {
 	const { config, app } = await getConfig();
 	const detectorSources = config.detectors.flatMap((detector) => detector.detection.source);
@@ -23,6 +32,34 @@ export const getStreams = query(async () => {
 		source: stream.source,
 		label: stream.label ?? 'Stream ' + (index + 1)
 	}));
+});
+
+export const getStreamSettings = query(async () => {
+	const { config } = await getConfig();
+	const tracksBySource: Record<string, { tracksEndpoint: string; tracksPort: number }> = {};
+	let fallback = { tracksEndpoint: defaultSseEndpoint(0), tracksPort: 8765 };
+
+	config.detectors.forEach((detector, detectorIndex) => {
+		const sse = detector.exporters?.sse?.[0];
+		if (!sse) {
+			return;
+		}
+
+		const tracksEndpoint = getSseEndpoint(sse.endpoint, detectorIndex);
+		const tracksPort = sse.port ?? 8765;
+		if (!Object.keys(tracksBySource).length) {
+			fallback = { tracksEndpoint, tracksPort };
+		}
+
+		detector.detection.source.forEach((source) => {
+			tracksBySource[source] = { tracksEndpoint, tracksPort };
+		});
+	});
+
+	return {
+		...fallback,
+		tracksBySource
+	};
 });
 
 export const saveStream = form(

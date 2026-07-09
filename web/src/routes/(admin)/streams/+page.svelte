@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Button } from '$lib/components/ui/button';
-	import { getStreams, reorderStream } from '$lib/remote/stream.remote';
+	import { getStreams, getStreamSettings, reorderStream } from '$lib/remote/stream.remote';
 	import Stream from './stream.svelte';
 	import { Plus } from '@lucide/svelte';
 	import { SvelteSet } from 'svelte/reactivity';
@@ -9,7 +9,7 @@
 
 	const ACTIVE_STREAM_LIMIT = 4;
 	const FLIP_DURATION_MS = 150;
-	const streams = await getStreams();
+	const [streams, streamSettings] = await Promise.all([getStreams(), getStreamSettings()]);
 
 	type StreamItem = (typeof streams)[number] & { id: string };
 
@@ -114,7 +114,15 @@
 				animate:flip={{ duration: FLIP_DURATION_MS }}
 			>
 				{#if activeSources.includes(stream.source)}
-					<Stream label={stream.label} source={stream.source} />
+					<Stream
+						label={stream.label}
+						source={stream.source}
+						showTracks
+						tracksEndpoint={streamSettings.tracksBySource[stream.source]?.tracksEndpoint ??
+							streamSettings.tracksEndpoint}
+						tracksPort={streamSettings.tracksBySource[stream.source]?.tracksPort ??
+							streamSettings.tracksPort}
+					/>
 				{:else}
 					<div class="relative aspect-video w-full bg-black">
 						<div

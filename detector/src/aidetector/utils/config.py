@@ -147,11 +147,18 @@ class DiskConfig(ExporterConfig):
     export_rejected: bool = True
 
 
+@dataclass(kw_only=True)
+class SSEConfig(ExporterConfig):
+    port: int = 8765
+    endpoint: str | None = None
+
+
 @dataclass
 class ExportersConfig:
     disk: DiskConfig | list[DiskConfig] | None = None
     telegram: ChatConfig | list[ChatConfig] | None = None
     webhook: WebhookConfig | list[WebhookConfig] | None = None
+    sse: SSEConfig | list[SSEConfig] | None = None
 
 
 @dataclass(kw_only=True)

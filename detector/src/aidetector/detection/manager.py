@@ -18,7 +18,8 @@ class Manager:
         detectors = [
             d
             for ds in [
-                Detector.from_config(config, detector) for detector in config.detectors
+                Detector.from_config(config, detector, detector_index)
+                for detector_index, detector in enumerate(config.detectors)
             ]
             for d in ds
         ]

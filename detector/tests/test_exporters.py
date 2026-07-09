@@ -6,8 +6,10 @@ import numpy as np
 
 from aidetector.exporters.disk import DiskExporter
 from aidetector.exporters.exporter import Exporter
+from aidetector.exporters.sse import detection_payload
 from aidetector.exporters.telegram import TelegramExporter
 from aidetector.exporters.webhook import WebhookExporter
+from aidetector.detection.tracks import tracks_payload
 from aidetector.utils.config import (
     ChatConfig,
     Crop,
@@ -82,6 +84,46 @@ def test_disk_exporter_writes_detection_files(tmp_path, monkeypatch):
     assert metadata["confidence"] == 0.9
     assert metadata["detections"] == 2
     assert metadata["crop"] == {"x1": 12, "y1": 12, "x2": 42, "y2": 52}
+
+
+def test_sse_payloads_include_live_crops_and_detection_summary():
+    detections = make_detections()
+
+    tracks = tracks_payload("camera", detections[-1])
+    detection = detection_payload(detections[-1], detections, True)
+
+    assert tracks["type"] == "tracks"
+    assert tracks["source"] == "camera"
+    assert tracks["width"] == 120
+    assert tracks["height"] == 80
+    assert tracks["objects"] == [
+        {
+            "id": 0,
+            "track_id": None,
+            "label": "cow",
+            "confidence": 0.9,
+            "crop": {
+                "x1": 12,
+                "y1": 12,
+                "x2": 42,
+                "y2": 52,
+                "label": "cow",
+                "confidence": 0.9,
+            },
+        }
+    ]
+    assert detection["type"] == "detection"
+    assert detection["validated"] is True
+    assert detection["confidence"] == 0.9
+    assert detection["detections"] == 2
+    assert detection["crop"] == {
+        "x1": 12,
+        "y1": 12,
+        "x2": 42,
+        "y2": 52,
+        "label": "cow",
+        "confidence": 0.9,
+    }
 
 
 def test_webhook_exporter_sends_no_body_for_none_data_type(monkeypatch):

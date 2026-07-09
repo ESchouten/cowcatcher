@@ -289,6 +289,24 @@
           ],
           "default": null,
           "title": "Webhook"
+        },
+        "sse": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SSEConfig"
+            },
+            {
+              "items": {
+                "$ref": "#/$defs/SSEConfig"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sse"
         }
       },
       "title": "ExportersConfig",
@@ -383,6 +401,57 @@
         }
       },
       "title": "OnnxConfig",
+      "type": "object"
+    },
+    "SSEConfig": {
+      "properties": {
+        "confidence": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "additionalProperties": {
+                "type": "number"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confidence"
+        },
+        "crop_padding": {
+          "default": 0.1,
+          "title": "Crop Padding",
+          "type": "number"
+        },
+        "export_rejected": {
+          "default": false,
+          "title": "Export Rejected",
+          "type": "boolean"
+        },
+        "port": {
+          "default": 8765,
+          "title": "Port",
+          "type": "integer"
+        },
+        "endpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Endpoint"
+        }
+      },
+      "title": "SSEConfig",
       "type": "object"
     },
     "VLMConfig": {

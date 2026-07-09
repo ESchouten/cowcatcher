@@ -8,6 +8,8 @@ services:
 
     volumes:
       - ./example:/data
+    ports:
+      - "8765:8765"
     deploy:
       resources:
         reservations:

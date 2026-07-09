@@ -22,6 +22,7 @@
         "timeout": 30
     },
     "exporters": {
+        "sse": {},
         "disk": {
             "directory": "calvings"
         }

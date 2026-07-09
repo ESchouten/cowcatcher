@@ -1,10 +1,10 @@
 <script lang="ts">
-	import { goto, invalidateAll } from '$app/navigation';
+	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { Button } from '$lib/components/ui/button';
 	import JsonEditor from '$lib/components/json-editor.svelte';
-	import type { DetectorConfig, TelegramConfig } from '$lib/schema';
+	import type { DetectorConfig, SSEConfig, TelegramConfig } from '$lib/schema';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
 	import {
@@ -22,6 +22,7 @@
 	import Stream from '../../streams/stream.svelte';
 	import { Plus } from '@lucide/svelte';
 	import { Switch } from '$lib/components/ui/switch';
+	import { SvelteSet } from 'svelte/reactivity';
 
 	const EMPTY_DETECTOR = {
 		detection: {
@@ -31,7 +32,7 @@
 			model: '',
 			confidence: 0.8
 		},
-		exporters: {} as { telegram?: TelegramConfig[] }
+		exporters: { sse: [{}] } as { telegram?: TelegramConfig[]; sse?: SSEConfig[] }
 	};
 	const INLINE_STREAM_PREVIEW_LIMIT = 5;
 
@@ -69,7 +70,7 @@
 
 	let label = $state(originalLabel);
 	let detector = $state(initialDetector);
-	let visiblePreviewSources = $state<Set<string>>(new Set());
+	let visiblePreviewSources = new SvelteSet<string>();
 	let editorHasErrors = $state(false);
 	let preset = $state<string>('Custom');
 	let advanced = $state(false);
@@ -91,13 +92,11 @@
 			return;
 		}
 
-		const next = new Set(visiblePreviewSources);
 		if (visible) {
-			next.add(source);
+			visiblePreviewSources.add(source);
 		} else {
-			next.delete(source);
+			visiblePreviewSources.delete(source);
 		}
-		visiblePreviewSources = next;
 	}
 
 	function trackPreviewVisibility(node: HTMLElement, source: string) {

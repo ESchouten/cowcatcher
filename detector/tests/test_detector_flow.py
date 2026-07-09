@@ -18,6 +18,7 @@ from aidetector.utils.config import (
     ExportersConfig,
     ImageSet,
     OnnxConfig,
+    SSEConfig,
     WebhookConfig,
     YoloConfig,
 )
@@ -47,6 +48,14 @@ class RecordingExporter:
 
     def export(self, best_detection, detections, validated):
         self.calls.append((best_detection, detections, validated))
+
+
+class RecordingTracksExporter:
+    def __init__(self):
+        self.calls = []
+
+    def publish_tracks(self, source, detection):
+        self.calls.append((source, detection))
 
 
 class RecordingYoloRunner:
@@ -98,6 +107,53 @@ def test_detector_from_config_builds_exporters():
     ]
 
 
+def test_detector_from_config_builds_sse_exporter(monkeypatch):
+    created = []
+
+    class RecordingSSEExporter:
+        def __init__(self, config):
+            self.config = config
+            created.append(self)
+
+    monkeypatch.setattr(
+        "aidetector.detection.detector.SSEExporter",
+        RecordingSSEExporter,
+    )
+    detector_config = DetectorConfig(
+        detection=DetectionConfig(source=["video.mp4"]),
+        exporters=ExportersConfig(sse=SSEConfig(endpoint="/events", port=9876)),
+    )
+    config = Config(detectors=[detector_config], onnx=OnnxConfig())
+
+    detectors = Detector.from_config(config, detector_config)
+
+    assert detectors[0].exporters == created
+    assert created[0].config.port == 9876
+
+
+def test_detector_from_config_defaults_sse_endpoint_to_detector_index(monkeypatch):
+    created = []
+
+    class RecordingSSEExporter:
+        def __init__(self, config):
+            self.config = config
+            created.append(self)
+
+    monkeypatch.setattr(
+        "aidetector.detection.detector.SSEExporter",
+        RecordingSSEExporter,
+    )
+    detector_config = DetectorConfig(
+        detection=DetectionConfig(source=["video.mp4"]),
+        exporters=ExportersConfig(sse=SSEConfig()),
+    )
+    config = Config(detectors=[detector_config], onnx=OnnxConfig())
+
+    Detector.from_config(config, detector_config, detector_index=2)
+
+    assert created[0].config.endpoint == "/events/2"
+
+
 def test_export_validates_exports_and_clears_detections():
     source = "camera"
     exporter = RecordingExporter()
@@ -146,6 +202,64 @@ def test_trailing_frames_are_included_after_latest_detection():
     trailing = processed[0][1]
     assert len(trailing) == 1
     assert trailing[0].confidence == {}
+
+
+def test_tracks_are_published_for_latest_yolo_detection():
+    source = "camera"
+    detected_at = datetime(2026, 1, 1, 12, 0, 0)
+    published = RecordingTracksExporter()
+    detector = make_detector()
+    detector.yolo_config = YoloConfig(model="model.pt", confidence=0.8)
+    detections = [
+        Detection(
+            detected_at,
+            ImageSet(np.zeros((80, 120, 3), dtype=np.uint8)),
+            {},
+        ),
+        make_detection(detected_at + timedelta(seconds=1)),
+    ]
+    detector.yolo_runner = type(
+        "FakeYoloRunner",
+        (),
+        {"detections_from_result": lambda *_args, **_kwargs: detections},
+    )()
+    detector.exporters = [published]
+    processed = []
+    detector._process = lambda src, items=None: processed.append((src, items))
+
+    detector._handle_yolo_result(
+        source,
+        object(),
+        [(detected_at, np.zeros((80, 120, 3), dtype=np.uint8))],
+    )
+
+    assert published.calls == [(source, detections[-1])]
+    assert processed == [(source, detections)]
+
+
+def test_empty_tracks_are_published_when_yolo_has_no_detection():
+    source = "camera"
+    detected_at = datetime(2026, 1, 1, 12, 0, 0)
+    published = RecordingTracksExporter()
+    detector = make_detector()
+    detector.yolo_config = YoloConfig(model="model.pt", confidence=0.8)
+    detector.yolo_runner = type(
+        "FakeYoloRunner",
+        (),
+        {"detections_from_result": lambda *_args, **_kwargs: None},
+    )()
+    detector.exporters = [published]
+
+    detector._handle_yolo_result(
+        source,
+        object(),
+        [(detected_at, np.zeros((80, 120, 3), dtype=np.uint8))],
+    )
+
+    assert len(published.calls) == 1
+    assert published.calls[0][0] == source
+    assert published.calls[0][1].confidence == {}
+    assert published.calls[0][1].images.crops == []
 
 
 def test_detector_batches_sources_when_tracking_is_disabled():

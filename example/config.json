@@ -24,6 +24,7 @@
                 ]
             },
             "exporters": {
+                "sse": {},
                 "telegram": {
                     "token": "<your_bot_token>",
                     "chat": "<your_chat_id>"

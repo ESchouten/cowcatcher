@@ -9,6 +9,8 @@ services:
 
     volumes:
       - .:/data
+    ports:
+      - "8765:8765"
 
     deploy:
       resources:

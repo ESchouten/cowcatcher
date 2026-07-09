@@ -9,6 +9,7 @@ from aidetector.detection.validator import Validator
 from aidetector.detection.yolo import YoloRunner
 from aidetector.exporters.disk import DiskExporter
 from aidetector.exporters.exporter import Exporter
+from aidetector.exporters.sse import SSEExporter, default_sse_endpoint
 from aidetector.exporters.telegram import TelegramExporter
 from aidetector.exporters.webhook import WebhookExporter
 from aidetector.sources.source import SourceProvider
@@ -21,6 +22,7 @@ from aidetector.utils.config import (
     DiskConfig,
     ImageSet,
     OnnxConfig,
+    SSEConfig,
     VLMConfig,
     WebhookConfig,
     YoloConfig,
@@ -70,13 +72,19 @@ class Detector:
         self.last_detection_time = {}
 
     @classmethod
-    def from_config(cls, config: Config, detector: DetectorConfig) -> list[Self]:
+    def from_config(
+        cls,
+        config: Config,
+        detector: DetectorConfig,
+        detector_index: int = 0,
+    ) -> list[Self]:
         exporters: list[Exporter] = []
         if detector.exporters is not None:
             config_exporter_map = {
                 "telegram": (ChatConfig, TelegramExporter),
                 "webhook": (WebhookConfig, WebhookExporter),
                 "disk": (DiskConfig, DiskExporter),
+                "sse": (SSEConfig, SSEExporter),
             }
 
             for config_name, (config_cls, exporter_cls) in config_exporter_map.items():
@@ -85,6 +93,8 @@ class Detector:
                     [config_obj] if isinstance(config_obj, config_cls) else config_obj
                 )
                 for item in config_list:
+                    if isinstance(item, SSEConfig) and item.endpoint is None:
+                        item.endpoint = default_sse_endpoint(detector_index)
                     exporters.append(exporter_cls(item))
 
         validator = Validator.from_config(
@@ -148,10 +158,15 @@ class Detector:
 
         detections = self.yolo_runner.detections_from_result(result, frames)
         if detections:
+            self._publish_tracks(source, detections[-1])
             self._process(source, detections)
             return
 
         self.logger.debug("Confidence does not match")
+        self._publish_tracks(
+            source,
+            Detection(frames[-1][0], ImageSet(frames[-1][1]), {}),
+        )
         latest_detection = self._latest_detection(source)
         if not latest_detection:
             return
@@ -169,6 +184,19 @@ class Detector:
                 for frame in frames
             ]
             self._process(source, detections)
+
+    def _publish_tracks(self, source: str, detection: Detection) -> None:
+        for exporter in self.exporters:
+            publish_tracks = getattr(exporter, "publish_tracks", None)
+            if publish_tracks is None:
+                continue
+            try:
+                publish_tracks(source, detection)
+            except Exception:
+                self.logger.exception(
+                    "Exporter %s failed to publish tracks",
+                    exporter.__class__.__name__,
+                )
 
     def start(self):
         def monitor_timeouts():
