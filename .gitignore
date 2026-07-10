@@ -1,4 +1,5 @@
 detections
+datasets
 config.json
 config.**.json
 yolo11**

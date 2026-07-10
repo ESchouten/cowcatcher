@@ -11,6 +11,7 @@ from aidetector.exporters.webhook import WebhookExporter
 from aidetector.utils.config import (
     ChatConfig,
     Config,
+    DazzleCowConfig,
     Detection,
     DetectionConfig,
     DetectorConfig,
@@ -78,11 +79,15 @@ def make_detector() -> Detector:
     detector = Detector.__new__(Detector)
     detector.detections = defaultdict(list)
     detector.yolo_config = None
+    detector.yolo_runner = None
+    detector.dazzlecow_config = None
+    detector.dazzlecow_runner = None
     detector.validator = FakeValidator(True)
     detector.exporters = []
     detector.export_executor = ImmediateExecutor()
     detector.last_detection_time = {}
     detector.last_frame_time = datetime.min
+    detector.last_dazzlecow_result_time = {}
     return detector
 
 
@@ -192,7 +197,7 @@ def test_trailing_frames_are_included_after_latest_detection():
     processed = []
     detector._process = lambda src, detections=None: processed.append((src, detections))
 
-    detector._handle_yolo_result(
+    detector._handle_model_result(
         source,
         object(),
         [(detected_at + timedelta(seconds=2), np.zeros((80, 120, 3), dtype=np.uint8))],
@@ -227,7 +232,7 @@ def test_tracks_are_published_for_latest_yolo_detection():
     processed = []
     detector._process = lambda src, items=None: processed.append((src, items))
 
-    detector._handle_yolo_result(
+    detector._handle_model_result(
         source,
         object(),
         [(detected_at, np.zeros((80, 120, 3), dtype=np.uint8))],
@@ -250,7 +255,7 @@ def test_empty_tracks_are_published_when_yolo_has_no_detection():
     )()
     detector.exporters = [published]
 
-    detector._handle_yolo_result(
+    detector._handle_model_result(
         source,
         object(),
         [(detected_at, np.zeros((80, 120, 3), dtype=np.uint8))],
@@ -268,7 +273,7 @@ def test_detector_batches_sources_when_tracking_is_disabled():
     detector.yolo_config = YoloConfig(model="model.pt", tracking=False)
     detector.yolo_runner = RecordingYoloRunner()
     handled = []
-    detector._handle_yolo_result = (
+    detector._handle_model_result = (
         lambda source, result, frames: handled.append((source, result, len(frames)))
     )
     frame = np.zeros((80, 120, 3), dtype=np.uint8)
@@ -293,7 +298,7 @@ def test_detector_tracks_sources_as_stream_batch_when_tracking_is_enabled():
     detector.yolo_config = YoloConfig(model="model.pt", tracking=True)
     detector.yolo_runner = RecordingYoloRunner()
     handled = []
-    detector._handle_yolo_result = (
+    detector._handle_model_result = (
         lambda source, result, frames: handled.append((source, result, len(frames)))
     )
     frame = np.zeros((80, 120, 3), dtype=np.uint8)
@@ -313,3 +318,60 @@ def test_detector_tracks_sources_as_stream_batch_when_tracking_is_enabled():
         ("camera-1", "camera-1-tracked", 2),
         ("camera-2", "camera-2-tracked", 1),
     ]
+
+
+class RecordingDazzleCowRunner:
+    def __init__(self):
+        self.calls = []
+
+    def detect(self, frames, sources, dates):
+        self.calls.append((len(frames), sources, dates))
+        return [[f"cow-{index}"] for index in range(len(frames))]
+
+    def detections_from_result(self, result, frames):
+        return [make_detection(frames[-1][0], {result[0]: 0.9})]
+
+
+def test_dazzlecow_tracks_every_frame_but_processes_at_detection_interval():
+    source = "camera"
+    detector = make_detector()
+    detector.detection = DetectionConfig(source=[source], interval=1)
+    detector.dazzlecow_config = DazzleCowConfig(
+        model="model.pt",
+        gallery="gallery.npz",
+    )
+    detector.dazzlecow_runner = RecordingDazzleCowRunner()
+    handled = []
+    published = RecordingTracksExporter()
+    detector.exporters = [published]
+    detector._handle_model_result = (
+        lambda item_source, result, frames: handled.append(
+            (item_source, result, len(frames))
+        )
+    )
+    frame = np.zeros((80, 120, 3), dtype=np.uint8)
+    start = datetime(2026, 1, 1, 12, 0, 0)
+
+    detector._handle_frame_batch(
+        {
+            source: [
+                (start, frame),
+                (start + timedelta(seconds=0.2), frame),
+            ]
+        }
+    )
+    detector._handle_frame_batch(
+        {source: [(start + timedelta(seconds=0.4), frame)]}
+    )
+    detector._handle_frame_batch(
+        {source: [(start + timedelta(seconds=1.2), frame)]}
+    )
+
+    assert [call[0] for call in detector.dazzlecow_runner.calls] == [2, 1, 1]
+    assert handled == [
+        (source, ["cow-1"], 2),
+        (source, ["cow-0"], 1),
+    ]
+    assert len(published.calls) == 1
+    assert published.calls[0][0] == source
+    assert published.calls[0][1].confidence == {"cow-0": 0.9}

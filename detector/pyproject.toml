@@ -27,6 +27,12 @@ windowsml = [
     "wasdk-microsoft-windows-ai-machinelearning[all]>=1.8.260209005",
     "wasdk-microsoft-windows-applicationmodel-dynamicdependency-bootstrap>=1.8.260209005",
 ]
+dazzlecow = [
+    "pandas>=2.2.0",
+    "pytorch-metric-learning>=2.0.0",
+    "scikit-learn>=1.7.0",
+    "transformers>=4.53.0",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -35,6 +41,14 @@ build-backend = "hatchling.build"
 [project.scripts]
 main = "aidetector:main"
 generate-schema = "aidetector.utils.generate_schema:main"
+train-dazzlecow = "aidetector.dazzlecow.train:train_main"
+build-dazzlecow-gallery = "aidetector.dazzlecow.train:gallery_main"
+prepare-dazzlecow = "aidetector.dazzlecow.prepare:main"
+prepare-calves8 = "aidetector.dazzlecow.calves8:main"
+evaluate-dazzlecow = "aidetector.dazzlecow.train:evaluate_main"
+benchmark-dazzlecow = "aidetector.dazzlecow.benchmark:main"
+benchmark-dazzlecow-video = "aidetector.dazzlecow.video_benchmark:main"
+prepare-dazzlecow-folds = "aidetector.dazzlecow.folds:main"
 
 [dependency-groups]
 dev = [

@@ -102,6 +102,7 @@ def test_sse_payloads_include_live_crops_and_detection_summary():
             "track_id": None,
             "label": "cow",
             "confidence": 0.9,
+            "identity": None,
             "crop": {
                 "x1": 12,
                 "y1": 12,

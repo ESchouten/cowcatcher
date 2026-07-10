@@ -1,0 +1,17 @@
+{
+    "detection": {
+        "source": [
+            "rtsp://camera/stream"
+        ],
+        "interval": 1
+    },
+    "dazzlecow": {
+        "model": "models/dazzlecow-resnet50.pt",
+        "gallery": "identities/cows.npz",
+        "owl_interval": 1,
+        "track_samples": 5
+    },
+    "exporters": {
+        "sse": {}
+    }
+}

@@ -88,6 +88,142 @@
       "title": "ChatConfig",
       "type": "object"
     },
+    "DazzleCowConfig": {
+      "properties": {
+        "confidence": {
+          "default": 0.3,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "time_max": {
+          "default": 60,
+          "title": "Time Max",
+          "type": "integer"
+        },
+        "timeout": {
+          "default": 5,
+          "title": "Timeout",
+          "type": "integer"
+        },
+        "cooldown": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "additionalProperties": {
+                "type": "number"
+              },
+              "type": "object"
+            }
+          ],
+          "default": 0,
+          "title": "Cooldown"
+        },
+        "include_trailing_time": {
+          "default": 1,
+          "title": "Include Trailing Time",
+          "type": "integer"
+        },
+        "frames_min": {
+          "default": 1,
+          "title": "Frames Min",
+          "type": "integer"
+        },
+        "model": {
+          "format": "path",
+          "title": "Model",
+          "type": "string"
+        },
+        "gallery": {
+          "format": "path",
+          "title": "Gallery",
+          "type": "string"
+        },
+        "owl_model": {
+          "default": "google/owlv2-large-patch14-ensemble",
+          "title": "Owl Model",
+          "type": "string"
+        },
+        "sam_model": {
+          "default": "sam2.1_l.pt",
+          "title": "Sam Model",
+          "type": "string"
+        },
+        "owl_interval": {
+          "default": 1,
+          "title": "Owl Interval",
+          "type": "number"
+        },
+        "prompt": {
+          "default": "cow",
+          "title": "Prompt",
+          "type": "string"
+        },
+        "match_threshold": {
+          "default": 0.75,
+          "title": "Match Threshold",
+          "type": "number"
+        },
+        "match_margin": {
+          "default": 0,
+          "title": "Match Margin",
+          "type": "number"
+        },
+        "neighbors": {
+          "default": 5,
+          "title": "Neighbors",
+          "type": "integer"
+        },
+        "min_area_ratio": {
+          "default": 0.025,
+          "title": "Min Area Ratio",
+          "type": "number"
+        },
+        "max_area_ratio": {
+          "default": 0.075,
+          "title": "Max Area Ratio",
+          "type": "number"
+        },
+        "nms_iou": {
+          "default": 0.5,
+          "title": "Nms Iou",
+          "type": "number"
+        },
+        "track_samples": {
+          "default": 5,
+          "title": "Track Samples",
+          "type": "integer"
+        },
+        "track_iou": {
+          "default": 0.2,
+          "title": "Track Iou",
+          "type": "number"
+        },
+        "track_max_age": {
+          "default": 10,
+          "title": "Track Max Age",
+          "type": "integer"
+        },
+        "device": {
+          "default": "auto",
+          "enum": [
+            "auto",
+            "cpu",
+            "cuda",
+            "mps"
+          ],
+          "title": "Device",
+          "type": "string"
+        }
+      },
+      "required": [
+        "model",
+        "gallery"
+      ],
+      "title": "DazzleCowConfig",
+      "type": "object"
+    },
     "DetectionConfig": {
       "properties": {
         "source": {
@@ -135,6 +271,17 @@
           "anyOf": [
             {
               "$ref": "#/$defs/YoloConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "dazzlecow": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DazzleCowConfig"
             },
             {
               "type": "null"
@@ -686,19 +833,6 @@
     },
     "YoloConfig": {
       "properties": {
-        "model": {
-          "title": "Model",
-          "type": "string"
-        },
-        "task": {
-          "default": "detect",
-          "enum": [
-            "detect",
-            "segment"
-          ],
-          "title": "Task",
-          "type": "string"
-        },
         "confidence": {
           "anyOf": [
             {
@@ -713,11 +847,6 @@
           ],
           "default": 0,
           "title": "Confidence"
-        },
-        "tracking": {
-          "default": false,
-          "title": "Tracking",
-          "type": "boolean"
         },
         "time_max": {
           "default": 60,
@@ -752,6 +881,24 @@
         "frames_min": {
           "title": "Frames Min",
           "type": "integer"
+        },
+        "model": {
+          "title": "Model",
+          "type": "string"
+        },
+        "task": {
+          "default": "detect",
+          "enum": [
+            "detect",
+            "segment"
+          ],
+          "title": "Task",
+          "type": "string"
+        },
+        "tracking": {
+          "default": false,
+          "title": "Tracking",
+          "type": "boolean"
         },
         "imgsz": {
           "default": 640,

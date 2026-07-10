@@ -30,6 +30,12 @@ HttpMethod = Literal["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]
 
 
 @dataclass
+class IdentityResult:
+    identity: str
+    similarity: float
+
+
+@dataclass
 class Crop:
     x1: int
     y1: int
@@ -37,6 +43,8 @@ class Crop:
     y2: int
     label: str | None = None
     confidence: float | None = None
+    track_id: int | None = None
+    identity: IdentityResult | None = None
 
 
 @dataclass(config=ConfigDict(arbitrary_types_allowed=True))
@@ -64,19 +72,56 @@ class Detection:
     images: ImageSet
     confidence: Confidence
 
+    @property
+    def identities(self) -> list[IdentityResult]:
+        identities = []
+        seen = set()
+        for crop in self.images.crops:
+            if crop.identity is None or crop.identity.identity in seen:
+                continue
+            identities.append(crop.identity)
+            seen.add(crop.identity.identity)
+        return identities
+
 
 @dataclass(kw_only=True)
-class YoloConfig:
-    model: str
-    task: Literal["detect", "segment"] = "detect"
+class ModelConfig:
     confidence: float | Confidence = 0
-    tracking: bool = False
     time_max: int = 60
     timeout: int = 5
     cooldown: float | dict[str, float] = 0
     include_trailing_time: int = 1
     frames_min: int = field(default_factory=_default_frames_min)
+
+
+@dataclass(kw_only=True)
+class YoloConfig(ModelConfig):
+    model: str
+    task: Literal["detect", "segment"] = "detect"
+    tracking: bool = False
     imgsz: int = 640
+
+
+@dataclass(kw_only=True)
+class DazzleCowConfig(ModelConfig):
+    model: Path
+    gallery: Path
+    owl_model: str = "google/owlv2-large-patch14-ensemble"
+    sam_model: str = "sam2.1_l.pt"
+    owl_interval: float = 1
+    prompt: str = "cow"
+    confidence: float = 0.3
+    match_threshold: float = 0.75
+    match_margin: float = 0
+    neighbors: int = 5
+    min_area_ratio: float = 0.025
+    max_area_ratio: float = 0.075
+    nms_iou: float = 0.5
+    track_samples: int = 5
+    track_iou: float = 0.2
+    track_max_age: int = 10
+    device: Literal["auto", "cpu", "cuda", "mps"] = "auto"
+    frames_min: int = 1
 
 
 @dataclass(kw_only=True)
@@ -171,6 +216,7 @@ class HealthcheckConfig(HttpConfig):
 class DetectorConfig:
     detection: DetectionConfig
     yolo: YoloConfig | None = None
+    dazzlecow: DazzleCowConfig | None = None
     vlm: VLMConfig | list[VLMConfig] | None = None
     exporters: ExportersConfig | None = None
 

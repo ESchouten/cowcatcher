@@ -34,42 +34,55 @@
 		},
 		exporters: { sse: [{}] } as { telegram?: TelegramConfig[]; sse?: SSEConfig[] }
 	};
+	const EMPTY_DAZZLECOW = {
+		model: '',
+		gallery: '',
+		owl_interval: 1,
+		confidence: 0.3,
+		match_threshold: 0.75,
+		match_margin: 0,
+		track_samples: 5,
+		frames_min: 1
+	};
 	const INLINE_STREAM_PREVIEW_LIMIT = 5;
 
 	function mergeWithEmptyDetector(detector?: Partial<DetectorConfig>) {
-		return {
+		const merged = {
 			...EMPTY_DETECTOR,
 			...detector,
 			detection: {
 				...EMPTY_DETECTOR.detection,
 				...detector?.detection
 			},
-			yolo: {
-				...EMPTY_DETECTOR.yolo,
-				...detector?.yolo
-			},
+			yolo: detector?.dazzlecow
+				? undefined
+				: {
+						...EMPTY_DETECTOR.yolo,
+						...detector?.yolo
+					},
+			dazzlecow: detector?.dazzlecow ? { ...EMPTY_DAZZLECOW, ...detector.dazzlecow } : undefined,
 			exporters: {
 				...EMPTY_DETECTOR.exporters,
 				...detector?.exporters
 			}
-		};
+		} as DetectorConfig;
+		return merged;
 	}
 
-	const originalLabel = $state(page.url.searchParams.get('label') ?? '');
-	const isEditing = $derived(!!originalLabel);
-	const setupMode = $derived(page.url.searchParams.get('setup') === '1');
+	const originalLabel = page.url.searchParams.get('label') ?? '';
+	const isEditing = !!originalLabel;
+	const setupMode = page.url.searchParams.get('setup') === '1';
 	const detectorPresets = $state(await getDetectorPresets());
 	const detectorSchema = $state(await getDetectorSchema());
 	const streams = $derived(await getStreams());
 	const telegrams = $derived(await getTelegrams());
-	const initialDetector = $derived(
-		mergeWithEmptyDetector(
-			isEditing ? (await getDetector({ label: originalLabel }))?.detector : undefined
-		)
+	const initialDetector = mergeWithEmptyDetector(
+		isEditing ? (await getDetector({ label: originalLabel }))?.detector : undefined
 	);
 
 	let label = $state(originalLabel);
 	let detector = $state(initialDetector);
+	let modelType = $state<'yolo' | 'dazzlecow'>(initialDetector.dazzlecow ? 'dazzlecow' : 'yolo');
 	let visiblePreviewSources = new SvelteSet<string>();
 	let editorHasErrors = $state(false);
 	let preset = $state<string>('Custom');
@@ -119,6 +132,18 @@
 	async function handlePresetChange(file: string) {
 		const preset = await getDetectorPreset({ file });
 		detector = mergeWithEmptyDetector(preset);
+		modelType = detector.dazzlecow ? 'dazzlecow' : 'yolo';
+	}
+
+	function setModelType(value: string) {
+		modelType = value === 'dazzlecow' ? 'dazzlecow' : 'yolo';
+		if (modelType === 'dazzlecow') {
+			delete detector.yolo;
+			detector.dazzlecow ??= { ...EMPTY_DAZZLECOW };
+		} else {
+			delete detector.dazzlecow;
+			detector.yolo ??= { ...EMPTY_DETECTOR.yolo };
+		}
 	}
 
 	async function handleSave(event: SubmitEvent) {
@@ -330,54 +355,145 @@
 			>
 		</div>
 
-		<Label for="model" class="mt-2">Model</Label>
-		<Input id="model" name="model" bind:value={detector.yolo.model} />
+		<Label for="model-type" class="mt-2">Model type</Label>
+		<Select.Root
+			type="single"
+			value={modelType}
+			onValueChange={setModelType}
+			items={[
+				{ value: 'yolo', label: 'YOLO' },
+				{ value: 'dazzlecow', label: 'DazzleCow' }
+			]}
+		>
+			<Select.Trigger id="model-type" class="w-full"
+				>{modelType === 'yolo' ? 'YOLO' : 'DazzleCow'}</Select.Trigger
+			>
+			<Select.Content>
+				<Select.Item value="yolo" label="YOLO" />
+				<Select.Item value="dazzlecow" label="DazzleCow" />
+			</Select.Content>
+		</Select.Root>
 
-		{#if typeof detector.yolo.confidence === 'number'}
-			<div class="mt-2 flex gap-6">
-				<div class="flex flex-1 flex-col gap-2">
-					<Label for="confidence">Confidence</Label>
+		{#if detector.dazzlecow}
+			<div class="mt-2 grid grid-cols-2 gap-6">
+				<div class="flex flex-col gap-2">
+					<Label for="dazzlecow-model">Encoder checkpoint</Label>
+					<Input id="dazzlecow-model" bind:value={detector.dazzlecow.model} />
+				</div>
+				<div class="flex flex-col gap-2">
+					<Label for="dazzlecow-gallery">Identity gallery</Label>
+					<Input id="dazzlecow-gallery" bind:value={detector.dazzlecow.gallery} />
+				</div>
+				<div class="flex flex-col gap-2">
+					<Label for="dazzlecow-confidence">Cow confidence</Label>
 					<Input
+						id="dazzlecow-confidence"
 						type="number"
 						min="0"
 						max="1"
 						step="0.01"
-						id="confidence"
-						name="confidence"
-						bind:value={detector.yolo.confidence}
+						bind:value={detector.dazzlecow.confidence}
 					/>
 				</div>
-				<div class="flex flex-1 flex-col gap-2">
-					<Label for="frames_min">Required detected frames</Label>
+				<div class="flex flex-col gap-2">
+					<Label for="owl-interval">OWL interval</Label>
 					<Input
+						id="owl-interval"
+						type="number"
+						min="0"
+						step="0.1"
+						bind:value={detector.dazzlecow.owl_interval}
+					/>
+				</div>
+				<div class="flex flex-col gap-2">
+					<Label for="match-threshold">Identity threshold</Label>
+					<Input
+						id="match-threshold"
+						type="number"
+						min="0"
+						max="1"
+						step="0.01"
+						bind:value={detector.dazzlecow.match_threshold}
+					/>
+				</div>
+				<div class="flex flex-col gap-2">
+					<Label for="match-margin">Identity margin</Label>
+					<Input
+						id="match-margin"
+						type="number"
+						min="0"
+						max="1"
+						step="0.01"
+						bind:value={detector.dazzlecow.match_margin}
+					/>
+				</div>
+				<div class="flex flex-col gap-2">
+					<Label for="track-samples">Track samples</Label>
+					<Input
+						id="track-samples"
 						type="number"
 						min="1"
 						step="1"
-						id="frames_min"
-						bind:value={detector.yolo.frames_min}
+						bind:value={detector.dazzlecow.track_samples}
 					/>
 				</div>
 			</div>
-		{:else}
-			<Label for="confidence" class="mt-2">Confidence</Label>
-			<div class="grid grid-cols-3 gap-x-6 gap-y-2">
-				{#each Object.keys(detector.yolo.confidence) as key (key)}
-					<div class="flex flex-col gap-2">
-						<Label for={key}>{key}</Label>
+		{:else if detector.yolo}
+			<Label for="model" class="mt-2">Model</Label>
+			<Input id="model" name="model" bind:value={detector.yolo.model} />
+
+			{#if typeof detector.yolo.confidence === 'number'}
+				<div class="mt-2 flex gap-6">
+					<div class="flex flex-1 flex-col gap-2">
+						<Label for="confidence">Confidence</Label>
 						<Input
 							type="number"
 							min="0"
 							max="1"
 							step="0.01"
-							id={key}
-							name={key}
-							bind:value={detector.yolo.confidence[key]}
+							id="confidence"
+							name="confidence"
+							bind:value={detector.yolo.confidence}
 						/>
 					</div>
-				{/each}
-			</div>
-			<Label for="frames_min" class="mt-2">Required detected frames</Label>
-			<Input type="number" min="1" step="1" id="frames_min" bind:value={detector.yolo.frames_min} />
+					<div class="flex flex-1 flex-col gap-2">
+						<Label for="frames_min">Required detected frames</Label>
+						<Input
+							type="number"
+							min="1"
+							step="1"
+							id="frames_min"
+							bind:value={detector.yolo.frames_min}
+						/>
+					</div>
+				</div>
+			{:else}
+				<Label for="confidence" class="mt-2">Confidence</Label>
+				<div class="grid grid-cols-3 gap-x-6 gap-y-2">
+					{#each Object.keys(detector.yolo.confidence) as key (key)}
+						<div class="flex flex-col gap-2">
+							<Label for={key}>{key}</Label>
+							<Input
+								type="number"
+								min="0"
+								max="1"
+								step="0.01"
+								id={key}
+								name={key}
+								bind:value={detector.yolo.confidence[key]}
+							/>
+						</div>
+					{/each}
+				</div>
+				<Label for="frames_min" class="mt-2">Required detected frames</Label>
+				<Input
+					type="number"
+					min="1"
+					step="1"
+					id="frames_min"
+					bind:value={detector.yolo.frames_min}
+				/>
+			{/if}
 		{/if}
 
 		<div class="mt-2 flex items-center justify-end space-x-2">
@@ -392,6 +508,7 @@
 					(value) => {
 						try {
 							detector = JSON.parse(value);
+							modelType = detector.dazzlecow ? 'dazzlecow' : 'yolo';
 						} catch {
 							// Do nothing
 						}

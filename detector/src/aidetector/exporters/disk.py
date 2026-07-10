@@ -1,5 +1,5 @@
 import json
-from dataclasses import asdict
+from dataclasses import asdict, field
 from pathlib import Path
 
 from aidetector.exporters.exporter import Exporter
@@ -69,6 +69,7 @@ class DiskExporter(Exporter[DiskConfig]):
             validated=validated,
             confidence=max_confidence(best_detection.confidence),
             confidences=best_detection.confidence,
+            identities=[asdict(identity) for identity in best_detection.identities],
             detections=len(detections),
             start=detections[0].date.isoformat(),
             end=detections[-1].date.isoformat(),
@@ -81,6 +82,7 @@ class DiskExporter(Exporter[DiskConfig]):
             }
             if crop_region
             else None,
+            crops=[asdict(crop) for crop in best_detection.images.crops],
         )
         metadata_path = timestamped_directory / "metadata.json"
         with open(metadata_path, "w") as f:
@@ -93,8 +95,10 @@ class Metadata:
     validated: bool | None
     confidence: float
     confidences: dict[str, float]
+    identities: list[dict[str, str | float]]
     detections: int
     start: str
     end: str
     duration: float
     crop: dict[str, int] | None = None
+    crops: list[dict] = field(default_factory=list)

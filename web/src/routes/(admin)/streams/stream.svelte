@@ -43,6 +43,10 @@
 		label: string | null;
 		confidence: number | null;
 		crop: TrackCrop;
+		identity?: {
+			identity: string;
+			similarity: number;
+		} | null;
 	};
 
 	type TracksPayload = {
@@ -132,6 +136,9 @@
 	}
 
 	function objectLabel(object: TrackObject) {
+		if (object.identity) {
+			return `${object.identity.identity} ${formatPercent(object.identity.similarity)}`;
+		}
 		const objectName = object.label ?? object.crop.label ?? 'object';
 		const confidence = formatPercent(object.confidence ?? object.crop.confidence);
 		return confidence ? `${objectName} ${confidence}` : objectName;
@@ -192,6 +199,9 @@
 	function trackObjectKey(object: TrackObject, index: number) {
 		if (object.track_id !== null && object.track_id !== undefined) {
 			return `track-${object.track_id}`;
+		}
+		if (object.identity) {
+			return `identity-${object.identity.identity}`;
 		}
 		return `object-${object.id ?? index}`;
 	}

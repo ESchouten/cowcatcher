@@ -171,13 +171,23 @@ def detection_payload(
         "confidence": max_confidence(best_detection.confidence),
         "confidences": best_detection.confidence,
         "validated": validated,
+        "identities": [asdict(identity) for identity in best_detection.identities],
         "detections": len(detections),
         "start": detections[0].date.isoformat(),
         "end": detections[-1].date.isoformat(),
         "duration": (detections[-1].date - detections[0].date).total_seconds(),
-        "crop": asdict(best_detection.images.crop_region)
-        if best_detection.images.crop_region
-        else None,
+        "crop": (
+            {
+                "x1": best_detection.images.crop_region.x1,
+                "y1": best_detection.images.crop_region.y1,
+                "x2": best_detection.images.crop_region.x2,
+                "y2": best_detection.images.crop_region.y2,
+                "label": best_detection.images.crop_region.label,
+                "confidence": best_detection.images.crop_region.confidence,
+            }
+            if best_detection.images.crop_region
+            else None
+        ),
         "crops": [asdict(crop) for crop in best_detection.images.crops],
     }
 

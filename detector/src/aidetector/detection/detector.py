@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from threading import Thread
 from time import sleep
 
+from aidetector.dazzlecow.runner import DazzleCowRunner
 from aidetector.detection.validator import Validator
 from aidetector.detection.yolo import YoloRunner
 from aidetector.exporters.disk import DiskExporter
@@ -16,11 +17,13 @@ from aidetector.sources.source import SourceProvider
 from aidetector.utils.config import (
     ChatConfig,
     Config,
+    DazzleCowConfig,
     Detection,
     DetectionConfig,
     DetectorConfig,
     DiskConfig,
     ImageSet,
+    ModelConfig,
     OnnxConfig,
     SSEConfig,
     VLMConfig,
@@ -39,29 +42,42 @@ class Detector:
     detection: DetectionConfig
     yolo_config: YoloConfig | None
     yolo_runner: YoloRunner | None
+    dazzlecow_config: DazzleCowConfig | None
+    dazzlecow_runner: DazzleCowRunner | None
     source_provider: SourceProvider
     validator: Validator
     exporters: list[Exporter]
     running: bool
     export_executor: ThreadPoolExecutor
     last_frame_time: datetime
+    last_dazzlecow_result_time: dict[str, datetime]
     last_detection_time: dict[str, dict[str, datetime]]
 
     def __init__(
         self,
         detection: DetectionConfig,
         yolo_config: YoloConfig | None,
+        dazzlecow_config: DazzleCowConfig | None,
         validator: Validator,
         exporters: list[Exporter],
         onnx_config: OnnxConfig,
     ):
         self.detections = defaultdict(list)
+        if yolo_config is not None and dazzlecow_config is not None:
+            raise ValueError("Configure either yolo or dazzlecow, not both")
+
         self.detection = detection
         self.yolo_config = yolo_config
+        self.dazzlecow_config = dazzlecow_config
         self.source_provider = SourceProvider(detection)
         self.yolo_runner = (
             YoloRunner(yolo_config, onnx_config, self.source_provider.sources)
             if yolo_config is not None
+            else None
+        )
+        self.dazzlecow_runner = (
+            DazzleCowRunner(dazzlecow_config)
+            if dazzlecow_config is not None
             else None
         )
         self.validator = validator
@@ -69,6 +85,7 @@ class Detector:
         self.running = True
         self.export_executor = ThreadPoolExecutor()
         self.last_frame_time = datetime.min
+        self.last_dazzlecow_result_time = {}
         self.last_detection_time = {}
 
     @classmethod
@@ -104,7 +121,14 @@ class Detector:
         )
 
         return [
-            cls(detector.detection, detector.yolo, validator, exporters, config.onnx)
+            cls(
+                detector.detection,
+                detector.yolo,
+                detector.dazzlecow,
+                validator,
+                exporters,
+                config.onnx,
+            )
         ]
 
     def _generate_frames(self):
@@ -114,6 +138,11 @@ class Detector:
             self._handle_frame_batch(batch)
 
     def _handle_frame_batch(self, batch: dict[str, list[tuple[datetime, ndarray]]]):
+        dazzlecow_runner = getattr(self, "dazzlecow_runner", None)
+        if dazzlecow_runner is not None:
+            self._handle_dazzlecow_batch(batch, dazzlecow_runner)
+            return
+
         if (
             datetime.now() - self.last_frame_time
         ).total_seconds() < self.detection.interval:
@@ -127,11 +156,12 @@ class Detector:
             return
         self.last_frame_time = datetime.now()
 
-        if self.yolo_runner and self.yolo_config:
-            if self.yolo_config.tracking:
+        runner = self.yolo_runner
+        if runner is not None:
+            if self.yolo_config and self.yolo_config.tracking and self.yolo_runner:
                 tracked_results = self.yolo_runner.track_sources(batch)
                 for tracked in tracked_results:
-                    self._handle_yolo_result(
+                    self._handle_model_result(
                         tracked.source,
                         tracked.result,
                         tracked.frames,
@@ -139,9 +169,9 @@ class Detector:
                 return
 
             frames = [frames[-1][1] for frames in batch.values()]
-            results = self.yolo_runner.detect(frames)
+            results = runner.detect(frames)
             for source, result in zip(batch.keys(), results):
-                self._handle_yolo_result(source, result, batch[source])
+                self._handle_model_result(source, result, batch[source])
             return
 
         for source, frames in batch.items():
@@ -150,13 +180,49 @@ class Detector:
                 [Detection(frames[-1][0], ImageSet(frames[-1][1]), {})],
             )
 
-    def _handle_yolo_result(
+    def _handle_dazzlecow_batch(
+        self,
+        batch: dict[str, list[tuple[datetime, ndarray]]],
+        runner: DazzleCowRunner,
+    ) -> None:
+        result_times = getattr(self, "last_dazzlecow_result_time", {})
+        self.last_dazzlecow_result_time = result_times
+        for source, source_frames in batch.items():
+            results = runner.detect(
+                [frame for _, frame in source_frames],
+                [source] * len(source_frames),
+                [date for date, _ in source_frames],
+            )
+            if not results:
+                continue
+            latest_date, latest_frame = source_frames[-1]
+            if (
+                latest_date - result_times.get(source, datetime.min)
+            ).total_seconds() >= self.detection.interval:
+                result_times[source] = latest_date
+                self._handle_model_result(source, results[-1], source_frames)
+                continue
+
+            detections = runner.detections_from_result(
+                results[-1],
+                [(latest_date, latest_frame)],
+            )
+            self._publish_tracks(
+                source,
+                detections[-1]
+                if detections
+                else Detection(latest_date, ImageSet(latest_frame), {}),
+            )
+
+    def _handle_model_result(
         self, source: str, result, frames: list[tuple[datetime, ndarray]]
     ):
-        if self.yolo_config is None or self.yolo_runner is None:
+        runner = self.yolo_runner or getattr(self, "dazzlecow_runner", None)
+        model_config = self._model_config()
+        if model_config is None or runner is None:
             return
 
-        detections = self.yolo_runner.detections_from_result(result, frames)
+        detections = runner.detections_from_result(result, frames)
         if detections:
             self._publish_tracks(source, detections[-1])
             self._process(source, detections)
@@ -175,7 +241,7 @@ class Detector:
             if latest_detection
             else 0
         )
-        if self.yolo_config.include_trailing_time > time_since_latest_detection:
+        if model_config.include_trailing_time > time_since_latest_detection:
             self.logger.info(
                 "Including trailing frames: %f seconds", time_since_latest_detection
             )
@@ -239,14 +305,13 @@ class Detector:
         if self._has_min_detections(source):
             best_detection = max(detections, key=lambda x: max_confidence(x.confidence))
 
+            model_config = self._model_config()
             matching_confs = (
-                matching_confidences(
-                    best_detection.confidence, self.yolo_config.confidence
-                )
-                if self.yolo_config
+                matching_confidences(best_detection.confidence, model_config.confidence)
+                if model_config
                 else []
             )
-            if self.yolo_config and not self._cooldown_exceeded(source, matching_confs):
+            if model_config and not self._cooldown_exceeded(source, matching_confs):
                 self.logger.info(
                     "Not exporting, cooldown not exceeded for %s", matching_confs
                 )
@@ -263,7 +328,7 @@ class Detector:
             def export_task():
                 validated = self.validator.validate(best_detection, detections)
 
-                if validated is not False and self.yolo_config:
+                if validated is not False and model_config:
                     last_detection_time = self.last_detection_time.get(source, {})
                     for class_name in matching_confs:
                         last_detection_time[class_name] = best_detection.date
@@ -285,7 +350,7 @@ class Detector:
             detection for detection in self.detections[source] if detection.confidence
         ]
         return len(detections_with_confidence) >= (
-            self.yolo_config.frames_min if self.yolo_config else 0
+            model_config.frames_min if (model_config := self._model_config()) else 0
         )
 
     def _latest_detection(self, source: str) -> Detection | None:
@@ -298,15 +363,15 @@ class Detector:
         return detections_with_confidence[-1] if detections_with_confidence else None
 
     def _cooldown_exceeded(self, source: str, matching_confidences: list[str]) -> bool:
-        yolo_config = self.yolo_config
-        if yolo_config is None:
+        model_config = self._model_config()
+        if model_config is None:
             return True
 
         def cooldown_for(name: str) -> float:
             return (
-                yolo_config.cooldown[name]
-                if isinstance(yolo_config.cooldown, dict)
-                else yolo_config.cooldown
+                model_config.cooldown[name]
+                if isinstance(model_config.cooldown, dict)
+                else model_config.cooldown
             )
 
         return any(
@@ -323,7 +388,7 @@ class Detector:
         now = datetime.now()
         time_collecting = (now - detections[0].date).total_seconds()
         time_collecting_exceeded = time_collecting > (
-            self.yolo_config.time_max if self.yolo_config else 0
+            model_config.time_max if (model_config := self._model_config()) else 0
         )
         return time_collecting_exceeded
 
@@ -334,7 +399,10 @@ class Detector:
         now = datetime.now()
         timeout = (now - latest_detection.date).total_seconds()
         return (
-            timeout > self.yolo_config.timeout
-            if self.yolo_config and self.yolo_config.timeout
+            timeout > model_config.timeout
+            if (model_config := self._model_config()) and model_config.timeout
             else False
         )
+
+    def _model_config(self) -> ModelConfig | None:
+        return self.yolo_config or getattr(self, "dazzlecow_config", None)

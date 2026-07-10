@@ -81,8 +81,14 @@ class TelegramExporter(WebhookExporter):
                 )
 
         thumbs = "\n👍 / 👎" if validated is None else ""
+        identities = ""
+        if best_detection.identities:
+            identities = "\nIdentities: " + ", ".join(
+                f"{identity.identity} ({identity.similarity:.0%})"
+                for identity in best_detection.identities
+            )
         media[0]["caption"] = (
-            f"{int(max_confidence(best_detection.confidence) * 100)}%{' ✅' if validated else ' ❌' if validated is False else ''}\n{round((detections[-1].date - detections[0].date).total_seconds())} second(s){thumbs}"
+            f"{int(max_confidence(best_detection.confidence) * 100)}%{' ✅' if validated else ' ❌' if validated is False else ''}\n{round((detections[-1].date - detections[0].date).total_seconds())} second(s){identities}{thumbs}"
         )
 
         return {
