@@ -38,3 +38,5 @@ docker compose up -d aidetector web
 ```
 
 The container serves the app on [http://localhost](http://localhost).
+
+Live detection events are proxied through the web server. In Docker, set `DETECTOR_HOST` to the detector service name (the example uses `aidetector`). Packaged executables default to a detector running on `127.0.0.1`.

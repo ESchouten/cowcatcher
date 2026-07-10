@@ -5,10 +5,7 @@ import sys
 import time
 from pathlib import Path
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-
+from aidetector.utils.config import ConfigurationError
 
 logger = logging.getLogger(__name__)
 _RESTART_DELAY_SECONDS = 5
@@ -21,35 +18,42 @@ def _set_working_directory() -> None:
 
 def _patch_windows_path_checkpoints() -> None:
     if os.name != "nt":
-        pathlib.WindowsPath = pathlib.PosixPath
+        setattr(pathlib, "WindowsPath", pathlib.PosixPath)
 
 
 def start() -> None:
     _set_working_directory()
     _patch_windows_path_checkpoints()
 
-    from aidetector.utils.config import config
+    from aidetector.utils.config import load_config
     from aidetector.utils.onnx import setup_ort
 
-    logger.info(f"Starting application with config: {config}")
+    config = load_config()
+    logger.info("Starting application with %d detector(s)", len(config.detectors))
     setup_ort(config)
     from aidetector.detection.manager import Manager
 
     manager = Manager.from_config(config)
-    threads = manager.start()
+    manager.start()
     try:
-        for thread in threads:
-            thread.join()
+        manager.wait()
     except KeyboardInterrupt:
         logger.info("Shutdown requested")
     finally:
         manager.stop()
 
 
-def main():
+def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
     while True:
         try:
             start()
+            return
+        except ConfigurationError as error:
+            logger.error("Application configuration is invalid: %s", error)
             return
         except KeyboardInterrupt:
             logger.info("Shutdown requested")

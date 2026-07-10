@@ -61,6 +61,11 @@ uv run --extra default main
 
 # Sync JSON schema with the Pydantic data models
 uv run generate-schema
+
+# Run the quality gates
+uv run ruff check src tests
+uv run ty check src
+uv run pytest
 ```
 
 ---
@@ -104,7 +109,8 @@ You can run multiple independent detectors in the same file — useful if you ha
 | :---------------- | :----------- | :---------- |
 | `source`          | **Required** | Path to a video file, or an RTSP/HTTP stream URL. Use a list `[ ]` for multiple sources. |
 | `interval`        | `0`          | How many seconds to wait between processed frames. Set to `0` to process every frame. Useful to reduce load on slow machines. |
-| `frame_retention` | `30`         | How many recent frames to keep in memory per source so detections can include earlier context. |
+| `frame_retention` | `15`         | How many recent frames to keep in memory per source so detections can include earlier context. |
+| `frames_width`    | `1280`       | Maximum width retained for event images. Larger source frames are resized while preserving aspect ratio. |
 
 **Examples:**
 ```json
@@ -123,6 +129,7 @@ This is the fast first-pass AI that scans every frame. Without a YOLO model, the
 | :---------------------- | :----------- | :---------- |
 | `model`                 | **Required** | URL or local path to a YOLO model file (`.pt` or `.onnx`). |
 | `task`                  | `"detect"`   | YOLO task to run: `"detect"` for detection models or `"segment"` for segmentation models. |
+| `tracking`              | `false`      | Keep object track IDs between frames. Sources remain isolated while inference is batched. |
 | `confidence`            | `0`          | How confident YOLO must be (0–1) before counting something as a detection. `0.8` means 80% sure. You can also set different thresholds per class — see tip below. |
 | `time_max`              | `60`         | Maximum duration in seconds to group frames into one event. If a detection runs longer than this, a new event starts. |
 | `timeout`               | `5`          | Seconds of no detections before the current event is considered over. |
@@ -130,7 +137,6 @@ This is the fast first-pass AI that scans every frame. Without a YOLO model, the
 | `include_trailing_time` | `1`          | Seconds of extra footage to include after the last detected frame so the event does not end too abruptly. |
 | `frames_min`            | `6` / `3`    | How many frames in a row must match before the event counts. Default is `6` when `torch.cuda.is_available()` is true, otherwise `3`. |
 | `imgsz`                 | `640`        | The image size fed into the model. Higher values are more accurate but slower. Most models expect `640`. |
-| `strategy`              | `"LATEST"`   | Which frames to evaluate: `"LATEST"` uses only the most recent, `"ALL"` evaluates every frame. |
 
 > **Tip — per-class confidence thresholds:**
 > Instead of a single number, you can give each class its own threshold:
@@ -195,6 +201,7 @@ Sends an alert to a Telegram chat. The bot can include images or a video clip.
 | `chat`            | **Required** | The Telegram chat or user ID to send alerts to. |
 | `confidence`      |              | Minimum confidence required to send. Leave empty to always send. |
 | `alert_every`     | `1`          | Only send a notification sound every Nth detection. `1` = every time, `5` = every 5th. |
+| `timeout`         | `30`         | HTTP request timeout in seconds. |
 | `include_plot`    | `false`      | Include the full frame with a detection box drawn on it. |
 | `include_crop`    | `false`      | Include a cropped image of just the detected object. |
 | `include_video`   | `true`       | Include an MP4 clip of the detection sequence. |
@@ -223,6 +230,19 @@ Posts detection data to an HTTP endpoint. Useful for integrating with other syst
 | `video_width`     | `1280`       | Width of the video clip in pixels. |
 | `video_crf`       | `28`         | Video quality (0–51). Lower = better quality, larger file. |
 | `export_rejected` | `false`      | Whether to also POST detections rejected by the VLM. |
+
+#### Live stream (`sse`)
+
+Publishes live object detections and completed event summaries as Server-Sent Events (SSE). The web application uses this feed for its live stream view.
+
+| Field             | Default                  | Description |
+| :---------------- | :----------------------- | :---------- |
+| `port`            | `8765`                   | HTTP port for the SSE server. Exporters using the same port share one server. |
+| `endpoint`        | `/events/<detector index>` | Optional endpoint. When omitted, each detector receives a unique endpoint based on its position in `detectors`. |
+| `confidence`      |                           | Minimum confidence for completed detection events. Live track messages are not event-filtered. |
+| `export_rejected` | `false`                   | Whether to publish completed detections rejected by the VLM. |
+
+The detector binds this internal server to `127.0.0.1` by default. The web application proxies it through the normal web origin. Container deployments should set `SSE_HOST=0.0.0.0` on the detector and `DETECTOR_HOST=aidetector` on the web service; the example Compose files already do this without publishing port `8765` to the host.
 
 ---
 

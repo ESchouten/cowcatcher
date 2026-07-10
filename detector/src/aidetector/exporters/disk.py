@@ -1,17 +1,12 @@
 import json
-from dataclasses import asdict
 from pathlib import Path
 
+from aidetector.detection.models import Detection
 from aidetector.exporters.exporter import Exporter
+from aidetector.exporters.metadata import DetectionMetadata
+from aidetector.exporters.naming import date_path, timestamped_filename
 from aidetector.media.video import generate_mp4, get_image, get_plot
-from aidetector.utils.config import (
-    Detection,
-    DiskConfig,
-    get_date_path,
-    get_timestamped_filename,
-    max_confidence,
-)
-from pydantic.dataclasses import dataclass
+from aidetector.utils.config import DiskConfig
 
 
 class DiskExporter(Exporter[DiskConfig]):
@@ -19,18 +14,20 @@ class DiskExporter(Exporter[DiskConfig]):
 
     def __init__(self, config: DiskConfig):
         super().__init__(config)
-        self.directory = Path("detections") / config.directory if config.directory else None
+        self.directory = (
+            Path("detections") / config.directory if config.directory else None
+        )
         if self.directory:
             self.directory.mkdir(parents=True, exist_ok=True)
 
-    def filtered_export(
+    def _export(
         self,
         best_detection: Detection,
         detections: list[Detection],
         validated: bool | None,
-    ):
-        self.logger.info(f"Saving {len(detections)} photos to disk")
-        timestamp = get_date_path(best_detection, "seconds")
+    ) -> None:
+        self.logger.info("Saving %d frames to disk", len(detections))
+        timestamp = date_path(best_detection, "seconds")
         subfolder = (
             "approved"
             if validated
@@ -39,62 +36,35 @@ class DiskExporter(Exporter[DiskConfig]):
             else "unvalidated"
         )
 
-        confidence_max = max(best_detection.confidence.items(), key=lambda x: x[1])
-        directory = self.directory or Path("detections") / confidence_max[0]
+        label = max(
+            best_detection.confidence.items(),
+            key=lambda item: item[1],
+            default=("unclassified", 0),
+        )[0]
+        directory = self.directory or Path("detections") / label
         directory.mkdir(parents=True, exist_ok=True)
 
         timestamped_directory = directory / subfolder / timestamp
         timestamped_directory.mkdir(parents=True, exist_ok=True)
         if self.config.strategy == "ALL":
             for result in detections:
-                image_name = get_timestamped_filename(result)
+                image_name = timestamped_filename(result)
                 image_path = timestamped_directory / image_name
                 with open(image_path, "wb") as f:
                     f.write(get_image(result.images.jpg))
-        if best_detection:
-            image_path = timestamped_directory / "best.jpg"
-            with open(image_path, "wb") as f:
-                f.write(get_image(get_plot(best_detection)))
-            clean_image_path = timestamped_directory / "clean.jpg"
-            with open(clean_image_path, "wb") as f:
-                f.write(get_image(best_detection.images.jpg))
+        image_path = timestamped_directory / "best.jpg"
+        image_path.write_bytes(get_image(get_plot(best_detection)))
+        clean_image_path = timestamped_directory / "clean.jpg"
+        clean_image_path.write_bytes(get_image(best_detection.images.jpg))
         video = generate_mp4(detections, padding=self.config.crop_padding)
         if video:
             video_path = timestamped_directory / "video.mp4"
-            with open(video_path, "wb") as f:
-                f.write(video)
-        crop_region = best_detection.images.crop_region
-        metadata: Metadata = Metadata(
-            timestamp=timestamp,
-            validated=validated,
-            confidence=max_confidence(best_detection.confidence),
-            confidences=best_detection.confidence,
-            detections=len(detections),
-            start=detections[0].date.isoformat(),
-            end=detections[-1].date.isoformat(),
-            duration=(detections[-1].date - detections[0].date).total_seconds(),
-            crop={
-                "x1": crop_region.x1,
-                "y1": crop_region.y1,
-                "x2": crop_region.x2,
-                "y2": crop_region.y2,
-            }
-            if crop_region
-            else None,
+            video_path.write_bytes(video)
+        metadata = DetectionMetadata.from_event(
+            timestamp,
+            best_detection,
+            detections,
+            validated,
         )
         metadata_path = timestamped_directory / "metadata.json"
-        with open(metadata_path, "w") as f:
-            json.dump(asdict(metadata), f)
-
-
-@dataclass
-class Metadata:
-    timestamp: str
-    validated: bool | None
-    confidence: float
-    confidences: dict[str, float]
-    detections: int
-    start: str
-    end: str
-    duration: float
-    crop: dict[str, int] | None = None
+        metadata_path.write_text(json.dumps(metadata.as_dict()) + "\n")

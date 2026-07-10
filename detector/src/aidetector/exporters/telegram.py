@@ -1,92 +1,135 @@
 import json
+from threading import Lock
+from typing import Any
 
-from aidetector.exporters.webhook import WebhookExporter
-from aidetector.media.video import generate_mp4
-from aidetector.utils.config import (
-    ChatConfig,
-    Detection,
-    WebhookConfig,
-    max_confidence,
-)
+import requests
+
+from aidetector.detection.models import Detection, max_confidence
+from aidetector.exporters.exporter import Exporter
+from aidetector.exporters.media import EncodedFile, MediaOptions, encode_media
+from aidetector.utils.config import ChatConfig
+
+TELEGRAM_API = "https://api.telegram.org"
 
 
-class TelegramExporter(WebhookExporter):
-    telegram: ChatConfig
-    alert_count: int
-
+class TelegramExporter(Exporter[ChatConfig]):
     def __init__(self, config: ChatConfig):
-        self.telegram = config
-        super().__init__(
-            WebhookConfig(
-                url=f"https://api.telegram.org/bot{config.token}/sendMediaGroup",
-                token=config.token,
-                confidence=config.confidence,
-                crop_padding=config.crop_padding,
-                export_rejected=config.export_rejected,
-                data_type="binary",
-                data_max=12_000_000,
-                include_video=config.include_video,
-                include_image=config.include_image,
-                include_plot=config.include_plot,
-                include_crop=config.include_crop,
-                video_width=config.video_width,
-                video_crf=config.video_crf,
-            )
-        )
-        self.alert_count = 0
+        super().__init__(config)
+        self._alert_count = 0
+        self._count_lock = Lock()
 
-    def get_payload(
+    def _export(
         self,
         best_detection: Detection,
         detections: list[Detection],
         validated: bool | None,
-    ):
-        self.alert_count += 1
-        media = []
-        if self.telegram.include_image:
-            media.append(
-                {
-                    "type": "photo",
-                    "media": "attach://image",
-                }
+    ) -> None:
+        files = encode_media(
+            best_detection,
+            detections,
+            MediaOptions(
+                self.config.include_image,
+                self.config.include_plot,
+                self.config.include_crop,
+                self.config.include_video,
+                self.config.video_width,
+                self.config.video_crf,
+                self.config.crop_padding,
+                12_000_000,
+            ),
+        )
+        caption = self._caption(best_detection, detections, validated)
+        silent = self._next_alert_is_silent()
+        if not files:
+            self._request(
+                "sendMessage",
+                data={
+                    "chat_id": self.config.chat,
+                    "text": caption,
+                    "disable_notification": silent,
+                },
             )
-        if self.telegram.include_plot:
-            media.append(
-                {
-                    "type": "photo",
-                    "media": "attach://photo",
-                }
-            )
-        if self.telegram.include_crop and best_detection.images.crop_region:
-            media.append(
-                {
-                    "type": "photo",
-                    "media": "attach://crop",
-                }
-            )
+        elif len(files) == 1:
+            name, item = next(iter(files.items()))
+            self._send_single(name, item, caption, silent)
+        else:
+            self._send_group(files, caption, silent)
 
-        if self.telegram.include_video:
-            video = generate_mp4(
-                detections,
-                width=self.telegram.video_width,
-                crf=self.telegram.video_crf,
-                padding=self.telegram.crop_padding,
-            )
-            if video:
-                media.append(
-                    {
-                        "type": "video",
-                        "media": "attach://video",
-                    }
-                )
-
-        thumbs = "\n👍 / 👎" if validated is None else ""
-        media[0]["caption"] = (
-            f"{int(max_confidence(best_detection.confidence) * 100)}%{' ✅' if validated else ' ❌' if validated is False else ''}\n{round((detections[-1].date - detections[0].date).total_seconds())} second(s){thumbs}"
+    def _send_single(
+        self,
+        name: str,
+        item: EncodedFile,
+        caption: str,
+        silent: bool,
+    ) -> None:
+        is_video = item.content_type == "video/mp4"
+        field = "video" if is_video else "photo"
+        method = "sendVideo" if is_video else "sendPhoto"
+        self._request(
+            method,
+            data={
+                "chat_id": self.config.chat,
+                "caption": caption,
+                "disable_notification": silent,
+            },
+            files={field: item.request_file()},
         )
 
-        return {
-            "chat_id": self.telegram.chat,
-            "disable_notification": self.alert_count % self.telegram.alert_every != 0,
-            "media": json.dumps(media),
-        }
+    def _send_group(
+        self,
+        files: dict[str, EncodedFile],
+        caption: str,
+        silent: bool,
+    ) -> None:
+        attachments = list(files.items())[:10]
+        media = [
+            {
+                "type": "video" if item.content_type == "video/mp4" else "photo",
+                "media": f"attach://{name}",
+                **({"caption": caption} if index == 0 else {}),
+            }
+            for index, (name, item) in enumerate(attachments)
+        ]
+        self._request(
+            "sendMediaGroup",
+            data={
+                "chat_id": self.config.chat,
+                "disable_notification": silent,
+                "media": json.dumps(media),
+            },
+            files={name: item.request_file() for name, item in attachments},
+        )
+
+    def _request(
+        self,
+        method: str,
+        *,
+        data: dict[str, Any],
+        files: dict[str, tuple[str, bytes, str]] | None = None,
+    ) -> None:
+        response = requests.post(
+            f"{TELEGRAM_API}/bot{self.config.token}/{method}",
+            data=data,
+            files=files,
+            timeout=self.config.timeout,
+        )
+        response.raise_for_status()
+
+    def _next_alert_is_silent(self) -> bool:
+        with self._count_lock:
+            self._alert_count += 1
+            return self._alert_count % max(1, self.config.alert_every) != 0
+
+    @staticmethod
+    def _caption(
+        best_detection: Detection,
+        detections: list[Detection],
+        validated: bool | None,
+    ) -> str:
+        status = " approved" if validated else " rejected" if validated is False else ""
+        feedback = "\nApprove or reject this detection." if validated is None else ""
+        duration = round((detections[-1].date - detections[0].date).total_seconds())
+        return (
+            f"{max_confidence(best_detection.confidence):.0%}{status}\n"
+            f"{duration} second(s){feedback}"
+        )

@@ -13,8 +13,8 @@
 		hideOverlay?: boolean;
 		disableLink?: boolean;
 		showTracks?: boolean;
-		tracksEndpoint?: string;
-		tracksPort?: number;
+		tracksUrl?: string;
+		tracksSource?: string;
 	};
 
 	let {
@@ -24,8 +24,8 @@
 		hideOverlay = false,
 		disableLink = false,
 		showTracks = false,
-		tracksEndpoint = '/events',
-		tracksPort = 8765
+		tracksUrl = '/api/tracks/0',
+		tracksSource = '0:0'
 	}: Props = $props();
 
 	type TrackCrop = {
@@ -101,20 +101,12 @@
 		}, TRACK_STALE_MS);
 	}
 
-	function getTracksUrl() {
-		const configuredEndpoint = tracksEndpoint.trim() || '/events';
-		const endpoint = configuredEndpoint.startsWith('/')
-			? configuredEndpoint
-			: `/${configuredEndpoint}`;
-		return `${window.location.protocol}//${window.location.hostname}:${tracksPort}${endpoint}`;
-	}
-
 	function parseTracks(event: MessageEvent<string>) {
 		try {
 			const payload = JSON.parse(event.data) as TracksPayload;
 			if (
 				payload?.type !== 'tracks' ||
-				payload.source !== source ||
+				payload.source !== tracksSource ||
 				!Number.isFinite(payload.width) ||
 				!Number.isFinite(payload.height)
 			) {
@@ -212,7 +204,7 @@
 			return;
 		}
 
-		const events = new EventSource(getTracksUrl());
+		const events = new EventSource(tracksUrl);
 		events.addEventListener('tracks', parseTracks);
 		events.addEventListener('error', () => {
 			tracks = null;

@@ -1,4 +1,5 @@
 import logging
+from importlib import import_module
 from pathlib import Path
 
 LOGGER = logging.getLogger(__name__)
@@ -20,14 +21,13 @@ class WinML:
         self._initialized = True
 
         self._fix_winrt_runtime()
-        import winui3.microsoft.windows.ai.machinelearning as winml
-        from winui3.microsoft.windows.applicationmodel.dynamicdependency.bootstrap import (
-            InitializeOptions,
-            initialize,
+        winml = import_module("winui3.microsoft.windows.ai.machinelearning")
+        bootstrap = import_module(
+            "winui3.microsoft.windows.applicationmodel.dynamicdependency.bootstrap"
         )
 
-        self._win_app_sdk_handle = initialize(
-            options=InitializeOptions.ON_NO_MATCH_SHOW_UI
+        self._win_app_sdk_handle = bootstrap.initialize(
+            options=bootstrap.InitializeOptions.ON_NO_MATCH_SHOW_UI
         )
         self._win_app_sdk_handle.__enter__()
         catalog = winml.ExecutionProviderCatalog.get_default()

@@ -4,12 +4,14 @@ on:
   pull_request:
     paths:
       - "detector/**"
+      - "config/*.schema.json"
       - ".github/workflows/detector-tests.yml"
   push:
     branches:
       - "**"
     paths:
       - "detector/**"
+      - "config/*.schema.json"
       - ".github/workflows/detector-tests.yml"
   workflow_dispatch:
 
@@ -45,8 +47,19 @@ jobs:
       - name: Ruff
         run: uv run ruff check src/aidetector tests
 
+      - name: Format
+        run: uv run ruff format --check src/aidetector tests
+
       - name: Compile
         run: uv run python -m compileall src/aidetector
+
+      - name: Type check
+        run: uv run ty check src
+
+      - name: Verify generated schemas
+        run: |
+          uv run generate-schema
+          git diff --exit-code -- ../config/config.schema.json ../config/metadata.schema.json
 
       - name: Pytest
         run: uv run pytest

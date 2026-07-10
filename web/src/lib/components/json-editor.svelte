@@ -47,6 +47,7 @@
 	});
 
 	onMount(() => {
+		let disposed = false;
 		let cleanup = () => {};
 
 		void (async () => {
@@ -56,6 +57,9 @@
 				import('monaco-editor'),
 				import('monaco-editor/esm/vs/language/json/monaco.contribution.js')
 			]);
+			if (disposed) {
+				return;
+			}
 
 			monaco = monacoModule;
 			(self as any).MonacoEnvironment = {
@@ -129,9 +133,13 @@
 				editor?.dispose();
 				model?.dispose();
 			};
+			if (disposed) {
+				cleanup();
+			}
 		})();
 
 		return () => {
+			disposed = true;
 			cleanup();
 		};
 	});

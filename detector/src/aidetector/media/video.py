@@ -5,7 +5,7 @@ import tempfile
 
 import cv2
 import numpy as np
-from aidetector.utils.config import Crop, Detection
+from aidetector.detection.models import Crop, Detection
 from imageio_ffmpeg import get_ffmpeg_exe
 
 logger = logging.getLogger(__name__)
@@ -32,11 +32,12 @@ def generate_mp4(
         if crop:
             crops = [crop for d in detections for crop in d.images.crops]
             if crops:
-                minX1 = min(crop.x1 for crop in crops)
-                minY1 = min(crop.y1 for crop in crops)
-                maxX2 = max(crop.x2 for crop in crops)
-                maxY2 = max(crop.y2 for crop in crops)
-                crop_region = Crop(minX1, minY1, maxX2, maxY2)
+                crop_region = Crop(
+                    min(item.x1 for item in crops),
+                    min(item.y1 for item in crops),
+                    max(item.x2 for item in crops),
+                    max(item.y2 for item in crops),
+                )
                 last_crop_index = max(
                     i for i, d in enumerate(detections) if d.images.crops
                 )
@@ -54,17 +55,10 @@ def generate_mp4(
                         frames.append(frame)
 
         if not frames:
-            frames = [
-                get_plot(d) if plot else d.images.jpg
-                for d in detections
-            ]
+            frames = [get_plot(d) if plot else d.images.jpg for d in detections]
 
-        # 1. Calculate FPS
-        fps = (
-            len(detections) / (detections[-1].date - detections[0].date).total_seconds()
-            if len(detections) > 1
-            else 1
-        )
+        duration = (detections[-1].date - detections[0].date).total_seconds()
+        fps = len(detections) / duration if len(detections) > 1 and duration > 0 else 1
 
         # 2. Get dimensions from first frame
         # We need the source dimensions to tell FFmpeg what size the raw input stream is
@@ -87,6 +81,8 @@ def generate_mp4(
                 cmd = [
                     ffmpeg_exe,
                     "-y",
+                    "-loglevel",
+                    "error",
                     "-f",
                     "rawvideo",  # Input format is raw pixels
                     "-vcodec",
@@ -202,7 +198,11 @@ def generate_mp4(
 
 
 def get_image(image: np.ndarray, quality: int = 100) -> bytes:
-    success, jpg = cv2.imencode(".jpg", image, (int(cv2.IMWRITE_JPEG_QUALITY), quality))
+    success, jpg = cv2.imencode(
+        ".jpg",
+        image,
+        (int(cv2.IMWRITE_JPEG_QUALITY), quality),
+    )
     if not success:
         raise ValueError("Failed to encode image")
     return jpg.tobytes()
@@ -276,22 +276,21 @@ def compress_jpg(
     min_scale: float = 0.1,
     quality_step: int = 10,
     scale_step: float = 0.9,
-) -> bytes | None:
-    img = image
+) -> bytes:
     quality = start_quality
-    jpg = get_image(img, quality)
+    jpg = get_image(image, quality)
 
     while len(jpg) > max_bytes and quality > min_quality:
         quality = max(min_quality, quality - quality_step)
-        jpg = get_image(img, quality)
+        jpg = get_image(image, quality)
 
     scale = 1.0
     while len(jpg) > max_bytes and scale > min_scale:
         scale = max(min_scale, scale * scale_step)
-        width = max(1, int(img.shape[1] * scale))
-        height = max(1, int(img.shape[0] * scale))
-        img = cv2.resize(img, (width, height), interpolation=cv2.INTER_AREA)
-        jpg = get_image(img, quality)
+        width = max(1, int(image.shape[1] * scale))
+        height = max(1, int(image.shape[0] * scale))
+        resized = cv2.resize(image, (width, height), interpolation=cv2.INTER_AREA)
+        jpg = get_image(resized, quality)
 
     return jpg
 

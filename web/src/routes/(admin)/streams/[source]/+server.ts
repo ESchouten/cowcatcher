@@ -59,7 +59,12 @@ function createStream(source: string, ffmpegPath: string, signal: AbortSignal) {
 		try {
 			reason ? controller.error(reason) : controller.close();
 		} catch (error) {
-			if (!(error instanceof TypeError && (error as NodeJS.ErrnoException).code === 'ERR_INVALID_STATE')) {
+			if (
+				!(
+					error instanceof TypeError &&
+					(error as NodeJS.ErrnoException).code === 'ERR_INVALID_STATE'
+				)
+			) {
 				throw error;
 			}
 		}
@@ -181,14 +186,17 @@ function createStream(source: string, ffmpegPath: string, signal: AbortSignal) {
 					return;
 				}
 
-				console.warn(hadFrame ? 'FFmpeg preview ended' : 'FFmpeg preview exited before first frame', {
-					source: sanitizeSourceForLogs(source),
-					exitCode: exitCode ?? 'unknown',
-					signal: signal ?? undefined,
-					hadFrame,
-					reason: stopReason ?? undefined,
-					stderr: stderr.trim() ? sanitizeTextForLogs(stderr.trim()) : undefined
-				});
+				console.warn(
+					hadFrame ? 'FFmpeg preview ended' : 'FFmpeg preview exited before first frame',
+					{
+						source: sanitizeSourceForLogs(source),
+						exitCode: exitCode ?? 'unknown',
+						signal: signal ?? undefined,
+						hadFrame,
+						reason: stopReason ?? undefined,
+						stderr: stderr.trim() ? sanitizeTextForLogs(stderr.trim()) : undefined
+					}
+				);
 				finish(new Error(hadFrame ? 'Live stream ended.' : 'Live stream unavailable.'));
 			});
 		},

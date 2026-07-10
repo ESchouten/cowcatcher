@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Badge } from '$lib/components/ui/badge';
 	import CardOverlay from '$lib/components/card-overlay.svelte';
-	import type { Metadata } from '$lib/schema';
+	import type { DetectionMetadata } from '$lib/schema';
 
 	const stageLabels = {
 		approved: 'Approved',
@@ -24,7 +24,7 @@
 	const overlayBadgeClass = 'bg-black/50 text-white';
 
 	type Props = {
-		entry: Metadata;
+		entry: DetectionMetadata;
 	};
 
 	let { entry }: Props = $props();

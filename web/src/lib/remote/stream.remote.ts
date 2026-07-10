@@ -1,20 +1,12 @@
 import { command, form, query } from '$app/server';
-import { getConfig, saveConfig } from './config.remote';
+import { getConfig } from './config.remote';
 import type { StreamMeta } from '$lib/schema';
+import { updateConfigState } from '$lib/server/config-store';
 import * as v from 'valibot';
 import { redirect } from '@sveltejs/kit';
 
 function getRedirectTarget(next: string | undefined, fallback: string) {
 	return next?.startsWith('/') && !next.startsWith('//') ? next : fallback;
-}
-
-function defaultSseEndpoint(detectorIndex: number) {
-	return `/events/${detectorIndex}`;
-}
-
-function getSseEndpoint(endpoint: string | null | undefined, detectorIndex: number) {
-	const configured = endpoint?.trim();
-	return configured || defaultSseEndpoint(detectorIndex);
 }
 
 export const getStreams = query(async () => {
@@ -36,8 +28,11 @@ export const getStreams = query(async () => {
 
 export const getStreamSettings = query(async () => {
 	const { config } = await getConfig();
-	const tracksBySource: Record<string, { tracksEndpoint: string; tracksPort: number }> = {};
-	let fallback = { tracksEndpoint: defaultSseEndpoint(0), tracksPort: 8765 };
+	const tracksBySource: Record<string, { tracksUrl: string; tracksSource: string }> = {};
+	let fallback = {
+		tracksUrl: '/api/tracks/0',
+		tracksSource: '0:0'
+	};
 
 	config.detectors.forEach((detector, detectorIndex) => {
 		const sse = detector.exporters?.sse?.[0];
@@ -45,14 +40,16 @@ export const getStreamSettings = query(async () => {
 			return;
 		}
 
-		const tracksEndpoint = getSseEndpoint(sse.endpoint, detectorIndex);
-		const tracksPort = sse.port ?? 8765;
+		const tracksUrl = `/api/tracks/${detectorIndex}`;
 		if (!Object.keys(tracksBySource).length) {
-			fallback = { tracksEndpoint, tracksPort };
+			fallback = { tracksUrl, tracksSource: `${detectorIndex}:0` };
 		}
 
-		detector.detection.source.forEach((source) => {
-			tracksBySource[source] = { tracksEndpoint, tracksPort };
+		detector.detection.source.forEach((source, sourceIndex) => {
+			tracksBySource[source] = {
+				tracksUrl,
+				tracksSource: `${detectorIndex}:${sourceIndex}`
+			};
 		});
 	});
 
@@ -70,24 +67,24 @@ export const saveStream = form(
 		next: v.optional(v.string())
 	}),
 	async ({ source, label, original, next }) => {
-		const { config, app } = await getConfig();
-		let found = false;
-		app.streams.forEach((stream) => {
-			if (stream.source === original) {
-				stream.label = label;
-				stream.source = source;
-				found = true;
+		await updateConfigState(({ config, app }) => {
+			let found = false;
+			app.streams.forEach((stream) => {
+				if (stream.source === original) {
+					stream.label = label;
+					stream.source = source;
+					found = true;
+				}
+			});
+			if (!found) {
+				app.streams.push({ source, label });
 			}
+			config.detectors.forEach((detector) => {
+				detector.detection.source = detector.detection.source.map((item) =>
+					item === original ? source : item
+				);
+			});
 		});
-		if (!found) {
-			app.streams.push({ source, label });
-		}
-		config.detectors.forEach((detector) => {
-			detector.detection.source = detector.detection.source.map((s) =>
-				s === original ? source : s
-			);
-		});
-		await saveConfig({ config, app });
 		redirect(302, getRedirectTarget(next, '/streams'));
 	}
 );
@@ -97,12 +94,12 @@ export const deleteStream = command(
 		source: v.string()
 	}),
 	async ({ source }) => {
-		const { config, app } = await getConfig();
-		app.streams = app.streams.filter((stream) => stream.source !== source);
-		config.detectors.forEach((detector) => {
-			detector.detection.source = detector.detection.source.filter((s) => s !== source);
+		await updateConfigState(({ config, app }) => {
+			app.streams = app.streams.filter((stream) => stream.source !== source);
+			config.detectors.forEach((detector) => {
+				detector.detection.source = detector.detection.source.filter((item) => item !== source);
+			});
 		});
-		await saveConfig({ config, app });
 	}
 );
 
@@ -112,13 +109,11 @@ export const reorderStream = command(
 		index1: v.number()
 	}),
 	async ({ index0, index1 }) => {
-		const { config, app } = await getConfig();
-
-		const [stream] = app.streams.splice(index0, 1);
-		if (stream) {
-			app.streams.splice(index1, 0, stream);
-		}
-
-		await saveConfig({ config, app });
+		await updateConfigState(({ app }) => {
+			const [stream] = app.streams.splice(index0, 1);
+			if (stream) {
+				app.streams.splice(index1, 0, stream);
+			}
+		});
 	}
 );

@@ -4,7 +4,7 @@ import logging
 import os
 import sys
 import tempfile
-from dataclasses import field
+from dataclasses import dataclass, field
 from importlib import util
 from pathlib import Path
 from typing import Any
@@ -12,7 +12,6 @@ from typing import Any
 from aidetector.utils.config import Config
 from aidetector.utils.version import TYPE
 from aidetector.utils.winml import WinML
-from pydantic.dataclasses import dataclass
 
 LOGGER = logging.getLogger(__name__)
 
@@ -82,7 +81,7 @@ def _patch_ultralytics_requirements() -> None:
     for module_name in ("ultralytics.nn.autobackend", "ultralytics.engine.exporter"):
         module = sys.modules.get(module_name)
         if module is not None and hasattr(module, "check_requirements"):
-            module.check_requirements = _check_requirements
+            setattr(module, "check_requirements", _check_requirements)
 
 
 def _candidate_windows_dll_dirs(root: Path) -> list[Path]:
@@ -288,17 +287,20 @@ def get_devices(config: Config, devices: list) -> list[tuple]:
 def _nvtensorrtx_options(config: Config):
     input_name = "images"
     colors = 3
-    yolo_detectors = [detector for detector in config.detectors if detector.yolo]
-    if not yolo_detectors:
+    yolo_configs = [
+        detector.yolo for detector in config.detectors if detector.yolo is not None
+    ]
+    if not yolo_configs:
         return {}
 
-    size_min = min(detector.yolo.imgsz for detector in yolo_detectors)
-    size_max = max(detector.yolo.imgsz for detector in yolo_detectors)
+    size_min = min(yolo.imgsz for yolo in yolo_configs)
+    size_max = max(yolo.imgsz for yolo in yolo_configs)
     streams_max = max(
         [1]
         + [
             len(detector.detection.source)
-            for detector in yolo_detectors
+            for detector in config.detectors
+            if detector.yolo is not None
             if isinstance(detector.detection.source, list)
         ]
     )

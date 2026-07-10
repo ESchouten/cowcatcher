@@ -23,6 +23,7 @@
 	import { Plus } from '@lucide/svelte';
 	import { Switch } from '$lib/components/ui/switch';
 	import { SvelteSet } from 'svelte/reactivity';
+	import { untrack } from 'svelte';
 
 	const EMPTY_DETECTOR = {
 		detection: {
@@ -69,7 +70,7 @@
 	);
 
 	let label = $state(originalLabel);
-	let detector = $state(initialDetector);
+	let detector = $state(untrack(() => initialDetector));
 	let visiblePreviewSources = new SvelteSet<string>();
 	let editorHasErrors = $state(false);
 	let preset = $state<string>('Custom');
@@ -255,20 +256,28 @@
 				type="multiple"
 				bind:value={
 					() =>
-						(detector.exporters.telegram ?? []).map(
-							(telegram) =>
-								telegrams.find((t) => t.token === telegram.token && t.chat === telegram.chat)?.label
-						),
+						(detector.exporters.telegram ?? []).flatMap((exporter) => {
+							const telegram = telegrams.find(
+								(item) => item.token === exporter.token && item.chat === exporter.chat
+							);
+							return telegram ? [telegram.label] : [];
+						}),
 					(selectedTelegrams) => {
-						detector.exporters.telegram = (selectedTelegrams ?? [])
-							.map((telegram) => {
-								const t = telegrams.find((t) => t.label === telegram);
-								const curr = detector.exporters.telegram?.find(
-									(t) => t.token === t.token && t.chat === t.chat
-								);
-								return { token: t!.token, chat: t!.chat, alert_every: curr?.alert_every ?? 1 };
-							})
-							.filter(Boolean);
+						const currentExporters = detector.exporters.telegram ?? [];
+						detector.exporters.telegram = (selectedTelegrams ?? []).flatMap((label) => {
+							const telegram = telegrams.find((item) => item.label === label);
+							if (!telegram) return [];
+							const current = currentExporters.find(
+								(item) => item.token === telegram.token && item.chat === telegram.chat
+							);
+							return [
+								{
+									token: telegram.token,
+									chat: telegram.chat,
+									alert_every: current?.alert_every ?? 1
+								}
+							];
+						});
 					}
 				}
 				items={telegrams.map((telegram) => ({ value: telegram.label, label: telegram.label }))}

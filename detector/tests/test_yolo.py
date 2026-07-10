@@ -20,10 +20,11 @@ class FakeScalar:
 
 
 class FakeBox:
-    def __init__(self, class_id, confidence, xyxy):
+    def __init__(self, class_id, confidence, xyxy, track_id=None):
         self.cls = FakeScalar(class_id)
         self.conf = FakeScalar(confidence)
         self.xyxy = [xyxy]
+        self.id = FakeScalar(track_id) if track_id is not None else None
 
 
 class FakeResult:
@@ -40,7 +41,7 @@ def test_yolo_result_mapper_keeps_all_boxes_above_threshold():
     )
     result = FakeResult(
         [
-            FakeBox(0, 0.8, [10, 20, 30, 40]),
+            FakeBox(0, 0.8, [10, 20, 30, 40], track_id=7),
             FakeBox(0, 0.6, [50, 60, 70, 80]),
             FakeBox(1, 0.6, [1, 2, 3, 4]),
         ]
@@ -59,6 +60,7 @@ def test_yolo_result_mapper_keeps_all_boxes_above_threshold():
     assert detections[1].confidence == {"cow": 0.8}
     assert len(detections[1].images.crops) == 2
     assert detections[1].images.crops[0].label == "cow"
+    assert detections[1].images.crops[0].track_id == 7
 
 
 class FakeModel:

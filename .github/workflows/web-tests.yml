@@ -1,0 +1,58 @@
+name: Web Tests
+
+on:
+  pull_request:
+    paths:
+      - "web/**"
+      - "config/*.schema.json"
+      - ".github/workflows/web-tests.yml"
+  push:
+    branches:
+      - "**"
+    paths:
+      - "web/**"
+      - "config/*.schema.json"
+      - ".github/workflows/web-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify generated schema types
+        run: |
+          pnpm generate:schemas
+          git diff --exit-code -- src/lib/generated
+
+      - name: Test
+        run: pnpm test
+
+      - name: Check
+        run: pnpm check
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Build
+        run: pnpm build

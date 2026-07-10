@@ -2,11 +2,11 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { query } from '$app/server';
 import * as v from 'valibot';
-import { STAGES, type Metadata, type Stage } from '$lib/schema';
+import { STAGES, type DetectionMetadata, type Stage } from '$lib/schema';
 import { DETECTIONS_DIR } from '$lib/server/shared-paths';
 
 interface DetectionPage {
-	items: Metadata[];
+	items: DetectionMetadata[];
 	hasMore: boolean;
 	nextOffset: number;
 }
@@ -30,11 +30,14 @@ async function listFolders(directoryPath: string): Promise<string[]> {
 	}
 }
 
-async function readDetection(type: string, stage: Stage, timestamp: string): Promise<Metadata> {
+async function readDetection(
+	type: string,
+	stage: Stage,
+	timestamp: string
+): Promise<DetectionMetadata> {
 	const metadataPath = path.join(DETECTIONS_DIR, type, stage, timestamp, 'metadata.json');
-	const metadata = JSON.parse(await fs.readFile(metadataPath, 'utf8')) as Metadata;
-	metadata.type = type;
-	return metadata;
+	const metadata = JSON.parse(await fs.readFile(metadataPath, 'utf8'));
+	return { ...metadata, type } as DetectionMetadata;
 }
 
 function toEpoch(value: unknown): number {
@@ -56,7 +59,10 @@ export const getTypes = query(async () => {
 	return listFolders(DETECTIONS_DIR);
 });
 
-async function listDetectionLocators(types: string[], stages: readonly Stage[]): Promise<DetectionLocator[]> {
+async function listDetectionLocators(
+	types: string[],
+	stages: readonly Stage[]
+): Promise<DetectionLocator[]> {
 	const locators: DetectionLocator[] = [];
 
 	for (const type of types) {

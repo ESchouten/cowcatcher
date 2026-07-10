@@ -1,14 +1,18 @@
 import logging
 from abc import ABC, abstractmethod
-from typing import Generic, TypeVar
+from typing import Generic, Protocol, TypeVar
 
-from aidetector.utils.config import (
+from aidetector.detection.models import (
     Detection,
-    ExporterConfig,
     confidence_matches,
 )
+from aidetector.utils.config import ExporterConfig
 
 T = TypeVar("T", bound=ExporterConfig)
+
+
+class TrackPublisher(Protocol):
+    def publish_tracks(self, source: str, detection: Detection) -> None: ...
 
 
 class Exporter(ABC, Generic[T]):
@@ -25,20 +29,25 @@ class Exporter(ABC, Generic[T]):
         best_detection: Detection,
         detections: list[Detection],
         validated: bool | None,
-    ):
-        if not confidence_matches(best_detection.confidence, self.config.confidence or 0):
+    ) -> bool:
+        if not confidence_matches(
+            best_detection.confidence, self.config.confidence or 0
+        ):
             self.logger.info("Confidence does not match")
-            return
+            return False
         if validated is False and not self.config.export_rejected:
             self.logger.info("Best detection is rejected and export_rejected is False")
-            return
-        self.filtered_export(best_detection, detections, validated)
+            return False
+        self._export(best_detection, detections, validated)
+        return True
 
     @abstractmethod
-    def filtered_export(
+    def _export(
         self,
         best_detection: Detection,
         detections: list[Detection],
         validated: bool | None,
-    ):
+    ) -> None: ...
+
+    def close(self) -> None:
         pass

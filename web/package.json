@@ -11,8 +11,10 @@
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+		"generate:schemas": "node scripts/generate-schemas.mjs",
 		"format": "prettier --write .",
 		"lint": "prettier --check . && eslint .",
+		"test": "vitest run",
 		"shadcn": "pnpx shadcn-svelte@latest update --all --yes && pnpm format"
 	},
 	"devDependencies": {
@@ -34,6 +36,7 @@
 		"eslint-plugin-svelte": "^3.15.0",
 		"formsnap": "^2.0.1",
 		"globals": "^16.5.0",
+		"json-schema-to-typescript": "^15.0.4",
 		"layerchart": "2.0.0-next.43",
 		"mode-watcher": "^1.1.0",
 		"paneforge": "^1.0.2",
@@ -54,7 +57,8 @@
 		"valibot": "^1.2.0",
 		"vaul-svelte": "1.0.0-next.7",
 		"vite": "^7.3.1",
-		"vite-plugin-devtools-json": "^1.0.0"
+		"vite-plugin-devtools-json": "^1.0.0",
+		"vitest": "^4.1.10"
 	},
 	"dependencies": {
 		"@jesterkit/exe-sveltekit": "^0.1.7",

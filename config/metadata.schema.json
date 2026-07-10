@@ -1,6 +1,101 @@
 {
-  "additionalProperties": {
-    "type": "string"
+  "$defs": {
+    "CropMetadata": {
+      "additionalProperties": false,
+      "properties": {
+        "x1": {
+          "title": "X1",
+          "type": "integer"
+        },
+        "y1": {
+          "title": "Y1",
+          "type": "integer"
+        },
+        "x2": {
+          "title": "X2",
+          "type": "integer"
+        },
+        "y2": {
+          "title": "Y2",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "x1",
+        "y1",
+        "x2",
+        "y2"
+      ],
+      "title": "CropMetadata",
+      "type": "object"
+    }
   },
+  "additionalProperties": false,
+  "properties": {
+    "timestamp": {
+      "title": "Timestamp",
+      "type": "string"
+    },
+    "validated": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Validated"
+    },
+    "confidence": {
+      "title": "Confidence",
+      "type": "number"
+    },
+    "confidences": {
+      "additionalProperties": {
+        "type": "number"
+      },
+      "title": "Confidences",
+      "type": "object"
+    },
+    "detections": {
+      "title": "Detections",
+      "type": "integer"
+    },
+    "start": {
+      "title": "Start",
+      "type": "string"
+    },
+    "end": {
+      "title": "End",
+      "type": "string"
+    },
+    "duration": {
+      "title": "Duration",
+      "type": "number"
+    },
+    "crop": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CropMetadata"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "timestamp",
+    "validated",
+    "confidence",
+    "confidences",
+    "detections",
+    "start",
+    "end",
+    "duration"
+  ],
+  "title": "DetectionMetadata",
   "type": "object"
 }

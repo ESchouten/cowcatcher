@@ -1,17 +1,20 @@
 import logging
 from dataclasses import dataclass
 from datetime import datetime
+from time import perf_counter
 from typing import Any
 
 import numpy as np
-from aidetector.utils.config import (
+from aidetector.detection.models import (
     Confidence,
     Crop,
     Detection,
     ImageSet,
+    min_confidence,
+)
+from aidetector.utils.config import (
     OnnxConfig,
     YoloConfig,
-    min_confidence,
 )
 from aidetector.utils.onnx import should_half, should_rect
 from aidetector.utils.version import TYPE
@@ -86,15 +89,28 @@ class YoloResultMapper:
         confidences: Confidence = {}
         for box in result.boxes:
             class_id = int(box.cls.item())
-            class_name, threshold = self.class_confidences[class_id]
+            class_settings = self.class_confidences.get(class_id)
+            if class_settings is None:
+                continue
+            class_name, threshold = class_settings
             confidence = float(box.conf.item())
             if confidence < threshold:
                 continue
 
             confidences[class_name] = max(confidences.get(class_name, 0), confidence)
             x1, y1, x2, y2 = map(int, box.xyxy[0])
+            raw_track_id = getattr(box, "id", None)
+            track_id = int(raw_track_id.item()) if raw_track_id is not None else None
             crops.append(
-                Crop(x1, y1, x2, y2, label=class_name, confidence=confidence)
+                Crop(
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                    label=class_name,
+                    confidence=confidence,
+                    track_id=track_id,
+                )
             )
         return crops, confidences
 
@@ -150,7 +166,7 @@ class YoloRunner:
         self.model.predictor.setup_model(model=self.model.model, verbose=False)
 
     def detect(self, frames: list[ndarray]) -> list[Any]:
-        then = datetime.now()
+        then = perf_counter()
         results = self.model.predict(**self._predict_kwargs(frames, len(frames)))
         self._log_predict_time(then, len(frames), "Detection")
         return list(results)
@@ -159,7 +175,7 @@ class YoloRunner:
         self,
         batch: dict[str, list[tuple[datetime, ndarray]]],
     ) -> list[TrackedSourceResult]:
-        then = datetime.now()
+        then = perf_counter()
         prepared = self._tracking_batch(batch)
         if prepared is None:
             return []
@@ -180,7 +196,7 @@ class YoloRunner:
         self._log_predict_time(then, len(frames), "Tracking")
 
         tracked: list[TrackedSourceResult] = []
-        for source, result in zip(sources, results):
+        for source, result in zip(sources, results, strict=True):
             frames_for_source = active_frames.get(source)
             if frames_for_source is None:
                 continue
@@ -246,16 +262,14 @@ class YoloRunner:
         if hasattr(predictor, "vid_path"):
             delattr(predictor, "vid_path")
 
-    def _log_predict_time(
-        self, then: datetime, frame_count: int, operation: str
-    ) -> None:
-        now = datetime.now()
+    def _log_predict_time(self, then: float, frame_count: int, operation: str) -> None:
+        elapsed = perf_counter() - then
         logger.info(
             "%s time: %dms for %d frame(s). Avg: %dms",
             operation,
-            (now - then).total_seconds() * 1000,
+            elapsed * 1000,
             frame_count,
-            (now - then).total_seconds() * 1000 / frame_count,
+            elapsed * 1000 / frame_count,
         )
 
     def detections_from_result(

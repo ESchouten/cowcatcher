@@ -118,10 +118,10 @@
 						label={stream.label}
 						source={stream.source}
 						showTracks
-						tracksEndpoint={streamSettings.tracksBySource[stream.source]?.tracksEndpoint ??
-							streamSettings.tracksEndpoint}
-						tracksPort={streamSettings.tracksBySource[stream.source]?.tracksPort ??
-							streamSettings.tracksPort}
+						tracksUrl={streamSettings.tracksBySource[stream.source]?.tracksUrl ??
+							streamSettings.tracksUrl}
+						tracksSource={streamSettings.tracksBySource[stream.source]?.tracksSource ??
+							streamSettings.tracksSource}
 					/>
 				{:else}
 					<div class="relative aspect-video w-full bg-black">

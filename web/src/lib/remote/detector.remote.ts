@@ -2,7 +2,7 @@ import { command, query } from '$app/server';
 import { getConfig, getConfigSchema } from './config.remote';
 import * as v from 'valibot';
 import type { DetectorConfig } from '$lib/schema';
-import { saveConfig } from '$lib/server/shared-paths';
+import { updateConfigState } from '$lib/server/config-store';
 
 export const getDetectorPresets = query(async () => {
 	const response = await fetch(
@@ -66,20 +66,19 @@ export const saveDetector = command(
 		})
 	}),
 	async ({ original, detector, meta }) => {
-		const { config, app } = await getConfig();
-		if (original) {
-			const index = app.detectors.findIndex((detector) => detector.label === original);
-			config.detectors[index] = detector;
-			app.detectors[index] = meta;
-		} else {
-			const lengthDiff = config.detectors.length - app.detectors.length;
-			for (let i = 0; i < lengthDiff; i++) {
-				app.detectors.push({ label: 'Detector ' + (app.detectors.length + 1) });
+		await updateConfigState(({ config, app }) => {
+			if (original) {
+				const index = app.detectors.findIndex((item) => item.label === original);
+				if (index < 0) {
+					throw new Error(`Detector '${original}' no longer exists`);
+				}
+				config.detectors[index] = detector;
+				app.detectors[index] = meta;
+			} else {
+				config.detectors.push(detector);
+				app.detectors.push(meta);
 			}
-			config.detectors.push(detector);
-			app.detectors.push(meta);
-		}
-		await saveConfig({ config, app });
+		});
 	}
 );
 
@@ -88,10 +87,13 @@ export const deleteDetector = command(
 		label: v.string()
 	}),
 	async ({ label }) => {
-		const { config, app } = await getConfig();
-		const index = app.detectors.findIndex((detector) => detector.label === label);
-		config.detectors.splice(index, 1);
-		app.detectors.splice(index, 1);
-		await saveConfig({ config, app });
+		await updateConfigState(({ config, app }) => {
+			const index = app.detectors.findIndex((detector) => detector.label === label);
+			if (index < 0) {
+				throw new Error(`Detector '${label}' no longer exists`);
+			}
+			config.detectors.splice(index, 1);
+			app.detectors.splice(index, 1);
+		});
 	}
 );

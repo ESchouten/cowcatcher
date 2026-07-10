@@ -1,130 +1,129 @@
 import logging
-from threading import Condition, Thread
-from time import sleep
+from threading import Condition, Event, Lock, Thread
 
 from ultralytics.data.loaders import LoadStreams
 
-from .collector import FrameCollector
+from aidetector.sources.collector import FrameCollector
 
 logger = logging.getLogger(__name__)
 
 
 class StreamBatcher:
-    running: bool
-    threads: list[Thread]
-    collector: FrameCollector
-    loaders: list[LoadStreams | None]
-    missing_sources: set[str]
-    condition: Condition
-
     def __init__(self, sources: list[str], width: int = 1280, retention: int = 1):
-        logger.info("Initializing StreamBatcher with %d sources", len(sources))
-        self.running = True
-        self.sources = sources
-        self.loaders = [None] * len(sources)
+        self.sources = list(sources)
         self.collector = FrameCollector(width, retention)
-        self.threads = []
-        self.missing_sources = set()
+        self.loaders: list[LoadStreams | None] = [None] * len(sources)
+        self.missing_sources: set[str] = set()
         self.condition = Condition()
+        self._loaders_lock = Lock()
+        self._stop = Event()
+        self.threads = [
+            Thread(
+                target=self._run_loader,
+                args=(index, source),
+                name=f"stream-{index}",
+                daemon=True,
+            )
+            for index, source in enumerate(self.sources)
+        ]
+        logger.info("Starting %d stream loader(s)", len(self.threads))
+        for thread in self.threads:
+            thread.start()
 
-        def run_loader(index: int, source: str):
-            logger.info("Stream loader started for %s", source)
-            while self.running:
-                try:
-                    loader = LoadStreams(source)
+    def _run_loader(self, index: int, source: str) -> None:
+        logger.info("Stream loader %d started", index)
+        while not self._stop.is_set():
+            loader: LoadStreams | None = None
+            try:
+                loader = LoadStreams(source)
+                with self._loaders_lock:
                     self.loaders[index] = loader
-                    for _, imgs, _ in loader:
-                        if not self.running:
-                            break
-                        if imgs is None:
-                            continue
-                        with self.condition:
-                            self.collector.add(source, imgs[0])
-                            logger.debug(
-                                "Received frame %d from %s",
-                                self.collector.frames[source],
-                                source,
-                            )
-                            self.condition.notify()
-                except Exception:
-                    if self.running:
-                        logger.exception("Stream loader crashed for %s", source)
-                finally:
+                for _, images, _ in loader:
+                    if self._stop.is_set():
+                        break
+                    if images is None:
+                        continue
+                    with self.condition:
+                        self.collector.add(source, images[0])
+                        logger.debug(
+                            "Buffered %d frame(s) from source %d",
+                            len(self.collector.frames[source]),
+                            index,
+                        )
+                        self.condition.notify()
+            except Exception:
+                if not self._stop.is_set():
+                    logger.exception("Stream loader %d crashed", index)
+            finally:
+                if loader is not None:
                     try:
                         loader.close()
                     except Exception:
                         logger.info("Failed to close stream loader", exc_info=True)
-                sleep(1)
-            logger.info("Stream loader finished for %s", source)
-
-        for index, source in enumerate(self.sources):
-            thread = Thread(target=run_loader, args=(index, source), daemon=True)
-            thread.start()
-            self.threads.append(thread)
+                with self._loaders_lock:
+                    self.loaders[index] = None
+            self._stop.wait(1)
+        logger.info("Stream loader %d finished", index)
 
     def stop(self) -> None:
-        logger.info("Stopping StreamBatcher with %d active sources", len(self.sources))
-        self.running = False
+        if self._stop.is_set():
+            return
+        logger.info("Stopping %d stream loader(s)", len(self.sources))
+        self._stop.set()
         with self.condition:
             self.condition.notify_all()
-        for loader in self.loaders:
+        with self._loaders_lock:
+            loaders = list(self.loaders)
+        for loader in loaders:
+            if loader is None:
+                continue
             try:
-                if loader is not None:
-                    loader.close()
+                loader.close()
             except Exception:
                 logger.info("Failed to close stream loader", exc_info=True)
-        self.loaders = []
         for thread in self.threads:
-            thread.join()
-        self.threads = []
-        logger.info("StreamBatcher stopped")
+            thread.join(timeout=5)
+            if thread.is_alive():
+                logger.warning("Stream loader %s did not stop in time", thread.name)
 
     def is_ready(self) -> bool:
         return len(self.collector.frames) == len(self.sources) or any(
             count >= 2 for count in self.collector.counts().values()
         )
 
-    def log_missing(self, present_sources: set[str]):
-        new_missing = set(self.sources) - present_sources
-        intersect = new_missing & self.missing_sources
-        if intersect:
-            logger.warning("Missing frames from sources: %s", sorted(intersect))
-        self.missing_sources = new_missing
+    def _log_missing(self, present_sources: set[str]) -> None:
+        missing = set(self.sources) - present_sources
+        repeatedly_missing = missing & self.missing_sources
+        if repeatedly_missing:
+            indexes = [
+                index
+                for index, source in enumerate(self.sources)
+                if source in repeatedly_missing
+            ]
+            logger.warning("Missing frames from source indexes: %s", indexes)
+        self.missing_sources = missing
 
     def __iter__(self):
-        logger.debug("StreamBatcher iterator started")
-        while self.running:
+        while not self._stop.is_set():
             with self.condition:
-                while not self.is_ready():
-                    self.condition.wait()
-                snapshot = dict(self.collector.frames)
-                self.collector.clear()
+                self.condition.wait_for(lambda: self._stop.is_set() or self.is_ready())
+                if self._stop.is_set():
+                    return
+                snapshot = self.collector.take()
             if snapshot:
-                logger.debug(
-                    "Yielding batch with %d frames from %d sources",
-                    len(snapshot),
-                    len(self.sources),
-                )
-                self.log_missing(set(snapshot.keys()))
+                self._log_missing(set(snapshot))
                 yield snapshot
-        logger.debug("StreamBatcher iterator stopped")
-
-
-ultralytics_logger = logging.getLogger("ultralytics")
 
 
 class _SuppressLoadStreamsFilter(logging.Filter):
-    filter_messages = [
+    messages = (
         "Waiting for stream ",
         " (no detections), ",
         " postprocess per image at shape (",
-    ]
+    )
 
     def filter(self, record: logging.LogRecord) -> bool:
-        message = record.getMessage()
-        if not message:
-            return False
-        return not any(part in message for part in self.filter_messages)
+        return not any(message in record.getMessage() for message in self.messages)
 
 
-ultralytics_logger.addFilter(_SuppressLoadStreamsFilter())
+logging.getLogger("ultralytics").addFilter(_SuppressLoadStreamsFilter())
