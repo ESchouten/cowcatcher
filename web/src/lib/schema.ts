@@ -11,7 +11,11 @@ export interface IdentityResult {
 
 export interface DazzleCowConfig {
 	model: string;
-	gallery: string;
+	gallery?: string;
+	enrollment?: {
+		database: string;
+		identity_count?: number;
+	};
 	owl_model?: string;
 	sam_model?: string;
 	owl_interval?: number;
@@ -22,6 +26,7 @@ export interface DazzleCowConfig {
 	neighbors?: number;
 	min_area_ratio?: number;
 	max_area_ratio?: number;
+	margin?: number;
 	nms_iou?: number;
 	track_samples?: number;
 	track_iou?: number;

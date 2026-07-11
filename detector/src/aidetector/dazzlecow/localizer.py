@@ -27,6 +27,7 @@ class LocalizerSettings:
     max_area_ratio: float
     nms_iou: float
     device: str
+    margin: float = 0
 
     @classmethod
     def from_config(cls, config: DazzleCowConfig) -> "LocalizerSettings":
@@ -39,6 +40,7 @@ class LocalizerSettings:
             config.max_area_ratio,
             config.nms_iou,
             config.device,
+            config.margin,
         )
 
 
@@ -84,13 +86,14 @@ class DazzleCowLocalizer:
             self.settings.min_area_ratio,
             self.settings.max_area_ratio,
             self.settings.nms_iou,
+            self.settings.margin,
         )
         return boxes, scores
 
 
-class DazzleCowVideoLocalizer(DazzleCowLocalizer):
+class DazzleCowVideoLocalizer:
     def __init__(self, settings: LocalizerSettings, owl_interval: float):
-        super().__init__(settings)
+        self.localizer = DazzleCowLocalizer(settings)
         from ultralytics.models.sam import SAM2VideoPredictor
 
         self.owl_interval = timedelta(seconds=max(0, owl_interval))
@@ -108,9 +111,9 @@ class DazzleCowVideoLocalizer(DazzleCowLocalizer):
                 "verbose": False,
                 "save": False,
             },
-            _callbacks=self.sam.callbacks,
+            _callbacks=self.localizer.sam.callbacks,
         )
-        self.predictor.setup_model(model=self.sam.model, verbose=False)
+        self.predictor.setup_model(model=self.localizer.sam.model, verbose=False)
 
     def locate(
         self,
@@ -124,7 +127,7 @@ class DazzleCowVideoLocalizer(DazzleCowLocalizer):
             or date - self.last_owl.get(source, datetime.min) >= self.owl_interval
         )
         if should_relocate:
-            detected_boxes, scores = self.boxes(frame)
+            detected_boxes, scores = self.localizer.boxes(frame)
             self.last_owl[source] = date
             if detected_boxes:
                 boxes = detected_boxes
@@ -240,8 +243,11 @@ def filtered_boxes(
     min_area_ratio: float,
     max_area_ratio: float,
     nms_iou: float,
+    margin: float = 0,
 ) -> tuple[list[list[int]], list[float]]:
     height, width = image_shape
+    margin_x = width * margin
+    margin_y = height * margin
     candidates = []
     for output in outputs:
         box = output["box"]
@@ -253,7 +259,13 @@ def filtered_boxes(
         ]
         area = max(0, coords[2] - coords[0]) * max(0, coords[3] - coords[1])
         ratio = area / max(1, width * height)
-        if min_area_ratio <= ratio <= max_area_ratio:
+        center_x = (coords[0] + coords[2]) / 2
+        center_y = (coords[1] + coords[3]) / 2
+        if (
+            min_area_ratio <= ratio <= max_area_ratio
+            and margin_x <= center_x <= width - margin_x
+            and margin_y <= center_y <= height - margin_y
+        ):
             candidates.append((coords, float(output["score"])))
 
     candidates.sort(key=lambda item: item[1], reverse=True)

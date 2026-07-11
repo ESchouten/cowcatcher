@@ -1,13 +1,18 @@
 {
     "detection": {
         "source": [
-            "rtsp://camera/stream"
+            "rtsp://camera-1/stream",
+            "rtsp://camera-2/stream"
         ],
         "interval": 1
     },
     "dazzlecow": {
         "model": "hf-hub:BVRA/MegaDescriptor-S-224",
-        "gallery": "identities/cows.npz",
+        "enrollment": {
+            "database": "identities/cows.sqlite",
+            "identity_count": 25
+        },
+        "margin": 0.2,
         "owl_interval": 1,
         "track_samples": 5
     },

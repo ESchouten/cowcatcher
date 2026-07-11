@@ -1,11 +1,13 @@
+from __future__ import annotations
+
 import logging
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from threading import Thread
 from time import sleep
+from typing import TYPE_CHECKING
 
-from aidetector.dazzlecow.runner import DazzleCowRunner
 from aidetector.detection.validator import Validator
 from aidetector.detection.yolo import YoloRunner
 from aidetector.exporters.disk import DiskExporter
@@ -35,6 +37,9 @@ from aidetector.utils.config import (
 from numpy import ndarray
 from typing_extensions import Self
 
+if TYPE_CHECKING:
+    from aidetector.dazzlecow.runner import DazzleCowRunner
+
 
 class Detector:
     logger = logging.getLogger(__name__)
@@ -43,7 +48,7 @@ class Detector:
     yolo_config: YoloConfig | None
     yolo_runner: YoloRunner | None
     dazzlecow_config: DazzleCowConfig | None
-    dazzlecow_runner: DazzleCowRunner | None
+    dazzlecow_runner: "DazzleCowRunner | None"
     source_provider: SourceProvider
     validator: Validator
     exporters: list[Exporter]
@@ -75,11 +80,12 @@ class Detector:
             if yolo_config is not None
             else None
         )
-        self.dazzlecow_runner = (
-            DazzleCowRunner(dazzlecow_config)
-            if dazzlecow_config is not None
-            else None
-        )
+        if dazzlecow_config is not None:
+            from aidetector.dazzlecow.runner import DazzleCowRunner
+
+            self.dazzlecow_runner = DazzleCowRunner(dazzlecow_config)
+        else:
+            self.dazzlecow_runner = None
         self.validator = validator
         self.exporters = exporters
         self.running = True

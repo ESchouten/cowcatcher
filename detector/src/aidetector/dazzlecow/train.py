@@ -25,6 +25,7 @@ from torchvision import transforms
 
 logger = logging.getLogger(__name__)
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+AUGMENTED_IMAGE_SIZE = 128
 
 
 @dataclass(frozen=True)
@@ -36,17 +37,24 @@ class CowImage:
 
 
 class PublicCowDataset(Dataset):
-    def __init__(self, samples: list[CowImage]):
+    def __init__(
+        self,
+        samples: list[CowImage],
+        *,
+        image_size: int = 256,
+        augment: bool = True,
+    ):
         if not samples:
             raise ValueError("No cow images found")
         self.samples = samples
+        self.augment = augment
         identities = sorted({sample.identity for sample in samples})
         self.label_by_identity = {
             identity: index for index, identity in enumerate(identities)
         }
         self.base_transform = transforms.Compose(
             [
-                transforms.Resize((256, 256)),
+                transforms.Resize((image_size, image_size)),
                 transforms.ToTensor(),
                 transforms.Normalize(IMAGENET_MEAN[:, 0, 0], IMAGENET_STD[:, 0, 0]),
             ]
@@ -54,7 +62,7 @@ class PublicCowDataset(Dataset):
         self.augment_transform = transforms.Compose(
             [
                 transforms.RandomResizedCrop(
-                    128,
+                    min(image_size, AUGMENTED_IMAGE_SIZE),
                     scale=(0.95, 1.0),
                     ratio=(0.95, 1.05),
                 ),
@@ -82,11 +90,11 @@ class PublicCowDataset(Dataset):
     def __getitem__(self, index: int):
         sample = self.samples[index]
         image = Image.open(sample.path).convert("RGB")
-        return (
-            self.base_transform(image),
-            self.augment_transform(image),
-            self.label_by_identity[sample.identity],
-        )
+        base = self.base_transform(image)
+        label = self.label_by_identity[sample.identity]
+        if not self.augment:
+            return base, label
+        return base, self.augment_transform(image), label
 
 
 class IdentityBatchSampler(Sampler[list[int]]):
@@ -120,7 +128,11 @@ class IdentityBatchSampler(Sampler[list[int]]):
             batch = []
             for identity in identities:
                 indices = self.indices_by_identity[identity]
-                select = generator.sample if len(indices) >= self.images_per_identity else generator.choices
+                select = (
+                    generator.sample
+                    if len(indices) >= self.images_per_identity
+                    else generator.choices
+                )
                 batch.extend(select(indices, k=self.images_per_identity))
             generator.shuffle(batch)
             yield batch
@@ -136,9 +148,13 @@ class TimestampBatchSampler(Sampler[list[int]]):
         for index, sample in enumerate(samples):
             timestamp = sample.timestamp or sample.path.stem
             groups[timestamp].setdefault(sample.identity, index)
-        self.groups = [list(group.values()) for group in groups.values() if len(group) > 1]
+        self.groups = [
+            list(group.values()) for group in groups.values() if len(group) > 1
+        ]
         if not self.groups:
-            raise ValueError("Paper training requires timestamps containing multiple cows")
+            raise ValueError(
+                "Paper training requires timestamps containing multiple cows"
+            )
         self.seed = seed
         self.epoch = 0
 
@@ -231,9 +247,7 @@ def supervised_nt_xent(
     logits = logits.masked_fill(self_mask, torch.finfo(logits.dtype).min)
     log_probabilities = logits - torch.logsumexp(logits, dim=1, keepdim=True)
     positive_count = positive_mask.sum(dim=1).clamp_min(1)
-    return -(
-        (log_probabilities * positive_mask).sum(dim=1) / positive_count
-    ).mean()
+    return -((log_probabilities * positive_mask).sum(dim=1) / positive_count).mean()
 
 
 def train(
@@ -251,6 +265,9 @@ def train(
     training_mode: str,
     device: str,
     seed: int,
+    architecture: str = "resnet50",
+    image_size: int = 256,
+    resume: Path | None = None,
 ) -> None:
     random.seed(seed)
     torch.manual_seed(seed)
@@ -259,7 +276,7 @@ def train(
         for specification in dataset_specs
         for sample in discover_public_dataset(specification)
     ]
-    dataset = PublicCowDataset(samples)
+    dataset = PublicCowDataset(samples, image_size=image_size)
     sampler = (
         TimestampBatchSampler(samples, seed=seed)
         if training_mode == "paper"
@@ -270,10 +287,16 @@ def train(
             seed=seed,
         )
     )
+    target_device = resolve_device(device)
+    pin_memory = target_device.type == "cuda"
+    mixed_precision = target_device.type in {"cuda", "mps"}
+    scaler = torch.amp.GradScaler(target_device.type, enabled=mixed_precision)
     loader = DataLoader(
         dataset,
         batch_sampler=sampler,
         num_workers=workers,
+        persistent_workers=workers > 0,
+        pin_memory=pin_memory,
     )
     validation_dataset = (
         PublicCowDataset(
@@ -281,13 +304,18 @@ def train(
                 sample
                 for specification in validation_specs
                 for sample in discover_public_dataset(specification)
-            ]
+            ],
+            image_size=image_size,
+            augment=False,
         )
         if validation_specs
         else None
     )
-    target_device = resolve_device(device)
-    model = create_encoder_model(feature_dim=128, pretrained=True).to(target_device)
+    model = create_encoder_model(
+        feature_dim=128,
+        pretrained=True,
+        architecture=architecture,
+    ).to(target_device)
     optimizer = (
         torch.optim.SGD(model.parameters(), lr=learning_rate)
         if training_mode == "paper"
@@ -304,6 +332,24 @@ def train(
         paper_miner = miners.MultiSimilarityMiner()
     output.parent.mkdir(parents=True, exist_ok=True)
 
+    best_accuracy = -1.0
+    stale_epochs = 0
+    start_epoch = 0
+    if resume is not None:
+        payload = torch.load(resume, map_location="cpu", weights_only=False)
+        if payload.get("architecture") != architecture:
+            raise ValueError("Resume checkpoint architecture does not match")
+        if int(payload.get("image_size", 256)) != image_size:
+            raise ValueError("Resume checkpoint image size does not match")
+        model.load_state_dict(payload["state_dict"])
+        optimizer.load_state_dict(payload["optimizer_state_dict"])
+        scaler.load_state_dict(payload["scaler_state_dict"])
+        start_epoch = int(payload["epoch"])
+        best_accuracy = float(payload.get("best_accuracy", -1.0))
+        stale_epochs = int(payload.get("stale_epochs", 0))
+        sampler.epoch = start_epoch
+        logger.info("Resuming DazzleCow after epoch %d", start_epoch)
+
     logger.info(
         "Training DazzleCow on %d images from %d identities with %s sampling (%d batches)",
         len(dataset),
@@ -311,68 +357,103 @@ def train(
         training_mode,
         len(sampler),
     )
-    best_accuracy = -1.0
-    stale_epochs = 0
-    for epoch in range(epochs):
+    completed_epoch = start_epoch
+    for epoch in range(start_epoch, epochs):
         model.train()
-        total_loss = 0.0
-        for base, augmented, labels in loader:
-            base = base.to(target_device)
-            augmented = augmented.to(target_device)
-            embeddings = torch.cat((model(base), model(augmented)))
-            if training_mode == "paper":
-                labels = torch.arange(len(base), device=target_device)
-                pair_labels = torch.cat((labels, labels))
-                hard_pairs = paper_miner(embeddings, pair_labels)
-                loss = paper_loss(embeddings, pair_labels, hard_pairs)
-            else:
-                labels = labels.to(target_device)
-                pair_labels = torch.cat((labels, labels))
-                loss = supervised_nt_xent(embeddings, pair_labels, temperature)
+        epoch_losses = []
+        for batch_index, (base, augmented, labels) in enumerate(loader, 1):
+            base = base.to(target_device, non_blocking=pin_memory)
+            augmented = augmented.to(target_device, non_blocking=pin_memory)
+            with torch.autocast(
+                target_device.type,
+                dtype=torch.float16,
+                enabled=mixed_precision,
+            ):
+                embeddings = torch.cat((model(base), model(augmented)))
+                if training_mode == "paper":
+                    labels = torch.arange(len(base), device=target_device)
+                    pair_labels = torch.cat((labels, labels))
+                    hard_pairs = paper_miner(embeddings, pair_labels)
+                    loss = paper_loss(embeddings, pair_labels, hard_pairs)
+                else:
+                    labels = labels.to(target_device)
+                    pair_labels = torch.cat((labels, labels))
+                    loss = supervised_nt_xent(embeddings, pair_labels, temperature)
 
             optimizer.zero_grad(set_to_none=True)
-            loss.backward()
-            optimizer.step()
-            total_loss += float(loss.detach())
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+            epoch_losses.append(loss.detach())
+            if batch_index % 100 == 0:
+                logger.info(
+                    "Epoch %d/%d batch %d/%d",
+                    epoch + 1,
+                    epochs,
+                    batch_index,
+                    len(loader),
+                )
 
-        loss = total_loss / max(1, len(loader))
+        loss = float(torch.stack(epoch_losses).mean().cpu())
+        completed_epoch = epoch + 1
         if validation_dataset is None:
             logger.info("Epoch %d/%d loss %.4f", epoch + 1, epochs, loss)
-            continue
-
-        accuracy = validation_accuracy(
-            model,
-            validation_dataset,
-            target_device,
-            clustering=training_mode == "paper",
-        )
-        logger.info(
-            "Epoch %d/%d loss %.4f validation %s %.1f%%",
-            epoch + 1,
-            epochs,
-            loss,
-            "Hungarian" if training_mode == "paper" else "top-1",
-            accuracy * 100,
-        )
-        if accuracy > best_accuracy:
-            best_accuracy = accuracy
-            stale_epochs = 0
-            save_checkpoint(
-                model,
-                output,
-                dataset_specs,
-                epoch=epoch + 1,
-                validation_accuracy=accuracy,
-            )
         else:
-            stale_epochs += 1
-            if patience and stale_epochs >= patience:
-                logger.info("Stopping after %d epochs without improvement", patience)
-                break
+            accuracy = validation_accuracy(
+                model,
+                validation_dataset,
+                target_device,
+                clustering=training_mode == "paper",
+                workers=workers,
+            )
+            logger.info(
+                "Epoch %d/%d loss %.4f validation %s %.1f%%",
+                epoch + 1,
+                epochs,
+                loss,
+                "Hungarian" if training_mode == "paper" else "top-1",
+                accuracy * 100,
+            )
+            if accuracy > best_accuracy:
+                best_accuracy = accuracy
+                stale_epochs = 0
+                save_checkpoint(
+                    model,
+                    output,
+                    dataset_specs,
+                    architecture=architecture,
+                    image_size=image_size,
+                    epoch=epoch + 1,
+                    validation_accuracy=accuracy,
+                )
+            else:
+                stale_epochs += 1
+
+        save_training_checkpoint(
+            model,
+            optimizer,
+            scaler,
+            output.with_name(f"{output.stem}.last{output.suffix}"),
+            architecture=architecture,
+            image_size=image_size,
+            epoch=completed_epoch,
+            best_accuracy=best_accuracy,
+            stale_epochs=stale_epochs,
+        )
+        if validation_dataset is not None and patience and stale_epochs >= patience:
+            logger.info("Stopping after %d epochs without improvement", patience)
+            break
 
     if validation_dataset is not None and best_accuracy >= 0:
         return
-    save_checkpoint(model, output, dataset_specs, epoch=epochs)
+    save_checkpoint(
+        model,
+        output,
+        dataset_specs,
+        architecture=architecture,
+        image_size=image_size,
+        epoch=completed_epoch,
+    )
 
 
 def save_checkpoint(
@@ -380,17 +461,18 @@ def save_checkpoint(
     output: Path,
     dataset_specs: list[str],
     *,
+    architecture: str,
+    image_size: int,
     epoch: int,
     validation_accuracy: float | None = None,
 ) -> None:
     torch.save(
         {
-            "architecture": "resnet50",
+            "architecture": architecture,
             "feature_dim": 128,
-            "image_size": 256,
+            "image_size": image_size,
             "state_dict": {
-                name: value.detach().cpu()
-                for name, value in model.state_dict().items()
+                name: value.detach().cpu() for name, value in model.state_dict().items()
             },
             "datasets": dataset_specs,
             "epoch": epoch,
@@ -398,6 +480,47 @@ def save_checkpoint(
         },
         output,
     )
+
+
+def save_training_checkpoint(
+    model,
+    optimizer,
+    scaler,
+    output: Path,
+    *,
+    architecture: str,
+    image_size: int,
+    epoch: int,
+    best_accuracy: float,
+    stale_epochs: int,
+) -> None:
+    torch.save(
+        {
+            "architecture": architecture,
+            "image_size": image_size,
+            "state_dict": {
+                name: value.detach().cpu() for name, value in model.state_dict().items()
+            },
+            "optimizer_state_dict": _to_cpu(optimizer.state_dict()),
+            "scaler_state_dict": scaler.state_dict(),
+            "epoch": epoch,
+            "best_accuracy": best_accuracy,
+            "stale_epochs": stale_epochs,
+        },
+        output,
+    )
+
+
+def _to_cpu(value):
+    if isinstance(value, torch.Tensor):
+        return value.detach().cpu()
+    if isinstance(value, dict):
+        return {key: _to_cpu(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_to_cpu(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_to_cpu(item) for item in value)
+    return value
 
 
 def validation_accuracy(
@@ -408,14 +531,30 @@ def validation_accuracy(
     neighbors: int = 5,
     batch_size: int = 64,
     clustering: bool = False,
+    workers: int = 0,
 ) -> float:
-    loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+    pin_memory = device.type == "cuda"
+    loader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=workers,
+        persistent_workers=workers > 0,
+        pin_memory=pin_memory,
+    )
     embeddings = []
     labels = []
+    mixed_precision = device.type in {"cuda", "mps"}
     model.eval()
     with torch.inference_mode():
-        for base, _, batch_labels in loader:
-            embeddings.append(model(base.to(device)).cpu())
+        for base, batch_labels in loader:
+            with torch.autocast(
+                device.type,
+                dtype=torch.float16,
+                enabled=mixed_precision,
+            ):
+                batch_embeddings = model(base.to(device, non_blocking=pin_memory))
+            embeddings.append(batch_embeddings.float().cpu())
             labels.extend(int(label) for label in batch_labels)
     embeddings = torch.cat(embeddings)
     if clustering:
@@ -478,7 +617,9 @@ def build_gallery(
         if not valid:
             continue
         embeddings.extend(encoder.embed([image for _, image in valid]))
-        identities.extend(sample.identity.removeprefix("identity:") for sample, _ in valid)
+        identities.extend(
+            sample.identity.removeprefix("identity:") for sample, _ in valid
+        )
     if not embeddings:
         raise ValueError(f"No readable gallery images found in {source}")
     save_gallery(output, np.asarray(embeddings, dtype=np.float32), identities)
@@ -632,8 +773,24 @@ def write_failure_image(
         2,
         cv2.LINE_AA,
     )
-    cv2.putText(image, "Query", (12, header + 28), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-    cv2.putText(image, "Nearest predicted gallery", (size + 12, header + 28), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+    cv2.putText(
+        image,
+        "Query",
+        (12, header + 28),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.7,
+        (255, 255, 255),
+        2,
+    )
+    cv2.putText(
+        image,
+        "Nearest predicted gallery",
+        (size + 12, header + 28),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.7,
+        (255, 255, 255),
+        2,
+    )
     cv2.imwrite(str(path), image)
 
 
@@ -681,6 +838,13 @@ def train_main() -> None:
         default="supervised",
     )
     parser.add_argument("--device", default="auto")
+    parser.add_argument(
+        "--architecture",
+        choices=("resnet18", "resnet50"),
+        default="resnet50",
+    )
+    parser.add_argument("--image-size", type=int, default=256)
+    parser.add_argument("--resume", type=Path)
     parser.add_argument("--seed", type=int, default=84000)
     arguments = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
@@ -698,6 +862,9 @@ def train_main() -> None:
         training_mode=arguments.training_mode,
         device=arguments.device,
         seed=arguments.seed,
+        architecture=arguments.architecture,
+        image_size=arguments.image_size,
+        resume=arguments.resume,
     )
 
 

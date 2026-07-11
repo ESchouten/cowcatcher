@@ -1,8 +1,13 @@
 detections
+/identities
+/detector/identities
+/web/identities
 datasets
 config.json
 config.**.json
-yolo11**
+yolo*.pt
+yolo*.onnx
+sam*.pt
 app.json
 !example/config.json
 !web/src/routes/(admin)/detections

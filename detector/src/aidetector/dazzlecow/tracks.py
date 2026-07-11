@@ -12,14 +12,28 @@ from numpy import ndarray
 class _Track:
     track_id: int
     box: tuple[int, int, int, int]
+    first_frame: int
     last_frame: int
     embeddings: deque[ndarray]
+    embedding_sum: ndarray
+    observations: int = 0
+
+
+@dataclass(frozen=True)
+class TrackletSnapshot:
+    source: str
+    track_id: int
+    first_frame: int
+    last_frame: int
+    observations: int
+    embedding: ndarray
+    preview: ndarray
 
 
 class TrackIdentityAggregator:
     def __init__(
         self,
-        gallery: DazzleCowGallery,
+        gallery: DazzleCowGallery | None,
         *,
         samples: int,
         iou_threshold: float,
@@ -42,7 +56,7 @@ class TrackIdentityAggregator:
         source: str,
         candidates: list[CowCandidate],
         embeddings: ndarray,
-    ) -> None:
+    ) -> list[TrackletSnapshot]:
         if len(candidates) != len(embeddings):
             raise ValueError("Cow candidates and embeddings differ in length")
 
@@ -57,6 +71,7 @@ class TrackIdentityAggregator:
             del tracks[track_id]
 
         assignments = self._assign(candidates, tracks)
+        snapshots = []
         for index, (candidate, embedding) in enumerate(
             zip(candidates, embeddings, strict=True)
         ):
@@ -67,18 +82,36 @@ class TrackIdentityAggregator:
                     self._next_id_by_source[source],
                     _box(candidate),
                     frame,
+                    frame,
                     deque(maxlen=self.samples),
+                    np.zeros_like(embedding, dtype=np.float32),
                 )
                 tracks[track.track_id] = track
 
+            embedding = _normalize(embedding)
             track.box = _box(candidate)
             track.last_frame = frame
-            track.embeddings.append(_normalize(embedding))
+            track.embeddings.append(embedding)
+            track.embedding_sum += embedding
+            track.observations += 1
             candidate.crop.track_id = track.track_id
-            if len(track.embeddings) == self.samples:
+            if len(track.embeddings) == self.samples and self.gallery is not None:
                 candidate.crop.identity = self.gallery.match(
                     _normalize(np.mean(track.embeddings, axis=0))
                 )
+            if track.observations % self.samples == 0:
+                snapshots.append(
+                    TrackletSnapshot(
+                        source,
+                        track.track_id,
+                        track.first_frame,
+                        track.last_frame,
+                        track.observations,
+                        _normalize(track.embedding_sum),
+                        candidate.image,
+                    )
+                )
+        return snapshots
 
     def _assign(
         self,
@@ -109,6 +142,8 @@ class TrackIdentityAggregator:
 def _box(candidate: CowCandidate) -> tuple[int, int, int, int]:
     crop = candidate.crop
     return crop.x1, crop.y1, crop.x2, crop.y2
+
+
 def _normalize(embedding: ndarray) -> ndarray:
     embedding = np.asarray(embedding, dtype=np.float32)
     norm = np.linalg.norm(embedding)

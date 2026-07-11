@@ -131,14 +131,32 @@
           "type": "integer"
         },
         "model": {
-          "format": "path",
           "title": "Model",
           "type": "string"
         },
         "gallery": {
-          "format": "path",
-          "title": "Gallery",
-          "type": "string"
+          "anyOf": [
+            {
+              "format": "path",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Gallery"
+        },
+        "enrollment": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DazzleCowEnrollmentConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "owl_model": {
           "default": "google/owlv2-large-patch14-ensemble",
@@ -185,6 +203,11 @@
           "title": "Max Area Ratio",
           "type": "number"
         },
+        "margin": {
+          "default": 0,
+          "title": "Margin",
+          "type": "number"
+        },
         "nms_iou": {
           "default": 0.5,
           "title": "Nms Iou",
@@ -218,10 +241,35 @@
         }
       },
       "required": [
-        "model",
-        "gallery"
+        "model"
       ],
       "title": "DazzleCowConfig",
+      "type": "object"
+    },
+    "DazzleCowEnrollmentConfig": {
+      "properties": {
+        "database": {
+          "format": "path",
+          "title": "Database",
+          "type": "string"
+        },
+        "identity_count": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Identity Count"
+        }
+      },
+      "required": [
+        "database"
+      ],
+      "title": "DazzleCowEnrollmentConfig",
       "type": "object"
     },
     "DetectionConfig": {

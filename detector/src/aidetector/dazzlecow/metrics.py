@@ -23,8 +23,8 @@ def clustering_metrics(
         ) from error
 
     embeddings = _normalize(np.asarray(embeddings, dtype=np.float32))
-    labels = np.asarray(labels)
-    unique_labels, encoded_labels = np.unique(labels, return_inverse=True)
+    labels_array = np.asarray(labels)
+    unique_labels, encoded_labels = np.unique(labels_array, return_inverse=True)
     if len(embeddings) < 2 or len(unique_labels) < 2:
         raise ValueError("Clustering metrics require at least two identities")
 

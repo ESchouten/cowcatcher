@@ -83,12 +83,10 @@ def open_set_metrics(
     identities = sorted(
         {sample.identity.removeprefix("identity:") for sample, _ in encoded}
     )
-    missing = set(identities) - set(gallery.identities)
-    if missing:
-        raise ValueError(f"Test identities missing from gallery: {sorted(missing)}")
     if len(set(gallery.identities)) < 2:
         raise ValueError("Open-set evaluation requires at least two gallery identities")
 
+    gallery_identities = set(gallery.identities)
     raw_gallery = DazzleCowGallery.from_data(
         gallery.embeddings,
         gallery.identities,
@@ -96,32 +94,46 @@ def open_set_metrics(
         match_threshold=-1,
     )
     known = []
-    unknown: list[tuple[str, float]] = []
+    unknown: list[tuple[str, float, float]] = []
     for identity in identities:
         identity_samples = [
             embedding
             for sample, embedding in encoded
             if sample.identity.removeprefix("identity:") == identity
         ]
-        without_identity = gallery.identities != identity
-        held_out_gallery = DazzleCowGallery.from_data(
-            gallery.embeddings[without_identity],
-            gallery.identities[without_identity],
-            neighbors=gallery.neighbors,
-            match_threshold=-1,
-        )
         for embedding in identity_samples:
-            known_score = raw_gallery.score(embedding)
-            unknown_score = held_out_gallery.score(embedding)
-            known.append(
-                (
-                    known_score.identity == identity,
-                    known_score.similarity,
-                    known_score.margin,
+            score = raw_gallery.score(embedding)
+            if identity in gallery_identities:
+                known.append(
+                    (score.identity == identity, score.similarity, score.margin)
                 )
+            else:
+                unknown.append((identity, score.similarity, score.margin))
+
+    if not known:
+        raise ValueError("Open-set evaluation requires known test identities")
+
+    unknown_source = "observed"
+    if not unknown:
+        unknown_source = "leave_one_identity_out"
+        for identity in identities:
+            without_identity = gallery.identities != identity
+            held_out_gallery = DazzleCowGallery.from_data(
+                gallery.embeddings[without_identity],
+                gallery.identities[without_identity],
+                neighbors=gallery.neighbors,
+                match_threshold=-1,
             )
-            unknown.append(
-                (identity, unknown_score.similarity, unknown_score.margin)
+            unknown.extend(
+                (identity, score.similarity, score.margin)
+                for score in map(
+                    held_out_gallery.score,
+                    (
+                        embedding
+                        for sample, embedding in encoded
+                        if sample.identity.removeprefix("identity:") == identity
+                    ),
+                )
             )
 
     sweep = [
@@ -161,14 +173,15 @@ def open_set_metrics(
                 configured_threshold,
                 configured_margin,
             ),
-            "known_top1_accuracy": sum(correct for correct, _, _ in known)
-            / len(known),
+            "known_top1_accuracy": sum(correct for correct, _, _ in known) / len(known),
+            "known_samples": len(known),
+            "unknown_samples": len(unknown),
+            "unknown_identities": len({identity for identity, _, _ in unknown}),
+            "unknown_source": unknown_source,
             "mean_unknown_similarity": float(
                 np.mean([similarity for _, similarity, _ in unknown])
             ),
-            "mean_unknown_margin": float(
-                np.mean([margin for _, _, margin in unknown])
-            ),
+            "mean_unknown_margin": float(np.mean([margin for _, _, margin in unknown])),
             "per_identity": {
                 identity: {
                     "unknown_rejection_rate": sum(
@@ -196,7 +209,7 @@ def open_set_metrics(
                         )
                     ),
                 }
-                for identity in identities
+                for identity in sorted({current for current, _, _ in unknown})
             },
         },
         sweep,
@@ -270,8 +283,12 @@ def parse_model(value: str) -> tuple[str, Path]:
         name, raw_path = value.split("=", 1)
     except ValueError as error:
         raise ValueError("Compared model must be NAME=PATH") from error
-    if not name or not all(character.isalnum() or character in "-_" for character in name):
-        raise ValueError("Compared model name may only contain letters, numbers, - and _")
+    if not name or not all(
+        character.isalnum() or character in "-_" for character in name
+    ):
+        raise ValueError(
+            "Compared model name may only contain letters, numbers, - and _"
+        )
     return name, Path(raw_path).expanduser().resolve()
 
 
@@ -317,7 +334,15 @@ def run_benchmark(
     track_samples: list[int],
     device: str,
     seed: int,
+    calibration_gallery_source: Path | None = None,
+    calibration_query_source: Path | None = None,
+    architecture: str = "resnet50",
+    image_size: int = 256,
 ) -> dict[str, Any]:
+    if (calibration_gallery_source is None) != (calibration_query_source is None):
+        raise ValueError(
+            "Calibration gallery and query sources must be configured together"
+        )
     output = output.expanduser().resolve()
     if output.exists() and any(output.iterdir()):
         raise ValueError(f"Benchmark output directory is not empty: {output}")
@@ -329,6 +354,11 @@ def run_benchmark(
         "gallery": gallery_source,
         "test": test_source,
     }
+    if calibration_gallery_source is not None and calibration_query_source is not None:
+        sources.update(
+            calibration_gallery=calibration_gallery_source,
+            calibration_query=calibration_query_source,
+        )
     manifests = {
         name: write_manifest(source, output / "manifests" / f"{name}.json")
         for name, source in sources.items()
@@ -350,6 +380,8 @@ def run_benchmark(
         "match_margin": match_margin,
         "track_samples": track_samples,
         "device": device,
+        "architecture": architecture,
+        "image_size": image_size,
     }
     report: dict[str, Any] = {
         "settings": settings,
@@ -376,11 +408,51 @@ def run_benchmark(
         training_mode=training_mode,
         device=device,
         seed=seed,
+        architecture=architecture,
+        image_size=image_size,
     )
 
     models = {"trained": trained_model, **comparisons}
     for name, model in models.items():
         logger.info("Evaluating benchmark model %s", name)
+        effective_threshold = match_threshold
+        effective_margin = match_margin
+        calibration = None
+        if (
+            calibration_gallery_source is not None
+            and calibration_query_source is not None
+        ):
+            calibration_gallery = output / "calibration-galleries" / f"{name}.npz"
+            build_gallery(
+                model,
+                calibration_gallery_source,
+                calibration_gallery,
+                batch_size=batch_size,
+                device=device,
+            )
+            calibration_encoded = encode_source(
+                model,
+                calibration_query_source,
+                batch_size=batch_size,
+                device=device,
+            )
+            calibration, calibration_sweep = open_set_metrics(
+                calibration_encoded,
+                DazzleCowGallery(
+                    calibration_gallery,
+                    neighbors=neighbors,
+                    match_threshold=-1,
+                ),
+                match_threshold,
+                match_margin,
+            )
+            effective_threshold = calibration["best_balanced_threshold"]
+            effective_margin = calibration["best_balanced_margin"]
+            _write_csv(
+                output / "calibration" / f"{name}.csv",
+                calibration_sweep,
+            )
+
         gallery = output / "galleries" / f"{name}.npz"
         build_gallery(
             model,
@@ -397,8 +469,8 @@ def run_benchmark(
             failures_directory=output / "failures" / name,
             batch_size=batch_size,
             neighbors=neighbors,
-            match_threshold=match_threshold,
-            match_margin=match_margin,
+            match_threshold=effective_threshold,
+            match_margin=effective_margin,
             device=device,
         )
         encoded = encode_source(
@@ -410,23 +482,20 @@ def run_benchmark(
         identity_gallery = DazzleCowGallery(
             gallery,
             neighbors=neighbors,
-            match_threshold=match_threshold,
-            match_margin=match_margin,
+            match_threshold=effective_threshold,
+            match_margin=effective_margin,
         )
         open_set, threshold_sweep = open_set_metrics(
             encoded,
             identity_gallery,
-            match_threshold,
-            match_margin,
+            effective_threshold,
+            effective_margin,
         )
         report["metrics"][name] = {
             "frame": frame_metrics,
             "clustering": clustering_metrics(
                 np.asarray([embedding for _, embedding in encoded]),
-                [
-                    sample.identity.removeprefix("identity:")
-                    for sample, _ in encoded
-                ],
+                [sample.identity.removeprefix("identity:") for sample, _ in encoded],
                 neighbors=neighbors,
             ),
             "track_aggregation": track_aggregation_metrics(
@@ -435,6 +504,9 @@ def run_benchmark(
                 track_samples,
             ),
             "open_set": open_set,
+            "calibration": calibration,
+            "applied_threshold": effective_threshold,
+            "applied_margin": effective_margin,
         }
         _write_csv(output / "open-set" / f"{name}.csv", threshold_sweep)
         _write_json(output / "benchmark.json", report)
@@ -464,6 +536,8 @@ def main() -> None:
     parser.add_argument("--validation", type=Path, required=True)
     parser.add_argument("--gallery", type=Path, required=True)
     parser.add_argument("--test", type=Path, required=True)
+    parser.add_argument("--calibration-gallery", type=Path)
+    parser.add_argument("--calibration-query", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(
         "--compare",
@@ -490,8 +564,19 @@ def main() -> None:
     parser.add_argument("--match-margin", type=float, default=0)
     parser.add_argument("--track-samples", type=int, nargs="+", default=[1, 3, 5, 8])
     parser.add_argument("--device", default="auto")
+    parser.add_argument(
+        "--architecture",
+        choices=("resnet18", "resnet50"),
+        default="resnet50",
+    )
+    parser.add_argument("--image-size", type=int, default=256)
     parser.add_argument("--seed", type=int, default=84000)
     arguments = parser.parse_args()
+
+    if (arguments.calibration_gallery is None) != (arguments.calibration_query is None):
+        parser.error(
+            "--calibration-gallery and --calibration-query must be used together"
+        )
 
     comparisons = dict(parse_model(value) for value in arguments.compare)
     if "trained" in comparisons:
@@ -519,12 +604,16 @@ def main() -> None:
         track_samples=arguments.track_samples,
         device=arguments.device,
         seed=arguments.seed,
+        calibration_gallery_source=arguments.calibration_gallery,
+        calibration_query_source=arguments.calibration_query,
+        architecture=arguments.architecture,
+        image_size=arguments.image_size,
     )
     for name, metrics in report["metrics"].items():
-        frame = metrics["frame"]
+        open_set = metrics["open_set"]
         print(
-            f"{name}: {frame['accuracy']:.1%} frame top-1, "
-            f"best balanced threshold "
-            f"{metrics['open_set']['best_balanced_threshold']:.3f}, margin "
-            f"{metrics['open_set']['best_balanced_margin']:.3f}"
+            f"{name}: {open_set['known_top1_accuracy']:.1%} known top-1, "
+            f"{open_set['configured']['unknown_rejection_rate']:.1%} unknown "
+            f"rejection at threshold {metrics['applied_threshold']:.3f}, "
+            f"margin {metrics['applied_margin']:.3f}"
         )

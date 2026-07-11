@@ -103,9 +103,16 @@ class YoloConfig(ModelConfig):
 
 
 @dataclass(kw_only=True)
+class DazzleCowEnrollmentConfig:
+    database: Path
+    identity_count: int | None = None
+
+
+@dataclass(kw_only=True)
 class DazzleCowConfig(ModelConfig):
-    model: Path
-    gallery: Path
+    model: str
+    gallery: Path | None = None
+    enrollment: DazzleCowEnrollmentConfig | None = None
     owl_model: str = "google/owlv2-large-patch14-ensemble"
     sam_model: str = "sam2.1_l.pt"
     owl_interval: float = 1
@@ -116,12 +123,19 @@ class DazzleCowConfig(ModelConfig):
     neighbors: int = 5
     min_area_ratio: float = 0.025
     max_area_ratio: float = 0.075
+    margin: float = 0
     nms_iou: float = 0.5
     track_samples: int = 5
     track_iou: float = 0.2
     track_max_age: int = 10
     device: Literal["auto", "cpu", "cuda", "mps"] = "auto"
     frames_min: int = 1
+
+    def __post_init__(self) -> None:
+        if self.gallery is None and self.enrollment is None:
+            raise ValueError("DazzleCow requires a gallery or enrollment database")
+        if not 0 <= self.margin < 0.5:
+            raise ValueError("DazzleCow margin must be between 0 and 0.5")
 
 
 @dataclass(kw_only=True)

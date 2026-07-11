@@ -49,4 +49,4 @@ jobs:
         run: uv run python -m compileall src/aidetector
 
       - name: Pytest
-        run: uv run pytest
+        run: uv run --extra dazzlecow pytest

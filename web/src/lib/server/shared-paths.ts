@@ -15,6 +15,7 @@ function getRuntimeDataDirectory(): string {
 }
 
 const runtimeDataDirectory = getRuntimeDataDirectory();
+export const DATA_DIR = runtimeDataDirectory;
 
 export const CONFIG_PATH = path.resolve(
 	runtimeDataDirectory,

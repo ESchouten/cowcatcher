@@ -35,12 +35,16 @@
 		exporters: { sse: [{}] } as { telegram?: TelegramConfig[]; sse?: SSEConfig[] }
 	};
 	const EMPTY_DAZZLECOW = {
-		model: '',
-		gallery: '',
+		model: 'hf-hub:BVRA/MegaDescriptor-S-224',
+		enrollment: {
+			database: 'identities/cows.sqlite',
+			identity_count: undefined as number | undefined
+		},
 		owl_interval: 1,
 		confidence: 0.3,
 		match_threshold: 0.75,
 		match_margin: 0,
+		margin: 0.2,
 		track_samples: 5,
 		frames_min: 1
 	};
@@ -60,7 +64,15 @@
 						...EMPTY_DETECTOR.yolo,
 						...detector?.yolo
 					},
-			dazzlecow: detector?.dazzlecow ? { ...EMPTY_DAZZLECOW, ...detector.dazzlecow } : undefined,
+			dazzlecow: detector?.dazzlecow
+				? {
+						...EMPTY_DAZZLECOW,
+						...detector.dazzlecow,
+						enrollment: detector.dazzlecow.enrollment
+							? { ...EMPTY_DAZZLECOW.enrollment, ...detector.dazzlecow.enrollment }
+							: undefined
+					}
+				: undefined,
 			exporters: {
 				...EMPTY_DETECTOR.exporters,
 				...detector?.exporters
@@ -146,6 +158,17 @@
 		}
 	}
 
+	function setDazzleCowMode(value: string) {
+		if (!detector.dazzlecow) return;
+		if (value === 'enrollment') {
+			delete detector.dazzlecow.gallery;
+			detector.dazzlecow.enrollment ??= { ...EMPTY_DAZZLECOW.enrollment };
+		} else {
+			delete detector.dazzlecow.enrollment;
+			detector.dazzlecow.gallery ??= 'identities/cows.npz';
+		}
+	}
+
 	async function handleSave(event: SubmitEvent) {
 		event.preventDefault();
 		if (editorHasErrors) {
@@ -156,6 +179,12 @@
 				delete telegram.alert_every;
 			}
 		});
+		if (detector.dazzlecow?.enrollment) {
+			delete detector.dazzlecow.gallery;
+			if (!detector.dazzlecow.enrollment.identity_count) {
+				delete detector.dazzlecow.enrollment.identity_count;
+			}
+		}
 
 		await saveDetector({
 			original: originalLabel || undefined,
@@ -377,13 +406,51 @@
 		{#if detector.dazzlecow}
 			<div class="mt-2 grid grid-cols-2 gap-6">
 				<div class="flex flex-col gap-2">
-					<Label for="dazzlecow-model">Encoder checkpoint</Label>
+					<Label for="dazzlecow-model">Identity model</Label>
 					<Input id="dazzlecow-model" bind:value={detector.dazzlecow.model} />
 				</div>
 				<div class="flex flex-col gap-2">
-					<Label for="dazzlecow-gallery">Identity gallery</Label>
-					<Input id="dazzlecow-gallery" bind:value={detector.dazzlecow.gallery} />
+					<Label for="dazzlecow-mode">Identity setup</Label>
+					<Select.Root
+						type="single"
+						value={detector.dazzlecow.enrollment ? 'enrollment' : 'gallery'}
+						onValueChange={setDazzleCowMode}
+					>
+						<Select.Trigger id="dazzlecow-mode" class="w-full">
+							{detector.dazzlecow.enrollment ? 'Scan cattle' : 'Existing gallery'}
+						</Select.Trigger>
+						<Select.Content>
+							<Select.Item value="enrollment" label="Scan cattle" />
+							<Select.Item value="gallery" label="Existing gallery" />
+						</Select.Content>
+					</Select.Root>
 				</div>
+				{#if detector.dazzlecow.enrollment}
+					<div class="flex flex-col gap-2">
+						<Label for="dazzlecow-database">Identity database</Label>
+						<Input
+							id="dazzlecow-database"
+							required
+							bind:value={detector.dazzlecow.enrollment.database}
+						/>
+					</div>
+					<div class="flex flex-col gap-2">
+						<Label for="dazzlecow-identity-count">Number of cattle</Label>
+						<Input
+							id="dazzlecow-identity-count"
+							type="number"
+							min="1"
+							step="1"
+							placeholder="Optional"
+							bind:value={detector.dazzlecow.enrollment.identity_count}
+						/>
+					</div>
+				{:else}
+					<div class="flex flex-col gap-2">
+						<Label for="dazzlecow-gallery">Identity gallery</Label>
+						<Input id="dazzlecow-gallery" required bind:value={detector.dazzlecow.gallery} />
+					</div>
+				{/if}
 				<div class="flex flex-col gap-2">
 					<Label for="dazzlecow-confidence">Cow confidence</Label>
 					<Input
@@ -403,6 +470,17 @@
 						min="0"
 						step="0.1"
 						bind:value={detector.dazzlecow.owl_interval}
+					/>
+				</div>
+				<div class="flex flex-col gap-2">
+					<Label for="dazzlecow-margin">Frame margin</Label>
+					<Input
+						id="dazzlecow-margin"
+						type="number"
+						min="0"
+						max="0.49"
+						step="0.01"
+						bind:value={detector.dazzlecow.margin}
 					/>
 				</div>
 				<div class="flex flex-col gap-2">

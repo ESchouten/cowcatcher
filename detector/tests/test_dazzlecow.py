@@ -1,6 +1,8 @@
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
+import cv2
 import numpy as np
 import pandas as pd
 import pytest
@@ -13,9 +15,27 @@ from aidetector.dazzlecow.benchmark import (
     write_manifest,
 )
 from aidetector.dazzlecow.calves8 import normalized_box, select_annotations
-from aidetector.dazzlecow.folds import create_fold
+from aidetector.dazzlecow.enrollment import (
+    EnrollmentTrack,
+    cluster_known_count,
+    cluster_tracklets,
+    cluster_tracks,
+    export_named_gallery,
+    finalize_enrollment,
+    match_camera_tracks,
+    save_enrollment,
+)
+from aidetector.dazzlecow.enrollment_benchmark import (
+    LabeledTrack,
+    enrollment_metrics,
+    known_count_metrics,
+    select_enrollment_threshold,
+    verification_metrics,
+)
+from aidetector.dazzlecow.folds import create_fold, create_identity_disjoint_fold
 from aidetector.dazzlecow.gallery import DazzleCowGallery, save_gallery
 from aidetector.dazzlecow.metrics import clustering_metrics
+from aidetector.dazzlecow.model import DazzleCowEncoder, create_encoder_model
 from aidetector.dazzlecow.localizer import (
     CowCandidate,
     DazzleCowLocalizer,
@@ -25,7 +45,8 @@ from aidetector.dazzlecow.localizer import (
     masked_candidate,
 )
 from aidetector.dazzlecow.runner import DazzleCowRunner
-from aidetector.dazzlecow.tracks import TrackIdentityAggregator
+from aidetector.dazzlecow.tracklet_store import TrackletStore
+from aidetector.dazzlecow.tracks import TrackIdentityAggregator, TrackletSnapshot
 from aidetector.dazzlecow.video_benchmark import (
     GroundTruth,
     VideoObservation,
@@ -35,9 +56,11 @@ from aidetector.dazzlecow.prepare import centered_candidate
 from aidetector.dazzlecow.train import (
     CowImage,
     IdentityBatchSampler,
+    PublicCowDataset,
     TimestampBatchSampler,
     discover_public_dataset,
     leave_one_out_knn_accuracy,
+    save_training_checkpoint,
     supervised_nt_xent,
 )
 from aidetector.utils.config import Crop, IdentityResult
@@ -54,6 +77,18 @@ def test_filtered_boxes_applies_area_filter_and_nms():
 
     assert boxes == [[10, 10, 50, 50]]
     assert scores == [0.9]
+
+
+def test_filtered_boxes_excludes_centers_inside_margin():
+    outputs = [
+        {"score": 0.9, "box": {"xmin": 0, "ymin": 20, "xmax": 10, "ymax": 40}},
+        {"score": 0.8, "box": {"xmin": 20, "ymin": 20, "xmax": 40, "ymax": 40}},
+    ]
+
+    boxes, scores = filtered_boxes(outputs, (100, 100), 0, 1, 0.5, margin=0.1)
+
+    assert boxes == [[20, 20, 40, 40]]
+    assert scores == [0.8]
 
 
 def test_masked_candidate_uses_frame_dc_component_as_background():
@@ -129,10 +164,16 @@ def test_video_localizer_relocalizes_periodically_and_isolates_sources():
     localizer.scores = {}
     localizer.predictor = Predictor()
     box_calls = []
-    localizer.boxes = lambda frame: (
-        box_calls.append(frame.shape) or [[0, 0, 4, 4]],
-        [0.9],
-    )
+    localizer.localizer = type(
+        "Localizer",
+        (),
+        {
+            "boxes": lambda _self, frame: (
+                box_calls.append(frame.shape) or [[0, 0, 4, 4]],
+                [0.9],
+            )
+        },
+    )()
     frame = np.zeros((4, 4, 3), dtype=np.uint8)
     start = datetime(2026, 1, 1)
 
@@ -199,6 +240,296 @@ def test_gallery_rejects_wrong_embedding_dimension(tmp_path):
 
     with pytest.raises(ValueError, match="dimension does not match"):
         gallery.match(np.array([1, 0, 0], dtype=np.float32))
+
+
+def test_encoder_loads_checkpoint_architecture(tmp_path):
+    model = create_encoder_model(
+        feature_dim=16,
+        pretrained=False,
+        architecture="resnet18",
+    )
+    checkpoint = tmp_path / "resnet18.pt"
+    torch.save(
+        {
+            "architecture": "resnet18",
+            "feature_dim": 16,
+            "image_size": 128,
+            "state_dict": model.state_dict(),
+        },
+        checkpoint,
+    )
+
+    encoder = DazzleCowEncoder(checkpoint, device="cpu")
+
+    assert encoder.feature_dim == 16
+    assert encoder.image_size == 128
+    assert encoder.model.fc[-1].out_features == 16
+
+
+def test_training_checkpoint_preserves_resume_state(tmp_path):
+    model = torch.nn.Linear(2, 2)
+    optimizer = torch.optim.AdamW(model.parameters())
+    scaler = torch.amp.GradScaler("cpu", enabled=False)
+    optimizer.zero_grad()
+    model(torch.ones(1, 2)).sum().backward()
+    optimizer.step()
+    checkpoint = tmp_path / "model.last.pt"
+
+    save_training_checkpoint(
+        model,
+        optimizer,
+        scaler,
+        checkpoint,
+        architecture="resnet50",
+        image_size=256,
+        epoch=3,
+        best_accuracy=0.8,
+        stale_epochs=1,
+    )
+    payload = torch.load(checkpoint, weights_only=False)
+
+    assert payload["epoch"] == 3
+    assert payload["best_accuracy"] == 0.8
+    assert payload["stale_epochs"] == 1
+    assert payload["optimizer_state_dict"]["state"]
+
+
+def test_enrollment_clusters_mutual_similar_tracks(tmp_path):
+    tracks = [
+        EnrollmentTrack("camera-1/1", np.asarray([1, 0])),
+        EnrollmentTrack("camera-2/7", np.asarray([0.99, 0.01])),
+        EnrollmentTrack("camera-1/2", np.asarray([0, 1])),
+        EnrollmentTrack("camera-3/4", np.asarray([0.01, 0.99])),
+    ]
+
+    assignments = cluster_tracks(
+        tracks,
+        similarity_threshold=0.95,
+        neighbors=2,
+    )
+    save_enrollment(tmp_path / "gallery.npz", tracks, assignments)
+
+    assert assignments["camera-1/1"] == assignments["camera-2/7"]
+    assert assignments["camera-1/2"] == assignments["camera-3/4"]
+    assert len(set(assignments.values())) == 2
+    assert (tmp_path / "gallery.npz").is_file()
+    assert (tmp_path / "gallery.json").is_file()
+
+
+def test_enrollment_respects_cannot_link_constraints():
+    tracks = [
+        EnrollmentTrack(
+            "camera/1",
+            np.asarray([1, 0]),
+            cannot_link=frozenset({"camera/2"}),
+        ),
+        EnrollmentTrack("camera/2", np.asarray([1, 0])),
+    ]
+
+    assignments = cluster_tracks(
+        tracks,
+        similarity_threshold=0.95,
+        neighbors=1,
+    )
+
+    assert assignments["camera/1"] != assignments["camera/2"]
+
+
+def test_enrollment_clusters_non_overlapping_track_fragments():
+    tracks = [
+        EnrollmentTrack("a-1", np.asarray([1.0, 0.0])),
+        EnrollmentTrack("a-2", np.asarray([0.99, 0.01])),
+        EnrollmentTrack(
+            "b-1",
+            np.asarray([0.0, 1.0]),
+            cannot_link=frozenset({"b-2"}),
+        ),
+        EnrollmentTrack("b-2", np.asarray([0.01, 0.99])),
+    ]
+
+    assignments = cluster_tracklets(tracks, similarity_threshold=0.9)
+
+    assert assignments["a-1"] == assignments["a-2"]
+    assert assignments["b-1"] != assignments["b-2"]
+
+
+def test_enrollment_tracklet_clustering_rejects_ambiguous_match():
+    tracks = [
+        EnrollmentTrack("a", np.asarray([1.0, 0.0])),
+        EnrollmentTrack("b", np.asarray([0.99, 0.01])),
+        EnrollmentTrack("c", np.asarray([0.98, 0.02])),
+    ]
+
+    assignments = cluster_tracklets(
+        tracks,
+        similarity_threshold=0.9,
+        margin_threshold=0.01,
+    )
+
+    assert len(set(assignments.values())) == 3
+
+
+def test_enrollment_known_count_respects_cannot_links():
+    tracks = [
+        EnrollmentTrack(
+            "a-1",
+            np.asarray([1.0, 0.0]),
+            cannot_link=frozenset({"b-1"}),
+        ),
+        EnrollmentTrack("b-1", np.asarray([0.99, 0.01])),
+        EnrollmentTrack("a-2", np.asarray([0.9, 0.1])),
+        EnrollmentTrack("b-2", np.asarray([0.0, 1.0])),
+    ]
+
+    assignments = cluster_known_count(tracks, 2)
+
+    assert len(set(assignments.values())) == 2
+    assert assignments["a-1"] != assignments["b-1"]
+
+
+def test_enrollment_matches_tracks_one_to_one_between_cameras():
+    tracks = [
+        EnrollmentTrack("a-1", np.asarray([1, 0])),
+        EnrollmentTrack("b-1", np.asarray([0, 1])),
+        EnrollmentTrack("a-2", np.asarray([0.9, 0.1])),
+        EnrollmentTrack("b-2", np.asarray([0.1, 0.9])),
+    ]
+
+    assignments = match_camera_tracks(
+        tracks,
+        {"a-1": "1", "b-1": "1", "a-2": "2", "b-2": "2"},
+        similarity_threshold=0.5,
+    )
+
+    assert assignments["a-1"] == assignments["a-2"]
+    assert assignments["b-1"] == assignments["b-2"]
+    assert assignments["a-1"] != assignments["b-1"]
+
+
+def test_enrollment_rejects_ambiguous_camera_match():
+    tracks = [
+        EnrollmentTrack("a-1", np.asarray([1.0, 0.0])),
+        EnrollmentTrack("b-1", np.asarray([0.99, 0.01])),
+        EnrollmentTrack("a-2", np.asarray([1.0, 0.02])),
+    ]
+
+    assignments = match_camera_tracks(
+        tracks,
+        {"a-1": "1", "b-1": "1", "a-2": "2"},
+        similarity_threshold=0.5,
+        margin_threshold=0.1,
+    )
+
+    assert assignments["a-2"] not in {
+        assignments["a-1"],
+        assignments["b-1"],
+    }
+
+
+def test_enrollment_metrics_separate_merges_from_fragmentation():
+    tracks = [
+        LabeledTrack(EnrollmentTrack("a-1", np.asarray([1, 0])), "a", "1"),
+        LabeledTrack(EnrollmentTrack("a-2", np.asarray([1, 0])), "a", "2"),
+        LabeledTrack(EnrollmentTrack("b-1", np.asarray([0, 1])), "b", "1"),
+        LabeledTrack(EnrollmentTrack("b-2", np.asarray([0, 1])), "b", "2"),
+    ]
+
+    perfect = enrollment_metrics(
+        tracks,
+        {"a-1": "1", "a-2": "1", "b-1": "2", "b-2": "2"},
+    )
+    split_and_merged = enrollment_metrics(
+        tracks,
+        {"a-1": "1", "a-2": "2", "b-1": "2", "b-2": "3"},
+    )
+
+    assert perfect["pair_f1"] == 1
+    assert perfect["merge_errors"] == 0
+    assert perfect["fragmented_identities"] == 0
+    assert split_and_merged["merge_errors"] == 1
+    assert split_and_merged["fragmented_identities"] == 2
+
+
+def test_enrollment_verification_reports_safe_recall():
+    tracks = [
+        LabeledTrack(EnrollmentTrack("a-1", np.asarray([1.0, 0.0])), "a", "1"),
+        LabeledTrack(EnrollmentTrack("a-2", np.asarray([0.9, 0.1])), "a", "2"),
+        LabeledTrack(EnrollmentTrack("b-1", np.asarray([0.0, 1.0])), "b", "1"),
+        LabeledTrack(EnrollmentTrack("b-2", np.asarray([0.1, 0.9])), "b", "2"),
+    ]
+
+    metrics = verification_metrics(tracks)
+
+    assert metrics["roc_auc"] == 1
+    assert metrics["safe_positive_recall"] == 1
+
+
+def test_enrollment_known_count_clusters_separable_tracks():
+    tracks = [
+        LabeledTrack(EnrollmentTrack("a-1", np.asarray([1.0, 0.0])), "a", "1"),
+        LabeledTrack(EnrollmentTrack("a-2", np.asarray([0.9, 0.1])), "a", "2"),
+        LabeledTrack(EnrollmentTrack("b-1", np.asarray([0.0, 1.0])), "b", "1"),
+        LabeledTrack(EnrollmentTrack("b-2", np.asarray([0.1, 0.9])), "b", "2"),
+    ]
+
+    metrics = known_count_metrics(tracks)
+
+    assert metrics["complete_identity_rate"] == 1
+    assert metrics["merge_errors"] == 0
+
+
+def test_enrollment_threshold_prioritizes_zero_merges():
+    selected = select_enrollment_threshold(
+        [
+            {
+                "threshold": 0.8,
+                "margin": 0.0,
+                "pair_f1": 0.9,
+                "pair_precision": 0.9,
+                "pair_recall": 0.9,
+                "merge_errors": 1,
+                "clusters": 9,
+            },
+            {
+                "threshold": 0.9,
+                "margin": 0.1,
+                "pair_f1": 0.7,
+                "pair_precision": 1.0,
+                "pair_recall": 0.6,
+                "merge_errors": 0,
+                "clusters": 12,
+            },
+        ]
+    )
+
+    assert selected["threshold"] == 0.9
+    assert selected["margin"] == 0.1
+
+
+def test_enrollment_threshold_applies_margin_buffer():
+    selected = select_enrollment_threshold(
+        [
+            {
+                "threshold": 0.8,
+                "margin": 0.01,
+                "pair_precision": 1.0,
+                "pair_recall": 0.8,
+                "merge_errors": 0,
+                "clusters": 10,
+            },
+            {
+                "threshold": 0.8,
+                "margin": 0.02,
+                "pair_precision": 1.0,
+                "pair_recall": 0.7,
+                "merge_errors": 0,
+                "clusters": 11,
+            },
+        ],
+        margin_buffer=0.01,
+    )
+
+    assert selected["margin"] == 0.02
 
 
 def test_runner_attaches_gallery_identity():
@@ -271,6 +602,126 @@ def test_track_identity_uses_aggregated_embeddings():
     assert np.linalg.norm(calls[0]) == pytest.approx(1)
 
 
+def test_track_identity_returns_cumulative_snapshot():
+    tracks = TrackIdentityAggregator(
+        None,
+        samples=2,
+        iou_threshold=0.2,
+        max_age=10,
+    )
+    snapshots = []
+    for embedding in ([1, 0], [1, 0], [0, 1], [0, 1]):
+        candidate = CowCandidate(
+            Crop(0, 0, 10, 10),
+            np.zeros((10, 10, 3), dtype=np.uint8),
+        )
+        snapshots.extend(tracks.apply("camera", [candidate], np.asarray([embedding])))
+
+    assert [snapshot.observations for snapshot in snapshots] == [2, 4]
+    assert snapshots[-1].embedding == pytest.approx(np.asarray([1, 1]) / np.sqrt(2))
+
+
+def test_tracklet_store_finalizes_and_names_enrollment(tmp_path):
+    database = tmp_path / "identities" / "cows.sqlite"
+    gallery = tmp_path / "identities" / "cows.npz"
+    preview = np.zeros((10, 10, 3), dtype=np.uint8)
+    with TrackletStore(database, session="scan") as store:
+        for source, track_id, embedding in (
+            ("camera-1", 1, [1, 0]),
+            ("camera-1", 2, [0, 1]),
+            ("camera-2", 1, [0.99, 0.01]),
+            ("camera-2", 2, [0.01, 0.99]),
+        ):
+            store.upsert(
+                TrackletSnapshot(
+                    source,
+                    track_id,
+                    1,
+                    5,
+                    5,
+                    np.asarray(embedding),
+                    preview,
+                )
+            )
+
+        assignments = finalize_enrollment(store, gallery)
+        identities = store.identities()
+        first_identity = str(identities[0]["identity"])
+        store.set_animal_number(first_identity, "NL-123")
+        export_named_gallery(store, gallery)
+
+        assert len(assignments) == 4
+        assert len(set(assignments.values())) == 2
+        assert len(identities) == 2
+        assert store.preview(next(iter(assignments))) is not None
+
+    data = np.load(gallery)
+    assert "NL-123" in data["identities"]
+
+
+def test_tracklet_store_accepts_detector_worker_thread(tmp_path):
+    store = TrackletStore(tmp_path / "cows.sqlite", session="scan")
+    snapshot = TrackletSnapshot(
+        "camera-1",
+        1,
+        1,
+        3,
+        3,
+        np.asarray([1, 0]),
+        np.zeros((10, 10, 3), dtype=np.uint8),
+    )
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        tracklet_id = executor.submit(store.upsert, snapshot).result()
+
+    assert tracklet_id == "scan:camera-1:1"
+    assert len(store.tracklets()) == 1
+    store.close()
+
+
+def test_runner_processes_enrollment_requests_and_mapping_updates(tmp_path):
+    database = tmp_path / "cows.sqlite"
+    preview = np.zeros((10, 10, 3), dtype=np.uint8)
+    store = TrackletStore(database, session="scan")
+    for source, track_id, embedding in (
+        ("camera-1", 1, [1, 0]),
+        ("camera-2", 1, [0.99, 0.01]),
+    ):
+        store.upsert(
+            TrackletSnapshot(
+                source,
+                track_id,
+                1,
+                5,
+                5,
+                np.asarray(embedding),
+                preview,
+            )
+        )
+    store.request_finalize()
+    runner = DazzleCowRunner.__new__(DazzleCowRunner)
+    runner.tracklet_store = store
+    runner.gallery_path = tmp_path / "cows.npz"
+    runner.gallery_settings = (1, 0.7, 0.02)
+    runner.enrollment_revision = -1
+    runner.gallery = None
+    runner.identity_tracks = type("Tracks", (), {"gallery": None})()
+
+    runner._sync_enrollment()
+
+    assert store.is_finalized()
+    assert runner.gallery.match(np.asarray([1, 0])).identity == "cow-0001"
+
+    store.set_animal_number("cow-0001", "NL-123")
+    runner._sync_enrollment()
+
+    assert runner.gallery.match(np.asarray([1, 0])).identity == "NL-123"
+    saved = np.load(runner.gallery_path)
+    assert "NL-123" in saved["identities"]
+    assert "cow-0001" not in saved["identities"]
+    store.close()
+
+
 def test_track_identity_separates_cows_and_expires_stale_tracks():
     gallery = type(
         "Gallery",
@@ -341,6 +792,17 @@ def test_supervised_nt_xent_is_finite_and_differentiable():
     assert embeddings.grad is not None
 
 
+def test_training_dataset_uses_smaller_augmented_view(tmp_path):
+    image = tmp_path / "cow.jpg"
+    cv2.imwrite(str(image), np.zeros((300, 300, 3), dtype=np.uint8))
+    dataset = PublicCowDataset([CowImage(image, "001")], image_size=256)
+
+    base, augmented, _ = dataset[0]
+
+    assert base.shape == (3, 256, 256)
+    assert augmented.shape == (3, 128, 128)
+
+
 def test_identity_batch_sampler_selects_p_identities_and_k_images():
     samples = [
         CowImage(Path(f"{identity}-{index}.jpg"), identity)
@@ -373,13 +835,13 @@ def test_timestamp_sampler_groups_unique_cows_from_the_same_frame():
 
     assert len(batches) == 2
     assert all(len(batch) == 2 for batch in batches)
-    assert all(len({samples[index].identity for index in batch}) == 2 for batch in batches)
+    assert all(
+        len({samples[index].identity for index in batch}) == 2 for batch in batches
+    )
 
 
 def test_leave_one_out_knn_accuracy():
-    embeddings = torch.tensor(
-        [[1.0, 0.0], [0.9, 0.1], [0.0, 1.0], [0.1, 0.9]]
-    )
+    embeddings = torch.tensor([[1.0, 0.0], [0.9, 0.1], [0.0, 1.0], [0.1, 0.9]])
 
     assert leave_one_out_knn_accuracy(embeddings, [0, 0, 1, 1], neighbors=1) == 1
 
@@ -440,7 +902,14 @@ def test_benchmark_manifest_records_fixed_samples(tmp_path):
 
 def test_benchmark_runs_models_on_the_same_splits(tmp_path, monkeypatch):
     sources = {}
-    for split in ("train", "validation", "gallery", "test"):
+    for split in (
+        "train",
+        "validation",
+        "calibration_gallery",
+        "calibration_query",
+        "gallery",
+        "test",
+    ):
         source = tmp_path / split
         image = source / "001" / "cow.jpg"
         image.parent.mkdir(parents=True)
@@ -460,7 +929,14 @@ def test_benchmark_runs_models_on_the_same_splits(tmp_path, monkeypatch):
         save_gallery(output, np.asarray([[1, 0]]), ["001"])
 
     def fake_evaluate(model, *_args, **_settings):
-        calls.append(("evaluate", model.name))
+        calls.append(
+            (
+                "evaluate",
+                model.name,
+                _settings["match_threshold"],
+                _settings["match_margin"],
+            )
+        )
         return {"accuracy": 0.5, "coverage": 1.0}
 
     monkeypatch.setattr(benchmark, "train", fake_train)
@@ -517,17 +993,24 @@ def test_benchmark_runs_models_on_the_same_splits(tmp_path, monkeypatch):
         track_samples=[1],
         device="cpu",
         seed=1,
+        calibration_gallery_source=sources["calibration_gallery"],
+        calibration_query_source=sources["calibration_query"],
     )
 
     assert list(report["metrics"]) == ["trained", "previous"]
     assert calls == [
         ("gallery", "trained.pt"),
-        ("evaluate", "trained.pt"),
+        ("gallery", "trained.pt"),
+        ("evaluate", "trained.pt", 0.8, 0.1),
         ("gallery", "previous.pt"),
-        ("evaluate", "previous.pt"),
+        ("gallery", "previous.pt"),
+        ("evaluate", "previous.pt", 0.8, 0.1),
     ]
+    assert report["metrics"]["trained"]["applied_threshold"] == 0.8
+    assert report["metrics"]["trained"]["applied_margin"] == 0.1
     assert (tmp_path / "result" / "benchmark.json").is_file()
     assert (tmp_path / "result" / "open-set" / "trained.csv").is_file()
+    assert (tmp_path / "result" / "calibration" / "trained.csv").is_file()
 
 
 def test_benchmark_model_specification():
@@ -589,7 +1072,34 @@ def test_benchmark_calibrates_unknown_rejection():
     assert 0 <= metrics["best_balanced_threshold"] <= 1
     assert 0 <= metrics["best_balanced_margin"] <= 1
     assert metrics["best_balanced_threshold"] or metrics["best_balanced_margin"]
+    assert metrics["unknown_source"] == "leave_one_identity_out"
     assert len(sweep) == 20301
+
+
+def test_benchmark_uses_identities_missing_from_gallery_as_unknowns():
+    gallery = DazzleCowGallery.from_data(
+        np.asarray([[1, 0], [0, 1]], dtype=np.float32),
+        np.asarray(["001", "002"]),
+        neighbors=1,
+        match_threshold=0,
+    )
+    encoded = [
+        (CowImage(Path("001.jpg"), "identity:001"), np.asarray([1, 0])),
+        (CowImage(Path("003.jpg"), "identity:003"), np.asarray([-1, 0])),
+    ]
+
+    metrics, _ = open_set_metrics(
+        encoded,
+        gallery,
+        configured_threshold=0,
+        configured_margin=0,
+    )
+
+    assert metrics["known_samples"] == 1
+    assert metrics["unknown_samples"] == 1
+    assert metrics["unknown_identities"] == 1
+    assert metrics["unknown_source"] == "observed"
+    assert set(metrics["per_identity"]) == {"003"}
 
 
 def test_paper_clustering_metrics_match_separated_identities():
@@ -632,6 +1142,69 @@ def test_group_folds_isolate_validation_and_test_data(tmp_path):
     assert len(list((tmp_path / "fold" / "validation").glob("*/*"))) == 2
     assert len(list((tmp_path / "fold" / "gallery").glob("*/*"))) == 2
     assert len(list((tmp_path / "fold" / "test").glob("*/*"))) == 2
+
+
+def test_identity_fold_isolates_training_and_unknown_queries(tmp_path):
+    samples = []
+    for group in ("day-1", "day-2", "day-3"):
+        for identity in range(6):
+            for camera in ("1", "2", "3"):
+                path = (
+                    tmp_path
+                    / "source"
+                    / group
+                    / f"{identity:03d}"
+                    / f"frame_{camera}.jpg"
+                )
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch()
+                samples.append(
+                    CowImage(
+                        path,
+                        f"identity:{identity:03d}",
+                        f"{group}/frame_{camera}",
+                        group,
+                    )
+                )
+
+    report = create_identity_disjoint_fold(
+        samples,
+        tmp_path / "fold",
+        validation_group="day-1",
+        gallery_group="day-2",
+        query_group="day-3",
+        gallery_camera="1",
+        query_cameras={"2", "3"},
+        train_identities=2,
+        validation_known=1,
+        validation_unknown=1,
+        test_known=1,
+        test_unknown=1,
+        seed=1,
+    )
+
+    identity_groups = report["identities"]
+    assert (
+        len({identity for values in identity_groups.values() for identity in values})
+        == 6
+    )
+    assert report["counts"] == {
+        "train": 6,
+        "validation": 6,
+        "calibration_gallery": 1,
+        "calibration_query": 4,
+        "gallery": 1,
+        "test": 4,
+    }
+    calibration_gallery = {
+        path.parent.name
+        for path in (tmp_path / "fold" / "calibration_gallery").glob("*/*")
+    }
+    calibration_query = {
+        path.parent.name
+        for path in (tmp_path / "fold" / "calibration_query").glob("*/*")
+    }
+    assert calibration_gallery < calibration_query
 
 
 def test_video_benchmark_measures_identity_delay_per_track():
