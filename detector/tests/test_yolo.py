@@ -147,6 +147,8 @@ def test_yolo_runner_tracks_latest_sources_as_stream_batch():
     assert isinstance(first_source, UltralyticsStreamBatch)
     assert first_source.sources == ["source-0", "source-1"]
     assert runner.model.calls[0][2]["batch"] == 2
+    assert runner.model.calls[0][2]["tracker"] == "botsort.yaml"
+    assert runner.model.calls[0][2]["iou"] == 0.7
     assert second_source.sources == ["source-0", "source-1"]
     assert second_source.images[0] is frame_1
     assert second_source.images[1] is frame_2

@@ -6,6 +6,8 @@ Detection works in two stages:
 1. **YOLO** — a fast AI model that scans every frame looking for objects.
 2. **VLM** *(optional)* — a smarter AI (like Gemini or GPT-5) that double-checks the detection by looking at the footage and answering a question you define, e.g. *"Is there really a cow mounting another cow?"*. This dramatically reduces false alerts.
 
+For individual Holstein-Friesian recognition, a normal YOLO detector can optionally be enriched with cow identities. Segmented cows are encoded with the MIT-licensed MiewID model and matched against identities stored in SQLite.
+
 Confirmed detections can be sent to **Telegram**, saved to **disk**, or posted to a **webhook**.
 
 ---
@@ -165,6 +167,66 @@ This is the fast first-pass AI that scans every frame. Without a YOLO model, the
 > ```json
 > "cooldown": { "person": 60, "car": 30 }
 > ```
+
+---
+
+### `identity` — Individual cow recognition
+
+Cow identity is an optional enrichment of a normal YOLO detector. MiewID converts segmented cows into normalized embeddings. Five observations from the same YOLO track are averaged, then compared with the best stored view of each identity. By default, an identity is returned only when cosine similarity is at least `0.68` and the lead over the second-best identity is at least `0.05`; ambiguous tracks remain unknown. The pinned 195 MB ONNX model is downloaded from Hugging Face on first use.
+
+When the primary detector already tracks a `cow` class with segmentation masks, those results are reused. For detection-only models such as CowCatcher, the identity pipeline runs `yolo26m-seg.pt` on the same frame and attaches every identified cow inside the event box to detections such as `mounting`.
+
+```json
+{
+  "yolo": {
+    "model": "cowcatcher.pt",
+    "confidence": 0.8
+  },
+  "identity": {
+    "segment_model": "yolo26m-seg.pt",
+    "database": "identities/cows.sqlite"
+  }
+}
+```
+
+For enrollment, add an `enrollment` object. The detector records averaged tracklets in the same database until enrollment is finalized in the web app. Afterwards it loads the assigned embeddings from SQLite into memory for matching.
+
+Every animal starts without an identity. `identity_count` is therefore not a list of known identities; it is the optional known herd size. Supplying it turns the first scan into a closed-set assignment and is strongly recommended when every animal is expected to participate. Without it, enrollment is open-set and deliberately conservative: one animal may initially appear as multiple provisional identities, which can be reviewed and merged in the web app. This avoids forcing genuinely new animals into an existing identity.
+
+```json
+{
+  "yolo": {
+    "model": "yolo26m-seg.pt",
+    "task": "segment",
+    "tracking": true,
+    "tracker": "bytetrack.yaml",
+    "confidence": { "cow": 0.1 },
+    "imgsz": 640
+  },
+  "identity": {
+    "database": "identities/cows.sqlite",
+    "enrollment": {
+      "identity_count": 46
+    },
+    "match_threshold": 0.68,
+    "match_margin": 0.05
+  }
+}
+```
+
+SQLite is the only persistent identity store. It contains track embeddings, previews, assignments, and animal numbers. At startup and after database changes, the detector builds its normalized NumPy search arrays directly in memory.
+
+Identity databases include the pinned embedding model and dimension. Databases created with an earlier experimental encoder are not compatible with MiewID; the detector reports this at startup and requires a fresh enrollment instead of mixing embeddings from different models.
+
+After enrollment is finalized, reliable matches keep improving existing identities. The detector rechecks the complete track embedding, stores at most one sufficiently distinct sample per track, and retains at most 20 learned samples per identity. Unknown or ambiguous tracks are not assigned automatically and remain available for a later enrollment workflow.
+
+Unknown tracks collected after finalization appear as pending evidence in the web app. Finishing another scan clusters only this pending evidence. A mature cluster is first compared conservatively with the existing gallery: confident matches add evidence to that identity, while unmatched clusters become new identities without changing existing assignments or animal numbers. A cluster needs evidence from at least three tracks; immature clusters remain pending.
+
+All detector pipelines in the same application share a short-lived in-memory identity register. An identity-enabled detector publishes normalized cow locations keyed by source, detector, and YOLO track id. Other detectors reading the same source automatically attach those identities by location, so an event detector such as CowCatcher does not need to run a second identity pipeline. Entries expire after five seconds and are never persisted as identity evidence.
+
+Install the optional identity dependencies with `uv sync --extra default --extra identity`.
+
+Use `benchmark-cow-identity-video` for annotated end-to-end localization, tracking, and identity regression tests. `benchmark-cow-enrollment` evaluates clustering against prepared public identity crops. Both use the same pinned MiewID ONNX model as the application.
 
 ---
 

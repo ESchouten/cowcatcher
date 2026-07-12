@@ -25,6 +25,13 @@
 	import { SvelteSet } from 'svelte/reactivity';
 	import { untrack } from 'svelte';
 
+	type EditableDetector = DetectorConfig & {
+		yolo: NonNullable<DetectorConfig['yolo']> & {
+			confidence: NonNullable<NonNullable<DetectorConfig['yolo']>['confidence']>;
+		};
+		exporters: NonNullable<DetectorConfig['exporters']>;
+	};
+
 	const EMPTY_DETECTOR = {
 		detection: {
 			source: []
@@ -34,6 +41,21 @@
 			confidence: 0.8
 		},
 		exporters: { sse: [{}] } as { telegram?: TelegramConfig[]; sse?: SSEConfig[] }
+	};
+	const EMPTY_IDENTITY = {
+		database: 'identities/cows.sqlite',
+		segment_model: 'yolo26m-seg.pt',
+		enrollment: { identity_count: undefined as number | undefined },
+		imgsz: 640,
+		confidence: 0.1,
+		match_threshold: 0.68,
+		match_margin: 0.05,
+		min_area_ratio: 0.005,
+		max_area_ratio: 0.3,
+		margin: 0.2,
+		nms_iou: 0.5,
+		track_samples: 5,
+		track_max_age: 10
 	};
 	const INLINE_STREAM_PREVIEW_LIMIT = 5;
 
@@ -49,11 +71,20 @@
 				...EMPTY_DETECTOR.yolo,
 				...detector?.yolo
 			},
+			identity: detector?.identity
+				? {
+						...EMPTY_IDENTITY,
+						...detector.identity,
+						enrollment: detector.identity.enrollment
+							? { ...EMPTY_IDENTITY.enrollment, ...detector.identity.enrollment }
+							: undefined
+					}
+				: undefined,
 			exporters: {
 				...EMPTY_DETECTOR.exporters,
 				...detector?.exporters
 			}
-		};
+		} as EditableDetector;
 	}
 
 	const originalLabel = $state(page.url.searchParams.get('label') ?? '');
@@ -122,6 +153,26 @@
 		detector = mergeWithEmptyDetector(preset);
 	}
 
+	function setIdentityEnabled(enabled: boolean) {
+		if (enabled) {
+			detector.identity ??= {
+				...EMPTY_IDENTITY,
+				enrollment: { ...EMPTY_IDENTITY.enrollment }
+			};
+		} else {
+			delete detector.identity;
+		}
+	}
+
+	function setIdentityMode(value: string) {
+		if (!detector.identity) return;
+		if (value === 'enrollment') {
+			detector.identity.enrollment ??= { ...EMPTY_IDENTITY.enrollment };
+		} else {
+			delete detector.identity.enrollment;
+		}
+	}
+
 	async function handleSave(event: SubmitEvent) {
 		event.preventDefault();
 		if (editorHasErrors) {
@@ -132,6 +183,9 @@
 				delete telegram.alert_every;
 			}
 		});
+		if (detector.identity?.enrollment && !detector.identity.enrollment.identity_count) {
+			delete detector.identity.enrollment.identity_count;
+		}
 
 		await saveDetector({
 			original: originalLabel || undefined,
@@ -387,6 +441,89 @@
 			</div>
 			<Label for="frames_min" class="mt-2">Required detected frames</Label>
 			<Input type="number" min="1" step="1" id="frames_min" bind:value={detector.yolo.frames_min} />
+		{/if}
+
+		<div class="mt-4 flex items-center justify-between">
+			<Label for="identity">Cow identity</Label>
+			<Switch id="identity" checked={!!detector.identity} onCheckedChange={setIdentityEnabled} />
+		</div>
+
+		{#if detector.identity}
+			<div class="mt-2 grid grid-cols-1 gap-4 sm:grid-cols-2">
+				<div class="flex flex-col gap-2">
+					<Label for="identity-mode">Identity setup</Label>
+					<Select.Root
+						type="single"
+						value={detector.identity.enrollment ? 'enrollment' : 'database'}
+						onValueChange={setIdentityMode}
+					>
+						<Select.Trigger id="identity-mode" class="w-full">
+							{detector.identity.enrollment ? 'Scan cattle' : 'Use existing identities'}
+						</Select.Trigger>
+						<Select.Content>
+							<Select.Item value="enrollment" label="Scan cattle" />
+							<Select.Item value="database" label="Use existing identities" />
+						</Select.Content>
+					</Select.Root>
+				</div>
+				<div class="flex flex-col gap-2">
+					<Label for="identity-database">Identity database</Label>
+					<Input id="identity-database" required bind:value={detector.identity.database} />
+				</div>
+				{#if detector.identity.enrollment}
+					<div class="flex flex-col gap-2">
+						<Label for="identity-count">Number of cattle</Label>
+						<Input
+							id="identity-count"
+							type="number"
+							min="1"
+							step="1"
+							placeholder="Optional"
+							bind:value={detector.identity.enrollment.identity_count}
+						/>
+					</div>
+				{/if}
+				<div class="flex flex-col gap-2">
+					<Label for="identity-confidence">Cow confidence</Label>
+					<Input
+						id="identity-confidence"
+						type="number"
+						min="0"
+						max="1"
+						step="0.01"
+						bind:value={detector.identity.confidence}
+					/>
+				</div>
+				<div class="flex flex-col gap-2 sm:col-span-2">
+					<Label for="identity-segment-model">Fallback segmentation model</Label>
+					<Input
+						id="identity-segment-model"
+						required
+						bind:value={detector.identity.segment_model}
+					/>
+				</div>
+				<div class="flex flex-col gap-2">
+					<Label for="identity-margin">Frame margin</Label>
+					<Input
+						id="identity-margin"
+						type="number"
+						min="0"
+						max="0.49"
+						step="0.01"
+						bind:value={detector.identity.margin}
+					/>
+				</div>
+				<div class="flex flex-col gap-2">
+					<Label for="track-samples">Track samples</Label>
+					<Input
+						id="track-samples"
+						type="number"
+						min="1"
+						step="1"
+						bind:value={detector.identity.track_samples}
+					/>
+				</div>
+			</div>
 		{/if}
 
 		<div class="mt-2 flex items-center justify-end space-x-2">

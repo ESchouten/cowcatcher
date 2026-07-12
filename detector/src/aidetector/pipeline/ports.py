@@ -50,6 +50,23 @@ class ModelRunner(Protocol):
     ) -> list[Observation] | None: ...
 
 
+@dataclass(frozen=True, slots=True)
+class EnrichmentBatch:
+    observations: tuple[tuple[str, Observation], ...] = ()
+    model_results: tuple[ModelBatchResult, ...] | None = None
+
+
+class FrameEnricher(Protocol):
+    def process(self, batch: FrameBatch, /) -> EnrichmentBatch: ...
+
+    def enrich(
+        self,
+        source: str,
+        observation: Observation,
+        /,
+    ) -> Observation: ...
+
+
 class ArtifactProvider(Protocol):
     def image(
         self,

@@ -11,6 +11,12 @@ ConfidenceValue = Number | Confidence
 
 
 @dataclass(frozen=True, slots=True)
+class IdentityResult:
+    identity: str
+    similarity: float
+
+
+@dataclass(frozen=True, slots=True)
 class DetectedObject:
     x1: int
     y1: int
@@ -19,6 +25,7 @@ class DetectedObject:
     label: str | None = None
     confidence: float | None = None
     track_id: int | None = None
+    identities: tuple[IdentityResult, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +58,14 @@ def bounding_region(objects: Iterable[DetectedObject]) -> DetectedObject | None:
         max(item.x2 for item in items),
         max(item.y2 for item in items),
     )
+
+
+def unique_identities(objects: Iterable[DetectedObject]) -> tuple[IdentityResult, ...]:
+    identities: dict[str, IdentityResult] = {}
+    for item in objects:
+        for identity in item.identities:
+            identities.setdefault(identity.identity, identity)
+    return tuple(identities.values())
 
 
 def min_confidence(confidence: ConfidenceValue | None) -> float:

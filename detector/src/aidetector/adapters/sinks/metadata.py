@@ -1,9 +1,23 @@
 from dataclasses import asdict, field
 
-from aidetector.domain.detections import DetectedObject
+from aidetector.domain.detections import (
+    DetectedObject,
+    IdentityResult,
+    unique_identities,
+)
 from aidetector.domain.events import DetectionEvent
 from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass
+
+
+@dataclass(config=ConfigDict(extra="forbid"))
+class IdentityMetadata:
+    identity: str
+    similarity: float
+
+    @classmethod
+    def from_result(cls, result: IdentityResult) -> "IdentityMetadata":
+        return cls(result.identity, result.similarity)
 
 
 @dataclass(config=ConfigDict(extra="forbid"))
@@ -14,6 +28,8 @@ class CropMetadata:
     y2: int
     label: str | None = None
     confidence: float | None = None
+    track_id: int | None = None
+    identities: list[IdentityMetadata] = field(default_factory=list)
 
     @classmethod
     def from_object(cls, item: DetectedObject) -> "CropMetadata":
@@ -24,6 +40,10 @@ class CropMetadata:
             y2=item.y2,
             label=item.label,
             confidence=item.confidence,
+            track_id=item.track_id,
+            identities=[
+                IdentityMetadata.from_result(value) for value in item.identities
+            ],
         )
 
     def as_dict(self) -> dict:
@@ -38,6 +58,7 @@ class DetectionMetadata:
     validated: bool | None
     confidence: float
     confidences: dict[str, float]
+    identities: list[IdentityMetadata]
     observations: int
     start: str
     end: str
@@ -59,6 +80,10 @@ class DetectionMetadata:
             validated=validated,
             confidence=event.confidence,
             confidences=dict(event.best.confidences),
+            identities=[
+                IdentityMetadata.from_result(item)
+                for item in unique_identities(event.best.objects)
+            ],
             observations=len(event.observations),
             start=event.started_at.isoformat(),
             end=event.ended_at.isoformat(),

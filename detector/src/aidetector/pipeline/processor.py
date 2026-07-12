@@ -5,8 +5,12 @@ from threading import Event, Lock, Thread
 from aidetector.domain.detections import Observation
 from aidetector.domain.events import LiveObservation
 from aidetector.pipeline.dispatch import EventDispatcher
-from aidetector.pipeline.inference import FrameProcessor, InferenceStage
-from aidetector.pipeline.ports import FrameSource, Resource, Sink
+from aidetector.pipeline.inference import (
+    FrameProcessor,
+    InferenceStage,
+    NoOpFrameEnricher,
+)
+from aidetector.pipeline.ports import FrameEnricher, FrameSource, Resource, Sink
 
 
 class DetectionPipeline:
@@ -18,6 +22,7 @@ class DetectionPipeline:
         interval: float,
         source: FrameSource,
         inference: InferenceStage | None,
+        enricher: FrameEnricher | None = None,
         dispatcher: EventDispatcher,
         live_sinks: list[Sink[LiveObservation]],
         compact: Callable[[Observation], Observation],
@@ -42,6 +47,7 @@ class DetectionPipeline:
             realtime=source.realtime,
             source_ids=source_ids,
             inference=inference,
+            enricher=enricher or NoOpFrameEnricher(),
             dispatcher=dispatcher,
             live_sinks=live_sinks,
             compact=compact,

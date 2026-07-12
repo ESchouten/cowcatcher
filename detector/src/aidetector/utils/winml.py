@@ -18,7 +18,9 @@ class WinMLRuntime:
         )
         handle.__enter__()
         try:
-            providers = winml.ExecutionProviderCatalog.get_default().find_all_providers()
+            providers = (
+                winml.ExecutionProviderCatalog.get_default().find_all_providers()
+            )
             LOGGER.info(
                 "Found %d execution providers: %s",
                 len(providers),

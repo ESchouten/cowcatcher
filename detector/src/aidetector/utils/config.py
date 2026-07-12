@@ -27,6 +27,7 @@ def config_list(value: T | list[T] | None) -> list[T]:
 HttpMethod = Literal["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]
 NonEmptyString = Annotated[str, Field(min_length=1)]
 Probability = Annotated[float, Field(ge=0, le=1)]
+FrameMargin = Annotated[float, Field(ge=0, lt=0.5)]
 NonNegativeFloat = Annotated[float, Field(ge=0)]
 PositiveFloat = Annotated[float, Field(gt=0)]
 PositiveInt = Annotated[int, Field(gt=0)]
@@ -50,6 +51,34 @@ class YoloConfig:
     include_trailing_time: NonNegativeFloat = 1
     frames_min: PositiveInt = 3
     imgsz: PositiveInt = 640
+    iou: Probability = 0.7
+    tracker: NonEmptyString = "botsort.yaml"
+
+
+@dataclass(config=STRICT_CONFIG, kw_only=True)
+class CowIdentityEnrollmentConfig:
+    identity_count: PositiveInt | None = None
+
+
+@dataclass(config=STRICT_CONFIG, kw_only=True)
+class CowIdentityConfig:
+    database: Path
+    enrollment: CowIdentityEnrollmentConfig | None = None
+    segment_model: NonEmptyString = "yolo26m-seg.pt"
+    imgsz: PositiveInt = 640
+    confidence: Probability = 0.1
+    match_threshold: Probability = 0.68
+    match_margin: Probability = 0.05
+    min_area_ratio: Probability = 0.005
+    max_area_ratio: Probability = 0.3
+    margin: FrameMargin = 0
+    nms_iou: Probability = 0.5
+    track_samples: PositiveInt = 5
+    track_max_age: PositiveInt = 10
+
+    def __post_init__(self) -> None:
+        if self.min_area_ratio > self.max_area_ratio:
+            raise ValueError("Cow identity minimum area exceeds maximum area")
 
 
 @dataclass(config=STRICT_CONFIG, kw_only=True)
@@ -146,8 +175,13 @@ class HealthcheckConfig(HttpConfig):
 class DetectorConfig:
     detection: DetectionConfig
     yolo: YoloConfig | None = None
+    identity: CowIdentityConfig | None = None
     vlm: VLMConfig | list[VLMConfig] | None = None
     exporters: ExportersConfig | None = None
+
+    def __post_init__(self) -> None:
+        if self.identity is not None and self.yolo is None:
+            raise ValueError("Cow identity requires a YOLO detector")
 
 
 @dataclass(config=STRICT_CONFIG, kw_only=True)

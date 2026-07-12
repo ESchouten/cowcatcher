@@ -45,21 +45,21 @@ jobs:
         run: uv python install
 
       - name: Ruff
-        run: uv run ruff check src/aidetector tests
+        run: uv run --extra identity ruff check src/aidetector tests
 
       - name: Format
-        run: uv run ruff format --check src/aidetector tests
+        run: uv run --extra identity ruff format --check src/aidetector tests
 
       - name: Compile
-        run: uv run python -m compileall src/aidetector
+        run: uv run --extra identity python -m compileall src/aidetector
 
       - name: Type check
-        run: uv run ty check src
+        run: uv run --extra identity ty check src
 
       - name: Verify generated schemas
         run: |
-          uv run generate-schema
+          uv run --extra identity generate-schema
           git diff --exit-code -- ../config/config.schema.json ../config/metadata.schema.json
 
       - name: Pytest
-        run: uv run pytest
+        run: uv run --extra identity pytest

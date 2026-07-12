@@ -62,30 +62,48 @@ def get_plot(
             continue
 
         cv2.rectangle(image, (x1, y1), (x2, y2), color, thickness)
-        if item.label is None or item.confidence is None:
+        labels = [
+            f"{identity.identity} {identity.similarity:.0%}"
+            for identity in item.identities
+        ]
+        if item.label is not None and item.confidence is not None:
+            labels.append(f"{item.label} {item.confidence:.0%}")
+        if not labels:
             continue
 
-        label = f"{item.label} {item.confidence:.0%}"
-        (text_width, text_height), baseline = cv2.getTextSize(
-            label,
-            cv2.FONT_HERSHEY_SIMPLEX,
-            font_scale,
-            font_thickness,
-        )
-        label_y1 = max(0, y1 - text_height - baseline - thickness)
-        label_y2 = label_y1 + text_height + baseline + thickness
+        text_sizes = [
+            cv2.getTextSize(
+                label,
+                cv2.FONT_HERSHEY_SIMPLEX,
+                font_scale,
+                font_thickness,
+            )
+            for label in labels
+        ]
+        text_width = max(size[0][0] for size in text_sizes)
+        line_height = max(size[0][1] + size[1] for size in text_sizes)
+        baseline = max(size[1] for size in text_sizes)
+        label_y1 = max(0, y1 - line_height * len(labels) - thickness)
+        label_y2 = label_y1 + line_height * len(labels) + thickness
         label_x2 = min(width - 1, x1 + text_width + thickness * 2)
         cv2.rectangle(image, (x1, label_y1), (label_x2, label_y2), color, -1)
-        cv2.putText(
-            image,
-            label,
-            (x1 + thickness, label_y2 - baseline - max(1, thickness // 2)),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            font_scale,
-            (255, 255, 255),
-            font_thickness,
-            cv2.LINE_AA,
-        )
+        for index, label in enumerate(labels):
+            cv2.putText(
+                image,
+                label,
+                (
+                    x1 + thickness,
+                    label_y1
+                    + line_height * (index + 1)
+                    - baseline
+                    - max(1, thickness // 2),
+                ),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                font_scale,
+                (255, 255, 255),
+                font_thickness,
+                cv2.LINE_AA,
+            )
     return image
 
 

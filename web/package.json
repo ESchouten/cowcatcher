@@ -7,14 +7,16 @@
 	"scripts": {
 		"dev": "vite dev",
 		"build": "vite build",
+		"start": "node server.js",
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+		"test:server": "node --experimental-strip-types --test tests/*.test.mjs",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"generate:schemas": "node scripts/generate-schemas.mjs",
 		"format": "prettier --write .",
 		"lint": "prettier --check . && eslint .",
-		"test": "vitest run",
+		"test": "vitest run --exclude 'tests/**/*.test.mjs' && pnpm run test:server",
 		"shadcn": "pnpx shadcn-svelte@latest update --all --yes && pnpm format"
 	},
 	"devDependencies": {

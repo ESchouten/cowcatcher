@@ -55,6 +55,19 @@ def test_load_config_does_not_rewrite_user_file(tmp_path):
                 "telegram": {"token": "token", "chat": "chat", "alert_every": 0}
             },
         },
+        {
+            "detection": {"source": "camera"},
+            "identity": {"database": "identities/cows.sqlite"},
+        },
+        {
+            "detection": {"source": "camera"},
+            "yolo": {"model": "model.pt"},
+            "identity": {
+                "database": "identities/cows.sqlite",
+                "min_area_ratio": 0.5,
+                "max_area_ratio": 0.1,
+            },
+        },
     ],
 )
 def test_config_rejects_invalid_runtime_values(fragment):

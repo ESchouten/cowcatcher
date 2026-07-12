@@ -5,6 +5,9 @@ export type Source = string;
 export type Timestamp = string;
 export type Validated = boolean | null;
 export type Confidence = number;
+export type Identity = string;
+export type Similarity = number;
+export type Identities = IdentityMetadata[];
 export type Observations = number;
 export type Start = string;
 export type End = string;
@@ -15,6 +18,8 @@ export type X2 = number;
 export type Y2 = number;
 export type Label = string | null;
 export type Confidence1 = number | null;
+export type TrackId = number | null;
+export type Identities1 = IdentityMetadata[];
 export type Crops = CropMetadata[];
 
 export interface DetectionMetadata {
@@ -24,6 +29,7 @@ export interface DetectionMetadata {
 	validated: Validated;
 	confidence: Confidence;
 	confidences: Confidences;
+	identities: Identities;
 	observations: Observations;
 	start: Start;
 	end: End;
@@ -34,6 +40,10 @@ export interface DetectionMetadata {
 export interface Confidences {
 	[k: string]: number;
 }
+export interface IdentityMetadata {
+	identity: Identity;
+	similarity: Similarity;
+}
 export interface CropMetadata {
 	x1: X1;
 	y1: Y1;
@@ -41,4 +51,6 @@ export interface CropMetadata {
 	y2: Y2;
 	label?: Label;
 	confidence?: Confidence1;
+	track_id?: TrackId;
+	identities?: Identities1;
 }

@@ -1,6 +1,7 @@
 from time import sleep
 
 from aidetector.adapters.models.yolo import YoloRunner, build_yolo_model
+from aidetector.adapters.models.identity import IdentityEnricher
 from aidetector.adapters.sinks.factory import build_sinks
 from aidetector.adapters.sources.source import SourceProvider
 from aidetector.adapters.validation.vlm import VLMValidator
@@ -11,6 +12,7 @@ from aidetector.pipeline.aggregation import EventAggregator
 from aidetector.pipeline.cooldown import CooldownTracker
 from aidetector.pipeline.dispatch import EventDispatcher
 from aidetector.pipeline.inference import InferenceStage
+from aidetector.pipeline.identity import IdentityRegistry
 from aidetector.pipeline.processor import DetectionPipeline
 from aidetector.services.healthcheck import Healthcheck
 from aidetector.utils.config import (
@@ -32,8 +34,14 @@ class Application:
 
     @classmethod
     def from_config(cls, config: Config) -> "Application":
+        identity_registry = IdentityRegistry()
         pipelines = [
-            build_pipeline(detector_config, config.onnx, index)
+            build_pipeline(
+                detector_config,
+                config.onnx,
+                index,
+                identity_registry,
+            )
             for index, detector_config in enumerate(config.detectors)
         ]
         health = Healthcheck(config.health) if config.health else None
@@ -76,16 +84,19 @@ def build_pipeline(
     config: DetectorConfig,
     onnx: OnnxConfig,
     pipeline_index: int,
+    identity_registry: IdentityRegistry,
 ) -> DetectionPipeline:
     source = SourceProvider(config.detection)
     inference = None
+    runner = None
     cooldown_policy = None
     if config.yolo is not None:
         yolo = config.yolo
         model = build_yolo_model(yolo, onnx, len(source.sources))
+        runner = YoloRunner(yolo, source.sources, model)
         inference = InferenceStage(
             tracking=yolo.tracking,
-            runner=YoloRunner(yolo, source.sources, model),
+            runner=runner,
             events=EventAggregator(
                 EventPolicy(
                     frames_min=yolo.frames_min,
@@ -98,6 +109,25 @@ def build_pipeline(
         )
         cooldown_policy = CooldownPolicy(yolo.confidence, yolo.cooldown)
 
+    identity_pipeline = None
+    if config.identity is not None:
+        assert config.yolo is not None and runner is not None
+        from aidetector.dazzlecow.runner import CowIdentityPipeline
+
+        identity_pipeline = CowIdentityPipeline(
+            config.identity,
+            onnx,
+            source.sources,
+            config.yolo,
+            runner,
+        )
+    enricher = IdentityEnricher(
+        identity_registry,
+        f"detector-{pipeline_index}",
+        identity_pipeline,
+        runner,
+    )
+
     sinks = build_sinks(config.exporters, pipeline_index)
     dispatcher = EventDispatcher(
         VLMValidator(config_list(config.vlm)),
@@ -109,9 +139,10 @@ def build_pipeline(
         interval=config.detection.interval,
         source=source,
         inference=inference,
+        enricher=enricher,
         dispatcher=dispatcher,
         live_sinks=sinks.live,
         compact=compact_observation,
-        resources=sinks.resources,
+        resources=[*sinks.resources, enricher],
         pipeline_index=pipeline_index,
     )

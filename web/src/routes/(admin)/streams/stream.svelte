@@ -35,6 +35,10 @@
 		y2: number;
 		label?: string | null;
 		confidence?: number | null;
+		identities?: Array<{
+			identity: string;
+			similarity: number;
+		}>;
 	};
 
 	type TrackObject = {
@@ -122,6 +126,11 @@
 	}
 
 	function objectLabel(object: TrackObject) {
+		if (object.crop.identities?.length) {
+			return object.crop.identities
+				.map((identity) => `${identity.identity} ${formatPercent(identity.similarity)}`)
+				.join(', ');
+		}
 		const objectName = object.crop.label ?? 'object';
 		const confidence = formatPercent(object.crop.confidence);
 		return confidence ? `${objectName} ${confidence}` : objectName;
@@ -182,6 +191,9 @@
 	function trackObjectKey(object: TrackObject, index: number) {
 		if (object.track_id !== null && object.track_id !== undefined) {
 			return `track-${object.track_id}`;
+		}
+		if (object.crop.identities?.length) {
+			return `identity-${object.crop.identities.map((identity) => identity.identity).join('-')}`;
 		}
 		return `object-${object.id ?? index}`;
 	}

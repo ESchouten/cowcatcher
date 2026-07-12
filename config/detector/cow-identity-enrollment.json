@@ -1,0 +1,32 @@
+{
+    "detection": {
+        "source": [
+            "rtsp://camera-1/stream",
+            "rtsp://camera-2/stream"
+        ],
+        "interval": 1
+    },
+    "yolo": {
+        "model": "yolo26m-seg.pt",
+        "task": "segment",
+        "tracking": true,
+        "tracker": "bytetrack.yaml",
+        "confidence": {
+            "cow": 0.1
+        },
+        "imgsz": 640
+    },
+    "identity": {
+        "database": "identities/cows.sqlite",
+        "enrollment": {
+            "identity_count": 25
+        },
+        "match_threshold": 0.68,
+        "match_margin": 0.05,
+        "margin": 0.2,
+        "track_samples": 5
+    },
+    "exporters": {
+        "sse": {}
+    }
+}

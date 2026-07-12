@@ -42,6 +42,25 @@
           ],
           "default": null,
           "title": "Confidence"
+        },
+        "track_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Track Id"
+        },
+        "identities": {
+          "items": {
+            "$ref": "#/$defs/IdentityMetadata"
+          },
+          "title": "Identities",
+          "type": "array"
         }
       },
       "required": [
@@ -51,6 +70,25 @@
         "y2"
       ],
       "title": "CropMetadata",
+      "type": "object"
+    },
+    "IdentityMetadata": {
+      "additionalProperties": false,
+      "properties": {
+        "identity": {
+          "title": "Identity",
+          "type": "string"
+        },
+        "similarity": {
+          "title": "Similarity",
+          "type": "number"
+        }
+      },
+      "required": [
+        "identity",
+        "similarity"
+      ],
+      "title": "IdentityMetadata",
       "type": "object"
     }
   },
@@ -89,6 +127,13 @@
       },
       "title": "Confidences",
       "type": "object"
+    },
+    "identities": {
+      "items": {
+        "$ref": "#/$defs/IdentityMetadata"
+      },
+      "title": "Identities",
+      "type": "array"
     },
     "observations": {
       "title": "Observations",
@@ -132,6 +177,7 @@
     "validated",
     "confidence",
     "confidences",
+    "identities",
     "observations",
     "start",
     "end",

@@ -26,6 +26,21 @@ export type Cooldown =
 export type IncludeTrailingTime = number;
 export type FramesMin = number;
 export type Imgsz = number;
+export type Iou = number;
+export type Tracker = string;
+export type Database = string;
+export type IdentityCount = number | null;
+export type SegmentModel = string;
+export type Imgsz1 = number;
+export type Confidence1 = number;
+export type MatchThreshold = number;
+export type MatchMargin = number;
+export type MinAreaRatio = number;
+export type MaxAreaRatio = number;
+export type Margin = number;
+export type NmsIou = number;
+export type TrackSamples = number;
+export type TrackMaxAge = number;
 export type Vlm = VLMConfig | VLMConfig[] | null;
 export type Prompt = string;
 export type Model1 = string | [string, ...string[]];
@@ -35,7 +50,7 @@ export type Strategy = 'IMAGE' | 'VIDEO';
 export type CropPadding = number;
 export type Timeout1 = number;
 export type Disk = DiskConfig | DiskConfig[] | null;
-export type Confidence1 =
+export type Confidence2 =
 	| number
 	| {
 			[k: string]: number;
@@ -46,7 +61,7 @@ export type ExportRejected = boolean;
 export type Directory = string | null;
 export type Strategy1 = 'ALL' | 'BEST';
 export type Telegram = ChatConfig | ChatConfig[] | null;
-export type Confidence2 =
+export type Confidence3 =
 	| number
 	| {
 			[k: string]: number;
@@ -72,7 +87,7 @@ export type Headers = {
 	[k: string]: string;
 } | null;
 export type Body = string | null;
-export type Confidence3 =
+export type Confidence4 =
 	| number
 	| {
 			[k: string]: number;
@@ -90,7 +105,7 @@ export type Token1 = string | null;
 export type DataType = 'binary' | 'base64' | 'none';
 export type DataMax = number | null;
 export type Sse = SSEConfig | SSEConfig[] | null;
-export type Confidence4 =
+export type Confidence5 =
 	| number
 	| {
 			[k: string]: number;
@@ -120,6 +135,7 @@ export interface Config {
 export interface DetectorConfig {
 	detection: DetectionConfig;
 	yolo?: YoloConfig | null;
+	identity?: CowIdentityConfig | null;
 	vlm?: Vlm;
 	exporters?: ExportersConfig | null;
 }
@@ -140,6 +156,26 @@ export interface YoloConfig {
 	include_trailing_time?: IncludeTrailingTime;
 	frames_min?: FramesMin;
 	imgsz?: Imgsz;
+	iou?: Iou;
+	tracker?: Tracker;
+}
+export interface CowIdentityConfig {
+	database: Database;
+	enrollment?: CowIdentityEnrollmentConfig | null;
+	segment_model?: SegmentModel;
+	imgsz?: Imgsz1;
+	confidence?: Confidence1;
+	match_threshold?: MatchThreshold;
+	match_margin?: MatchMargin;
+	min_area_ratio?: MinAreaRatio;
+	max_area_ratio?: MaxAreaRatio;
+	margin?: Margin;
+	nms_iou?: NmsIou;
+	track_samples?: TrackSamples;
+	track_max_age?: TrackMaxAge;
+}
+export interface CowIdentityEnrollmentConfig {
+	identity_count?: IdentityCount;
 }
 export interface VLMConfig {
 	prompt: Prompt;
@@ -157,14 +193,14 @@ export interface ExportersConfig {
 	sse?: Sse;
 }
 export interface DiskConfig {
-	confidence?: Confidence1;
+	confidence?: Confidence2;
 	crop_padding?: CropPadding1;
 	export_rejected?: ExportRejected;
 	directory?: Directory;
 	strategy?: Strategy1;
 }
 export interface ChatConfig {
-	confidence?: Confidence2;
+	confidence?: Confidence3;
 	crop_padding?: CropPadding2;
 	export_rejected?: ExportRejected1;
 	include_image?: IncludeImage;
@@ -184,7 +220,7 @@ export interface WebhookConfig {
 	timeout?: Timeout3;
 	headers?: Headers;
 	body?: Body;
-	confidence?: Confidence3;
+	confidence?: Confidence4;
 	crop_padding?: CropPadding3;
 	export_rejected?: ExportRejected2;
 	include_image?: IncludeImage1;
@@ -198,7 +234,7 @@ export interface WebhookConfig {
 	data_max?: DataMax;
 }
 export interface SSEConfig {
-	confidence?: Confidence4;
+	confidence?: Confidence5;
 	crop_padding?: CropPadding4;
 	export_rejected?: ExportRejected3;
 	port?: Port;

@@ -106,6 +106,125 @@
       "title": "ChatConfig",
       "type": "object"
     },
+    "CowIdentityConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "database": {
+          "format": "path",
+          "title": "Database",
+          "type": "string"
+        },
+        "enrollment": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CowIdentityEnrollmentConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "segment_model": {
+          "default": "yolo26m-seg.pt",
+          "minLength": 1,
+          "title": "Segment Model",
+          "type": "string"
+        },
+        "imgsz": {
+          "default": 640,
+          "exclusiveMinimum": 0,
+          "title": "Imgsz",
+          "type": "integer"
+        },
+        "confidence": {
+          "default": 0.1,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "match_threshold": {
+          "default": 0.68,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Match Threshold",
+          "type": "number"
+        },
+        "match_margin": {
+          "default": 0.05,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Match Margin",
+          "type": "number"
+        },
+        "min_area_ratio": {
+          "default": 0.005,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Min Area Ratio",
+          "type": "number"
+        },
+        "max_area_ratio": {
+          "default": 0.3,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Max Area Ratio",
+          "type": "number"
+        },
+        "margin": {
+          "default": 0,
+          "exclusiveMaximum": 0.5,
+          "minimum": 0,
+          "title": "Margin",
+          "type": "number"
+        },
+        "nms_iou": {
+          "default": 0.5,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Nms Iou",
+          "type": "number"
+        },
+        "track_samples": {
+          "default": 5,
+          "exclusiveMinimum": 0,
+          "title": "Track Samples",
+          "type": "integer"
+        },
+        "track_max_age": {
+          "default": 10,
+          "exclusiveMinimum": 0,
+          "title": "Track Max Age",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "database"
+      ],
+      "title": "CowIdentityConfig",
+      "type": "object"
+    },
+    "CowIdentityEnrollmentConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "identity_count": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Identity Count"
+        }
+      },
+      "title": "CowIdentityEnrollmentConfig",
+      "type": "object"
+    },
     "DetectionConfig": {
       "additionalProperties": false,
       "properties": {
@@ -161,6 +280,17 @@
           "anyOf": [
             {
               "$ref": "#/$defs/YoloConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "identity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CowIdentityConfig"
             },
             {
               "type": "null"
@@ -842,6 +972,19 @@
           "exclusiveMinimum": 0,
           "title": "Imgsz",
           "type": "integer"
+        },
+        "iou": {
+          "default": 0.7,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Iou",
+          "type": "number"
+        },
+        "tracker": {
+          "default": "botsort.yaml",
+          "minLength": 1,
+          "title": "Tracker",
+          "type": "string"
         }
       },
       "required": [

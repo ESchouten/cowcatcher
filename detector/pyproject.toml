@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "imageio-ffmpeg>=0.6.0",
+    "lap>=0.5.12",
     "litellm>=1.81.6",
     "numpy>=1.26.0",
     "opencv-python>=4.6.0",
@@ -33,6 +34,12 @@ windowsml = [
     "wasdk-microsoft-windows-ai-machinelearning[all]>=1.8.260209005",
     "wasdk-microsoft-windows-applicationmodel-dynamicdependency-bootstrap>=1.8.260209005",
 ]
+identity = [
+    "huggingface-hub>=0.34.0",
+    "pandas>=2.2.0",
+    "scikit-learn>=1.7.0",
+    "scipy>=1.11.0",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -41,6 +48,9 @@ build-backend = "hatchling.build"
 [project.scripts]
 main = "aidetector:main"
 generate-schema = "aidetector.utils.generate_schema:main"
+benchmark-cow-identity-video = "aidetector.dazzlecow.video_benchmark:main"
+benchmark-cow-enrollment = "aidetector.dazzlecow.enrollment_benchmark:main"
+cow-identity-enrollment = "aidetector.dazzlecow.enrollment:main"
 
 [dependency-groups]
 dev = [

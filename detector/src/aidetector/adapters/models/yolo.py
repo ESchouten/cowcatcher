@@ -178,6 +178,7 @@ class YoloRunner:
                     stream=True,
                 ),
                 persist=True,
+                tracker=self.config.tracker,
             )
         )
         self._log_predict_time(then, len(frames), "Tracking")
@@ -236,8 +237,10 @@ class YoloRunner:
             "stream": stream,
             "classes": list(self.class_confidences.keys()) or None,
             "imgsz": self.config.imgsz,
+            "iou": self.config.iou,
             "rect": should_rect(),
             "batch": batch,
+            "verbose": False,
         }
 
     def _log_predict_time(self, then: float, frame_count: int, operation: str) -> None:

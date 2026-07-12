@@ -10,7 +10,7 @@ from aidetector.adapters.sinks.sse import SSESink, tracks_payload
 from aidetector.adapters.sinks.sse_transport import SSEHub
 from aidetector.adapters.sinks.telegram import TelegramSink
 from aidetector.adapters.sinks.webhook import WebhookSink
-from aidetector.domain.detections import DetectedObject, Observation
+from aidetector.domain.detections import DetectedObject, IdentityResult, Observation
 from aidetector.domain.events import DetectionEvent, LiveObservation
 from aidetector.domain.policies import ExportPolicy
 from aidetector.media.artifacts import EventArtifacts
@@ -153,6 +153,8 @@ def test_disk_sink_writes_detection_files(tmp_path, monkeypatch):
         "y2": 52,
         "label": "cow",
         "confidence": 0.9,
+        "track_id": None,
+        "identities": [],
     }
 
 
@@ -204,6 +206,8 @@ def test_track_payload_and_detection_metadata_include_objects():
                 "y2": 52,
                 "label": "cow",
                 "confidence": 0.9,
+                "track_id": None,
+                "identities": [],
             },
         }
     ]
@@ -211,6 +215,33 @@ def test_track_payload_and_detection_metadata_include_objects():
     assert detection["confidence"] == 0.9
     assert detection["observations"] == 2
     assert detection["crops"] == [detection["crop"]]
+
+
+def test_metadata_and_tracks_include_identity_results():
+    item = make_observation(
+        datetime(2026, 1, 1),
+        {"cow": 0.9},
+        objects=(
+            DetectedObject(
+                10,
+                10,
+                40,
+                50,
+                "cow",
+                0.9,
+                7,
+                (IdentityResult("NL-123", 0.94),),
+            ),
+        ),
+    )
+    event = make_event([item])
+
+    tracks = tracks_payload(LiveObservation("0:0", item))
+    metadata = DetectionMetadata.from_event(event, True).as_dict()
+
+    identity = {"identity": "NL-123", "similarity": 0.94}
+    assert tracks["objects"][0]["crop"]["identities"] == [identity]
+    assert metadata["identities"] == [identity]
 
 
 def test_sse_server_is_shared_and_closed_by_last_sink(monkeypatch):

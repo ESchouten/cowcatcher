@@ -160,7 +160,9 @@ def _register_winml(config: Config) -> list[str]:
     return providers
 
 
-def _select_execution_providers(ort, config: Config, winml_providers: list[str]) -> None:
+def _select_execution_providers(
+    ort, config: Config, winml_providers: list[str]
+) -> None:
     selected_devices = [
         device
         for device in ort.get_ep_devices()
@@ -197,6 +199,11 @@ def _patch_inference_session(ort, config: Config) -> None:
             if sess_options is None:
                 sess_options = ort.SessionOptions()
             for device, options in _STATE.devices:
+                if (
+                    device.ep_name == "NvTensorRTRTXExecutionProvider"
+                    and not _uses_yolo_profile(path_or_bytes)
+                ):
+                    options = {}
                 sess_options.add_provider_for_devices([device], options)
             return original_inference_session(
                 path_or_bytes,
@@ -226,6 +233,7 @@ def setup_ort(config: Config) -> None:
 
     try:
         import onnxruntime as ort
+
         LOGGER.info("Setup ORT")
         _patch_ultralytics_requirements()
         _add_windows_dll_directories()
@@ -251,6 +259,13 @@ def get_provider_options(config: Config, provider: str) -> dict:
     if provider == "CoreMLExecutionProvider":
         return _coreml_options()
     return {}
+
+
+def _uses_yolo_profile(path_or_bytes: Any) -> bool:
+    return (
+        not isinstance(path_or_bytes, (str, os.PathLike))
+        or Path(path_or_bytes).name != "miewid.onnx"
+    )
 
 
 def sort_devices_by_provider(devices: list) -> list:
