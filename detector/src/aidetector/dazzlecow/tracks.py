@@ -2,8 +2,7 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 
 import numpy as np
-from aidetector.dazzlecow.gallery import DazzleCowGallery
-from aidetector.dazzlecow.geometry import box_iou
+from aidetector.dazzlecow.gallery import IdentityMatch, IdentityMatcher
 from aidetector.dazzlecow.localizer import CowCandidate
 from numpy import ndarray
 
@@ -11,12 +10,13 @@ from numpy import ndarray
 @dataclass
 class _Track:
     track_id: int
-    box: tuple[int, int, int, int]
     first_frame: int
     last_frame: int
     embeddings: deque[ndarray]
     embedding_sum: ndarray
     observations: int = 0
+    identity: IdentityMatch | None = None
+    stored: bool = False
 
 
 @dataclass(frozen=True)
@@ -28,28 +28,35 @@ class TrackletSnapshot:
     observations: int
     embedding: ndarray
     preview: ndarray
+    identity_key: str | None = None
 
 
 class TrackIdentityAggregator:
     def __init__(
         self,
-        gallery: DazzleCowGallery | None,
+        gallery: IdentityMatcher | None,
         *,
         samples: int,
-        iou_threshold: float,
         max_age: int,
     ):
         if samples < 1 or max_age < 1:
             raise ValueError("Track samples and max age must be positive")
-        if not 0 <= iou_threshold <= 1:
-            raise ValueError("Track IoU must be between 0 and 1")
         self.gallery = gallery
         self.samples = samples
-        self.iou_threshold = iou_threshold
         self.max_age = max_age
         self._frame_by_source: defaultdict[str, int] = defaultdict(int)
-        self._next_id_by_source: defaultdict[str, int] = defaultdict(int)
         self._tracks_by_source: defaultdict[str, dict[int, _Track]] = defaultdict(dict)
+
+    def set_gallery(self, gallery: IdentityMatcher) -> None:
+        self.gallery = gallery
+        for tracks in self._tracks_by_source.values():
+            for track in tracks.values():
+                track.identity = None
+
+    def mark_stored(self, source: str, track_id: int) -> None:
+        track = self._tracks_by_source[source].get(track_id)
+        if track is not None:
+            track.stored = True
 
     def apply(
         self,
@@ -70,17 +77,15 @@ class TrackIdentityAggregator:
         ]:
             del tracks[track_id]
 
-        assignments = self._assign(candidates, tracks)
         snapshots = []
-        for index, (candidate, embedding) in enumerate(
-            zip(candidates, embeddings, strict=True)
-        ):
-            track = assignments.get(index)
+        for candidate, embedding in zip(candidates, embeddings, strict=True):
+            track_id = candidate.crop.track_id
+            if track_id is None:
+                continue
+            track = tracks.get(track_id)
             if track is None:
-                self._next_id_by_source[source] += 1
                 track = _Track(
-                    self._next_id_by_source[source],
-                    _box(candidate),
+                    track_id,
                     frame,
                     frame,
                     deque(maxlen=self.samples),
@@ -89,17 +94,22 @@ class TrackIdentityAggregator:
                 tracks[track.track_id] = track
 
             embedding = _normalize(embedding)
-            track.box = _box(candidate)
             track.last_frame = frame
             track.embeddings.append(embedding)
             track.embedding_sum += embedding
             track.observations += 1
-            candidate.crop.track_id = track.track_id
-            if len(track.embeddings) == self.samples and self.gallery is not None:
-                candidate.crop.identity = self.gallery.match(
+            if (
+                len(track.embeddings) == self.samples
+                and track.observations % self.samples == 0
+                and self.gallery is not None
+            ):
+                track.identity = self.gallery.match(
                     _normalize(np.mean(track.embeddings, axis=0))
                 )
-            if track.observations % self.samples == 0:
+            candidate.crop.identities = (
+                [track.identity.result] if track.identity else []
+            )
+            if track.observations % self.samples == 0 and not track.stored:
                 snapshots.append(
                     TrackletSnapshot(
                         source,
@@ -109,39 +119,10 @@ class TrackIdentityAggregator:
                         track.observations,
                         _normalize(track.embedding_sum),
                         candidate.image,
+                        track.identity.key if track.identity else None,
                     )
                 )
         return snapshots
-
-    def _assign(
-        self,
-        candidates: list[CowCandidate],
-        tracks: dict[int, _Track],
-    ) -> dict[int, _Track]:
-        pairs = sorted(
-            (
-                (box_iou(_box(candidate), track.box), index, track)
-                for index, candidate in enumerate(candidates)
-                for track in tracks.values()
-            ),
-            reverse=True,
-            key=lambda item: item[0],
-        )
-        assignments = {}
-        used_tracks = set()
-        for score, index, track in pairs:
-            if score < self.iou_threshold:
-                break
-            if index in assignments or track.track_id in used_tracks:
-                continue
-            assignments[index] = track
-            used_tracks.add(track.track_id)
-        return assignments
-
-
-def _box(candidate: CowCandidate) -> tuple[int, int, int, int]:
-    crop = candidate.crop
-    return crop.x1, crop.y1, crop.x2, crop.y2
 
 
 def _normalize(embedding: ndarray) -> ndarray:

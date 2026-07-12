@@ -24,6 +24,11 @@
 	import { Switch } from '$lib/components/ui/switch';
 	import { SvelteSet } from 'svelte/reactivity';
 
+	type EditableDetector = DetectorConfig & {
+		yolo: NonNullable<DetectorConfig['yolo']>;
+		exporters: NonNullable<DetectorConfig['exporters']>;
+	};
+
 	const EMPTY_DETECTOR = {
 		detection: {
 			source: []
@@ -34,19 +39,20 @@
 		},
 		exporters: { sse: [{}] } as { telegram?: TelegramConfig[]; sse?: SSEConfig[] }
 	};
-	const EMPTY_DAZZLECOW = {
-		model: 'hf-hub:BVRA/MegaDescriptor-S-224',
+	const EMPTY_IDENTITY = {
+		database: 'identities/cows.sqlite',
+		segment_model: 'yolo26m-seg.pt',
 		enrollment: {
-			database: 'identities/cows.sqlite',
 			identity_count: undefined as number | undefined
 		},
-		owl_interval: 1,
-		confidence: 0.3,
-		match_threshold: 0.75,
-		match_margin: 0,
+		imgsz: 640,
+		confidence: 0.1,
+		match_threshold: 0.68,
+		match_margin: 0.05,
+		min_area_ratio: 0.005,
+		max_area_ratio: 0.3,
 		margin: 0.2,
-		track_samples: 5,
-		frames_min: 1
+		track_samples: 5
 	};
 	const INLINE_STREAM_PREVIEW_LIMIT = 5;
 
@@ -58,18 +64,16 @@
 				...EMPTY_DETECTOR.detection,
 				...detector?.detection
 			},
-			yolo: detector?.dazzlecow
-				? undefined
-				: {
-						...EMPTY_DETECTOR.yolo,
-						...detector?.yolo
-					},
-			dazzlecow: detector?.dazzlecow
+			yolo: {
+				...EMPTY_DETECTOR.yolo,
+				...detector?.yolo
+			},
+			identity: detector?.identity
 				? {
-						...EMPTY_DAZZLECOW,
-						...detector.dazzlecow,
-						enrollment: detector.dazzlecow.enrollment
-							? { ...EMPTY_DAZZLECOW.enrollment, ...detector.dazzlecow.enrollment }
+						...EMPTY_IDENTITY,
+						...detector.identity,
+						enrollment: detector.identity.enrollment
+							? { ...EMPTY_IDENTITY.enrollment, ...detector.identity.enrollment }
 							: undefined
 					}
 				: undefined,
@@ -77,7 +81,7 @@
 				...EMPTY_DETECTOR.exporters,
 				...detector?.exporters
 			}
-		} as DetectorConfig;
+		} as EditableDetector;
 		return merged;
 	}
 
@@ -94,7 +98,6 @@
 
 	let label = $state(originalLabel);
 	let detector = $state(initialDetector);
-	let modelType = $state<'yolo' | 'dazzlecow'>(initialDetector.dazzlecow ? 'dazzlecow' : 'yolo');
 	let visiblePreviewSources = new SvelteSet<string>();
 	let editorHasErrors = $state(false);
 	let preset = $state<string>('Custom');
@@ -144,28 +147,25 @@
 	async function handlePresetChange(file: string) {
 		const preset = await getDetectorPreset({ file });
 		detector = mergeWithEmptyDetector(preset);
-		modelType = detector.dazzlecow ? 'dazzlecow' : 'yolo';
 	}
 
-	function setModelType(value: string) {
-		modelType = value === 'dazzlecow' ? 'dazzlecow' : 'yolo';
-		if (modelType === 'dazzlecow') {
-			delete detector.yolo;
-			detector.dazzlecow ??= { ...EMPTY_DAZZLECOW };
+	function setIdentityEnabled(enabled: boolean) {
+		if (enabled) {
+			detector.identity ??= {
+				...EMPTY_IDENTITY,
+				enrollment: { ...EMPTY_IDENTITY.enrollment }
+			};
 		} else {
-			delete detector.dazzlecow;
-			detector.yolo ??= { ...EMPTY_DETECTOR.yolo };
+			delete detector.identity;
 		}
 	}
 
-	function setDazzleCowMode(value: string) {
-		if (!detector.dazzlecow) return;
+	function setIdentityMode(value: string) {
+		if (!detector.identity) return;
 		if (value === 'enrollment') {
-			delete detector.dazzlecow.gallery;
-			detector.dazzlecow.enrollment ??= { ...EMPTY_DAZZLECOW.enrollment };
+			detector.identity.enrollment ??= { ...EMPTY_IDENTITY.enrollment };
 		} else {
-			delete detector.dazzlecow.enrollment;
-			detector.dazzlecow.gallery ??= 'identities/cows.npz';
+			delete detector.identity.enrollment;
 		}
 	}
 
@@ -179,10 +179,9 @@
 				delete telegram.alert_every;
 			}
 		});
-		if (detector.dazzlecow?.enrollment) {
-			delete detector.dazzlecow.gallery;
-			if (!detector.dazzlecow.enrollment.identity_count) {
-				delete detector.dazzlecow.enrollment.identity_count;
+		if (detector.identity?.enrollment) {
+			if (!detector.identity.enrollment.identity_count) {
+				delete detector.identity.enrollment.identity_count;
 			}
 		}
 
@@ -309,20 +308,27 @@
 				type="multiple"
 				bind:value={
 					() =>
-						(detector.exporters.telegram ?? []).map(
-							(telegram) =>
-								telegrams.find((t) => t.token === telegram.token && t.chat === telegram.chat)?.label
-						),
+						(detector.exporters.telegram ?? []).flatMap((telegram) => {
+							const label = telegrams.find(
+								(item) => item.token === telegram.token && item.chat === telegram.chat
+							)?.label;
+							return label ? [label] : [];
+						}),
 					(selectedTelegrams) => {
 						detector.exporters.telegram = (selectedTelegrams ?? [])
 							.map((telegram) => {
-								const t = telegrams.find((t) => t.label === telegram);
-								const curr = detector.exporters.telegram?.find(
-									(t) => t.token === t.token && t.chat === t.chat
+								const selected = telegrams.find((item) => item.label === telegram);
+								if (!selected) return undefined;
+								const current = detector.exporters.telegram?.find(
+									(item) => item.token === selected.token && item.chat === selected.chat
 								);
-								return { token: t!.token, chat: t!.chat, alert_every: curr?.alert_every ?? 1 };
+								return {
+									token: selected.token,
+									chat: selected.chat,
+									alert_every: current?.alert_every ?? 1
+								};
 							})
-							.filter(Boolean);
+							.filter((telegram) => telegram !== undefined);
 					}
 				}
 				items={telegrams.map((telegram) => ({ value: telegram.label, label: telegram.label }))}
@@ -384,139 +390,7 @@
 			>
 		</div>
 
-		<Label for="model-type" class="mt-2">Model type</Label>
-		<Select.Root
-			type="single"
-			value={modelType}
-			onValueChange={setModelType}
-			items={[
-				{ value: 'yolo', label: 'YOLO' },
-				{ value: 'dazzlecow', label: 'DazzleCow' }
-			]}
-		>
-			<Select.Trigger id="model-type" class="w-full"
-				>{modelType === 'yolo' ? 'YOLO' : 'DazzleCow'}</Select.Trigger
-			>
-			<Select.Content>
-				<Select.Item value="yolo" label="YOLO" />
-				<Select.Item value="dazzlecow" label="DazzleCow" />
-			</Select.Content>
-		</Select.Root>
-
-		{#if detector.dazzlecow}
-			<div class="mt-2 grid grid-cols-2 gap-6">
-				<div class="flex flex-col gap-2">
-					<Label for="dazzlecow-model">Identity model</Label>
-					<Input id="dazzlecow-model" bind:value={detector.dazzlecow.model} />
-				</div>
-				<div class="flex flex-col gap-2">
-					<Label for="dazzlecow-mode">Identity setup</Label>
-					<Select.Root
-						type="single"
-						value={detector.dazzlecow.enrollment ? 'enrollment' : 'gallery'}
-						onValueChange={setDazzleCowMode}
-					>
-						<Select.Trigger id="dazzlecow-mode" class="w-full">
-							{detector.dazzlecow.enrollment ? 'Scan cattle' : 'Existing gallery'}
-						</Select.Trigger>
-						<Select.Content>
-							<Select.Item value="enrollment" label="Scan cattle" />
-							<Select.Item value="gallery" label="Existing gallery" />
-						</Select.Content>
-					</Select.Root>
-				</div>
-				{#if detector.dazzlecow.enrollment}
-					<div class="flex flex-col gap-2">
-						<Label for="dazzlecow-database">Identity database</Label>
-						<Input
-							id="dazzlecow-database"
-							required
-							bind:value={detector.dazzlecow.enrollment.database}
-						/>
-					</div>
-					<div class="flex flex-col gap-2">
-						<Label for="dazzlecow-identity-count">Number of cattle</Label>
-						<Input
-							id="dazzlecow-identity-count"
-							type="number"
-							min="1"
-							step="1"
-							placeholder="Optional"
-							bind:value={detector.dazzlecow.enrollment.identity_count}
-						/>
-					</div>
-				{:else}
-					<div class="flex flex-col gap-2">
-						<Label for="dazzlecow-gallery">Identity gallery</Label>
-						<Input id="dazzlecow-gallery" required bind:value={detector.dazzlecow.gallery} />
-					</div>
-				{/if}
-				<div class="flex flex-col gap-2">
-					<Label for="dazzlecow-confidence">Cow confidence</Label>
-					<Input
-						id="dazzlecow-confidence"
-						type="number"
-						min="0"
-						max="1"
-						step="0.01"
-						bind:value={detector.dazzlecow.confidence}
-					/>
-				</div>
-				<div class="flex flex-col gap-2">
-					<Label for="owl-interval">OWL interval</Label>
-					<Input
-						id="owl-interval"
-						type="number"
-						min="0"
-						step="0.1"
-						bind:value={detector.dazzlecow.owl_interval}
-					/>
-				</div>
-				<div class="flex flex-col gap-2">
-					<Label for="dazzlecow-margin">Frame margin</Label>
-					<Input
-						id="dazzlecow-margin"
-						type="number"
-						min="0"
-						max="0.49"
-						step="0.01"
-						bind:value={detector.dazzlecow.margin}
-					/>
-				</div>
-				<div class="flex flex-col gap-2">
-					<Label for="match-threshold">Identity threshold</Label>
-					<Input
-						id="match-threshold"
-						type="number"
-						min="0"
-						max="1"
-						step="0.01"
-						bind:value={detector.dazzlecow.match_threshold}
-					/>
-				</div>
-				<div class="flex flex-col gap-2">
-					<Label for="match-margin">Identity margin</Label>
-					<Input
-						id="match-margin"
-						type="number"
-						min="0"
-						max="1"
-						step="0.01"
-						bind:value={detector.dazzlecow.match_margin}
-					/>
-				</div>
-				<div class="flex flex-col gap-2">
-					<Label for="track-samples">Track samples</Label>
-					<Input
-						id="track-samples"
-						type="number"
-						min="1"
-						step="1"
-						bind:value={detector.dazzlecow.track_samples}
-					/>
-				</div>
-			</div>
-		{:else if detector.yolo}
+		{#if detector.yolo}
 			<Label for="model" class="mt-2">Model</Label>
 			<Input id="model" name="model" bind:value={detector.yolo.model} />
 
@@ -574,6 +448,111 @@
 			{/if}
 		{/if}
 
+		<div class="mt-4 flex items-center justify-between">
+			<Label for="identity">Cow identity</Label>
+			<Switch id="identity" checked={!!detector.identity} onCheckedChange={setIdentityEnabled} />
+		</div>
+
+		{#if detector.identity}
+			<div class="mt-2 grid grid-cols-2 gap-6">
+				<div class="flex flex-col gap-2">
+					<Label for="identity-mode">Identity setup</Label>
+					<Select.Root
+						type="single"
+						value={detector.identity.enrollment ? 'enrollment' : 'database'}
+						onValueChange={setIdentityMode}
+					>
+						<Select.Trigger id="identity-mode" class="w-full">
+							{detector.identity.enrollment ? 'Scan cattle' : 'Use existing identities'}
+						</Select.Trigger>
+						<Select.Content>
+							<Select.Item value="enrollment" label="Scan cattle" />
+							<Select.Item value="database" label="Use existing identities" />
+						</Select.Content>
+					</Select.Root>
+				</div>
+				<div class="flex flex-col gap-2">
+					<Label for="identity-database">Identity database</Label>
+					<Input id="identity-database" required bind:value={detector.identity.database} />
+				</div>
+				{#if detector.identity.enrollment}
+					<div class="flex flex-col gap-2">
+						<Label for="identity-count">Number of cattle</Label>
+						<Input
+							id="identity-count"
+							type="number"
+							min="1"
+							step="1"
+							placeholder="Optional"
+							bind:value={detector.identity.enrollment.identity_count}
+						/>
+					</div>
+				{/if}
+				<div class="flex flex-col gap-2">
+					<Label for="identity-confidence">Cow confidence</Label>
+					<Input
+						id="identity-confidence"
+						type="number"
+						min="0"
+						max="1"
+						step="0.01"
+						bind:value={detector.identity.confidence}
+					/>
+				</div>
+				<div class="flex flex-col gap-2">
+					<Label for="identity-segment-model">Fallback segmentation model</Label>
+					<Input
+						id="identity-segment-model"
+						required
+						bind:value={detector.identity.segment_model}
+					/>
+				</div>
+				<div class="flex flex-col gap-2">
+					<Label for="identity-margin">Frame margin</Label>
+					<Input
+						id="identity-margin"
+						type="number"
+						min="0"
+						max="0.49"
+						step="0.01"
+						bind:value={detector.identity.margin}
+					/>
+				</div>
+				<div class="flex flex-col gap-2">
+					<Label for="match-threshold">Identity threshold</Label>
+					<Input
+						id="match-threshold"
+						type="number"
+						min="0"
+						max="1"
+						step="0.01"
+						bind:value={detector.identity.match_threshold}
+					/>
+				</div>
+				<div class="flex flex-col gap-2">
+					<Label for="match-margin">Identity margin</Label>
+					<Input
+						id="match-margin"
+						type="number"
+						min="0"
+						max="1"
+						step="0.01"
+						bind:value={detector.identity.match_margin}
+					/>
+				</div>
+				<div class="flex flex-col gap-2">
+					<Label for="track-samples">Track samples</Label>
+					<Input
+						id="track-samples"
+						type="number"
+						min="1"
+						step="1"
+						bind:value={detector.identity.track_samples}
+					/>
+				</div>
+			</div>
+		{/if}
+
 		<div class="mt-2 flex items-center justify-end space-x-2">
 			<Switch id="advanced" bind:checked={advanced} />
 			<Label for="advanced">Advanced</Label>
@@ -586,7 +565,6 @@
 					(value) => {
 						try {
 							detector = JSON.parse(value);
-							modelType = detector.dazzlecow ? 'dazzlecow' : 'yolo';
 						} catch {
 							// Do nothing
 						}

@@ -8,6 +8,7 @@ from threading import Thread
 from time import sleep
 from typing import TYPE_CHECKING
 
+from aidetector.detection.identity_registry import IdentityRegistry
 from aidetector.detection.validator import Validator
 from aidetector.detection.yolo import YoloRunner
 from aidetector.exporters.disk import DiskExporter
@@ -19,7 +20,7 @@ from aidetector.sources.source import SourceProvider
 from aidetector.utils.config import (
     ChatConfig,
     Config,
-    DazzleCowConfig,
+    CowIdentityConfig,
     Detection,
     DetectionConfig,
     DetectorConfig,
@@ -38,7 +39,7 @@ from numpy import ndarray
 from typing_extensions import Self
 
 if TYPE_CHECKING:
-    from aidetector.dazzlecow.runner import DazzleCowRunner
+    from aidetector.dazzlecow.runner import CowIdentityPipeline
 
 
 class Detector:
@@ -47,51 +48,62 @@ class Detector:
     detection: DetectionConfig
     yolo_config: YoloConfig | None
     yolo_runner: YoloRunner | None
-    dazzlecow_config: DazzleCowConfig | None
-    dazzlecow_runner: "DazzleCowRunner | None"
+    identity_config: CowIdentityConfig | None
+    identity_pipeline: "CowIdentityPipeline | None"
+    identity_registry: IdentityRegistry
     source_provider: SourceProvider
     validator: Validator
     exporters: list[Exporter]
     running: bool
     export_executor: ThreadPoolExecutor
     last_frame_time: datetime
-    last_dazzlecow_result_time: dict[str, datetime]
+    last_identity_result_time: dict[str, datetime]
     last_detection_time: dict[str, dict[str, datetime]]
 
     def __init__(
         self,
         detection: DetectionConfig,
         yolo_config: YoloConfig | None,
-        dazzlecow_config: DazzleCowConfig | None,
+        identity_config: CowIdentityConfig | None,
         validator: Validator,
         exporters: list[Exporter],
         onnx_config: OnnxConfig,
+        identity_registry: IdentityRegistry | None = None,
+        identity_producer: str = "detector",
     ):
         self.detections = defaultdict(list)
-        if yolo_config is not None and dazzlecow_config is not None:
-            raise ValueError("Configure either yolo or dazzlecow, not both")
+        if identity_config is not None and yolo_config is None:
+            raise ValueError("Cow identity requires a YOLO detector")
 
         self.detection = detection
         self.yolo_config = yolo_config
-        self.dazzlecow_config = dazzlecow_config
+        self.identity_config = identity_config
+        self.identity_registry = identity_registry or IdentityRegistry()
+        self.identity_producer = identity_producer
         self.source_provider = SourceProvider(detection)
         self.yolo_runner = (
             YoloRunner(yolo_config, onnx_config, self.source_provider.sources)
             if yolo_config is not None
             else None
         )
-        if dazzlecow_config is not None:
-            from aidetector.dazzlecow.runner import DazzleCowRunner
+        if identity_config is not None and self.yolo_runner is not None and yolo_config:
+            from aidetector.dazzlecow.runner import CowIdentityPipeline
 
-            self.dazzlecow_runner = DazzleCowRunner(dazzlecow_config)
+            self.identity_pipeline = CowIdentityPipeline(
+                identity_config,
+                onnx_config,
+                self.source_provider.sources,
+                yolo_config,
+                self.yolo_runner,
+            )
         else:
-            self.dazzlecow_runner = None
+            self.identity_pipeline = None
         self.validator = validator
         self.exporters = exporters
         self.running = True
         self.export_executor = ThreadPoolExecutor()
         self.last_frame_time = datetime.min
-        self.last_dazzlecow_result_time = {}
+        self.last_identity_result_time = {}
         self.last_detection_time = {}
 
     @classmethod
@@ -100,6 +112,7 @@ class Detector:
         config: Config,
         detector: DetectorConfig,
         detector_index: int = 0,
+        identity_registry: IdentityRegistry | None = None,
     ) -> list[Self]:
         exporters: list[Exporter] = []
         if detector.exporters is not None:
@@ -130,10 +143,12 @@ class Detector:
             cls(
                 detector.detection,
                 detector.yolo,
-                detector.dazzlecow,
+                detector.identity,
                 validator,
                 exporters,
                 config.onnx,
+                identity_registry,
+                f"detector-{detector_index}",
             )
         ]
 
@@ -144,10 +159,26 @@ class Detector:
             self._handle_frame_batch(batch)
 
     def _handle_frame_batch(self, batch: dict[str, list[tuple[datetime, ndarray]]]):
-        dazzlecow_runner = getattr(self, "dazzlecow_runner", None)
-        if dazzlecow_runner is not None:
-            self._handle_dazzlecow_batch(batch, dazzlecow_runner)
+        identity_pipeline = getattr(self, "identity_pipeline", None)
+        if identity_pipeline is not None and identity_pipeline.reuses_primary_yolo:
+            self._handle_primary_identity_batch(batch, identity_pipeline)
             return
+
+        if identity_pipeline is not None:
+            for tracked in identity_pipeline.track_sources(batch):
+                date, frame = tracked.frames[-1]
+                identity_detection = identity_pipeline.live_detection(
+                    date, frame, tracked.result
+                )
+                self.identity_registry.publish(
+                    tracked.source,
+                    self.identity_producer,
+                    identity_detection,
+                )
+                self._publish_tracks(
+                    tracked.source,
+                    identity_detection,
+                )
 
         if (
             datetime.now() - self.last_frame_time
@@ -186,50 +217,68 @@ class Detector:
                 [Detection(frames[-1][0], ImageSet(frames[-1][1]), {})],
             )
 
-    def _handle_dazzlecow_batch(
+    def _handle_primary_identity_batch(
         self,
         batch: dict[str, list[tuple[datetime, ndarray]]],
-        runner: DazzleCowRunner,
+        identity_pipeline: CowIdentityPipeline,
     ) -> None:
-        result_times = getattr(self, "last_dazzlecow_result_time", {})
-        self.last_dazzlecow_result_time = result_times
-        for source, source_frames in batch.items():
-            results = runner.detect(
-                [frame for _, frame in source_frames],
-                [source] * len(source_frames),
-                [date for date, _ in source_frames],
+        if self.yolo_runner is None:
+            return
+        result_times = self.last_identity_result_time
+        for tracked in self.yolo_runner.track_sources(batch):
+            source = tracked.source
+            latest_date, latest_frame = tracked.frames[-1]
+            candidates = identity_pipeline.candidates_from_primary(
+                source,
+                tracked.result,
+                latest_frame,
             )
-            if not results:
-                continue
-            latest_date, latest_frame = source_frames[-1]
+            identity_detection = identity_pipeline.live_detection(
+                latest_date,
+                latest_frame,
+                candidates,
+            )
+            self.identity_registry.publish(
+                source,
+                self.identity_producer,
+                identity_detection,
+            )
             if (
                 latest_date - result_times.get(source, datetime.min)
             ).total_seconds() >= self.detection.interval:
                 result_times[source] = latest_date
-                self._handle_model_result(source, results[-1], source_frames)
+                self._handle_model_result(
+                    source,
+                    tracked.result,
+                    tracked.frames,
+                )
                 continue
 
-            detections = runner.detections_from_result(
-                results[-1],
+            detections = self.yolo_runner.detections_from_result(
+                tracked.result,
                 [(latest_date, latest_frame)],
             )
+            if detections:
+                self.identity_registry.enrich(source, detections[-1])
             self._publish_tracks(
                 source,
-                detections[-1]
-                if detections
-                else Detection(latest_date, ImageSet(latest_frame), {}),
+                detections[-1] if detections else identity_detection,
             )
 
     def _handle_model_result(
-        self, source: str, result, frames: list[tuple[datetime, ndarray]]
+        self,
+        source: str,
+        result,
+        frames: list[tuple[datetime, ndarray]],
     ):
-        runner = self.yolo_runner or getattr(self, "dazzlecow_runner", None)
+        runner = self.yolo_runner
         model_config = self._model_config()
         if model_config is None or runner is None:
             return
 
         detections = runner.detections_from_result(result, frames)
         if detections:
+            self.identity_registry.enrich(source, detections[-1])
             self._publish_tracks(source, detections[-1])
             self._process(source, detections)
             return
@@ -252,8 +301,7 @@ class Detector:
                 "Including trailing frames: %f seconds", time_since_latest_detection
             )
             detections = [
-                Detection(frame[0], ImageSet(frame[1]), {})
-                for frame in frames
+                Detection(frame[0], ImageSet(frame[1]), {}) for frame in frames
             ]
             self._process(source, detections)
 
@@ -310,6 +358,7 @@ class Detector:
         detections = self.detections[source]
         if self._has_min_detections(source):
             best_detection = max(detections, key=lambda x: max_confidence(x.confidence))
+            self.identity_registry.enrich(source, best_detection)
 
             model_config = self._model_config()
             matching_confs = (
@@ -411,4 +460,4 @@ class Detector:
         )
 
     def _model_config(self) -> ModelConfig | None:
-        return self.yolo_config or getattr(self, "dazzlecow_config", None)
+        return self.yolo_config

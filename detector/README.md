@@ -6,7 +6,7 @@ Detection works in two stages:
 1. **YOLO** — a fast AI model that scans every frame looking for objects.
 2. **VLM** *(optional)* — a smarter AI (like Gemini or GPT-5) that double-checks the detection by looking at the footage and answering a question you define, e.g. *"Is there really a cow mounting another cow?"*. This dramatically reduces false alerts.
 
-For individual Holstein-Friesian recognition, a detector can use **DazzleCow** instead of YOLO. This follows the detect-segment-identify pipeline from [Automated Re-Identification of Holstein-Friesian Cattle in Dense Crowds](https://arxiv.org/abs/2602.15962): OWLv2 locates individual cows, SAM2.1 creates masks, and a contrastively trained ResNet50 identifies the masked animals through a kNN gallery.
+For individual Holstein-Friesian recognition, a normal YOLO detector can optionally be enriched with cow identities. Segmented cows are encoded with the MIT-licensed MiewID model and matched against identities stored in SQLite.
 
 Confirmed detections can be sent to **Telegram**, saved to **disk**, or posted to a **webhook**.
 
@@ -147,105 +147,63 @@ This is the fast first-pass AI that scans every frame. Without a YOLO model, the
 
 ---
 
-### `dazzlecow` — Individual cow recognition
+### `identity` — Individual cow recognition
 
-Use `dazzlecow` instead of `yolo` for dense Holstein crowds. It requires a trained encoder checkpoint and a gallery containing examples of the cows that should be named.
+Cow identity is an optional enrichment of a normal YOLO detector. MiewID converts segmented cows into normalized embeddings. Five observations from the same YOLO track are averaged, then compared with the best stored view of each identity. By default, an identity is returned only when cosine similarity is at least `0.68` and the lead over the second-best identity is at least `0.05`; ambiguous tracks remain unknown. The pinned 195 MB ONNX model is downloaded from Hugging Face on first use.
+
+When the primary detector already tracks a `cow` class with segmentation masks, those results are reused. For detection-only models such as CowCatcher, the identity pipeline runs `yolo26m-seg.pt` on the same frame and attaches every identified cow inside the event box to detections such as `mounting`.
 
 ```json
-"dazzlecow": {
-  "model": "models/dazzlecow-resnet50.pt",
-  "gallery": "identities/cows.npz",
-  "track_samples": 5
+{
+  "yolo": {
+    "model": "cowcatcher.pt",
+    "confidence": 0.8
+  },
+  "identity": {
+    "segment_model": "yolo26m-seg.pt",
+    "database": "identities/cows.sqlite"
+  }
 }
 ```
 
-The paper's defaults are built in: `google/owlv2-large-patch14-ensemble`, `sam2.1_l.pt`, prompt `cow`, area ratio `0.025`–`0.075`, NMS IoU `0.5`, five kNN neighbors, and match threshold `0.75`. OWLv2 relocalizes cows every `owl_interval` seconds (default `1`); SAM2 propagates their masks over every frame in between. `detection.interval` only limits event detections and does not skip SAM2 tracking frames.
+For enrollment, add an `enrollment` object. The detector records averaged tracklets in the same database until enrollment is finalized in the web app. Afterwards it loads the assigned embeddings from SQLite into memory for matching.
 
-`match_margin` can additionally require a minimum normalized vote difference between the best and second-best identity. Identity embeddings are averaged over five observations from the same source-bound spatial track before matching. `track_samples`, `track_iou`, and `track_max_age` can be overridden in the JSON configuration.
+Every animal starts without an identity. `identity_count` is therefore not a list of known identities; it is the optional known herd size. Supplying it turns the first scan into a closed-set assignment and is strongly recommended when every animal is expected to participate. Without it, enrollment is open-set and deliberately conservative: one animal may initially appear as multiple provisional identities, which can be reviewed and merged in the web app. This avoids forcing genuinely new animals into an existing identity.
 
-Install the optional model dependencies before preparing data or running this detector:
-
-```bash
-uv sync --extra default --extra dazzlecow
+```json
+{
+  "yolo": {
+    "model": "yolo26m-seg.pt",
+    "task": "segment",
+    "tracking": true,
+    "tracker": "bytetrack.yaml",
+    "confidence": { "cow": 0.1 },
+    "imgsz": 640
+  },
+  "identity": {
+    "database": "identities/cows.sqlite",
+    "enrollment": {
+      "identity_count": 46
+    },
+    "match_threshold": 0.68,
+    "match_margin": 0.05
+  }
+}
 ```
 
-Public dataset training follows the paper's timestamp-based instance-discrimination setup. `MultiCamCows2024` expects `date/identity/images`; `Cows2021` discovers the first numeric identity directory.
+SQLite is the only persistent identity store. It contains track embeddings, previews, assignments, and animal numbers. At startup and after database changes, the detector builds its normalized NumPy search arrays directly in memory.
 
-```bash
-# 1. Apply the paper's OWLv2 + SAM2 masking to public identity crops.
-uv run --extra dazzlecow prepare-dazzlecow \
-  --dataset multicamcows2024=/data/MultiCamCows2024Root \
-  --dataset cows2021=/data/Cows21/Identification/Test \
-  --output data/dazzlecow-masked
+Identity databases include the pinned embedding model and dimension. Databases created with an earlier experimental encoder are not compatible with MiewID; the detector reports this at startup and requires a fresh enrollment instead of mixing embeddings from different models.
 
-# 2. Isolate validation and test days/cameras.
-uv run prepare-dazzlecow-folds \
-  --dataset identity=data/dazzlecow-masked \
-  --output data/dazzlecow-folds --fold 1
+After enrollment is finalized, reliable matches keep improving existing identities. The detector rechecks the complete track embedding, stores at most one sufficiently distinct sample per track, and retains at most 20 learned samples per identity. Unknown or ambiguous tracks are not assigned automatically and remain available for a later enrollment workflow.
 
-# 3. Train with timestamp batches, hard-pair mining, and NT-Xent.
-uv run train-dazzlecow \
-  --dataset identity=data/dazzlecow-folds/fold-01/train \
-  --validation-dataset identity=data/dazzlecow-folds/fold-01/validation \
-  --training-mode paper \
-  --output models/dazzlecow-resnet50.pt
+Unknown tracks collected after finalization appear as pending evidence in the web app. Finishing another scan clusters only this pending evidence. A mature cluster is first compared conservatively with the existing gallery: confident matches add evidence to that identity, while unmatched clusters become new identities without changing existing assignments or animal numbers. A cluster needs evidence from at least three tracks; immature clusters remain pending.
 
-# 4. Build a gallery from a held-out day/camera.
-uv run build-dazzlecow-gallery \
-  --model models/dazzlecow-resnet50.pt \
-  --source data/dazzlecow-folds/fold-01/gallery \
-  --output identities/cows.npz
-```
+All detectors created by the same manager share a short-lived in-memory identity register. An identity-enabled detector publishes normalized cow locations keyed by source, detector, and YOLO track id. Other detectors reading the same source automatically attach those identities by location, so an event detector such as CowCatcher does not need to run a second identity pipeline. Entries expire after five seconds and are never persisted as identity evidence.
 
-The public datasets teach a transferable visual representation. The gallery is intentionally farm-specific: a model cannot know that an unseen animal should be called `042` without enrollment data linking that animal to that name.
+Install the optional identity dependencies with `uv sync --extra default --extra identity`.
 
-The 8-calves video can be used for a quick chronological preflight while larger datasets download. Its corrected track boxes are used directly as SAM prompts. Train, validation, gallery, and test crops use separate chronological windows with unused time gaps to prevent adjacent-frame leakage:
-
-```bash
-uv run --extra dazzlecow prepare-calves8 \
-  --video /data/8-calves/pmfeed_4_3_16.mp4 \
-  --annotations /data/8-calves/pmfeed_4_3_16.pkl \
-  --output data/8-calves-masked
-
-uv run train-dazzlecow \
-  --dataset identity=data/8-calves-masked/train \
-  --validation-dataset identity=data/8-calves-masked/validation \
-  --output models/dazzlecow-resnet50.pt
-uv run build-dazzlecow-gallery --model models/dazzlecow-resnet50.pt \
-  --source data/8-calves-masked/gallery --output identities/8-calves.npz
-uv run evaluate-dazzlecow --model models/dazzlecow-resnet50.pt \
-  --gallery identities/8-calves.npz \
-  --gallery-source data/8-calves-masked/gallery \
-  --source data/8-calves-masked/test \
-  --failures data/8-calves-failures
-```
-
-For repeatable experiments, the benchmark command trains a new model and evaluates it together with optional existing checkpoints on the same fixed splits. It writes split manifests, settings, metrics, galleries, and failure images to a new output directory:
-
-```bash
-uv run benchmark-dazzlecow \
-  --train data/8-calves-masked/train \
-  --validation data/8-calves-masked/validation \
-  --gallery data/8-calves-masked/gallery \
-  --test data/8-calves-masked/test \
-  --output benchmarks/8-calves-v1 \
-  --training-mode paper \
-  --compare previous=models/dazzlecow-previous.pt
-```
-
-The report includes the paper's kNN, ARI, AMI, NMI, and Hungarian clustering metrics. It also compares rolling identity aggregates of 1, 3, 5, and 8 consecutive samples. These are oracle tracks grouped by known test identity, so they measure the benefit of embedding aggregation separately from spatial tracking errors. The open-set section removes every test identity from the gallery in turn and reports the best balanced match threshold together with its known-identification and unknown-rejection rates. The complete threshold sweep is written to `open-set/<model>.csv`.
-
-Use annotated video to measure the complete localization, tracking, and identity path. The default `--localizer video` runs OWLv2 periodically and propagates SAM2 masks between detections. `--localizer image` reruns OWLv2 and image SAM on each sampled frame; `--localizer annotations` uses annotation boxes as SAM prompts to isolate tracking and identity quality.
-
-```bash
-uv run benchmark-dazzlecow-video \
-  --video /data/8-calves/pmfeed_4_3_16.mp4 \
-  --annotations /data/8-calves/pmfeed_4_3_16.pkl \
-  --model models/dazzlecow-resnet50.pt \
-  --gallery identities/8-calves.npz \
-  --output benchmarks/8-calves-video.json \
-  --start-frame 57597 --frame-step 1 --max-frames 100
-```
+Use `benchmark-cow-identity-video` for annotated end-to-end localization, tracking, and identity regression tests. `benchmark-cow-enrollment` evaluates clustering against prepared public identity crops. Both use the same pinned MiewID ONNX model as the application.
 
 ---
 

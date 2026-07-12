@@ -82,7 +82,7 @@ def _patch_ultralytics_requirements() -> None:
     for module_name in ("ultralytics.nn.autobackend", "ultralytics.engine.exporter"):
         module = sys.modules.get(module_name)
         if module is not None and hasattr(module, "check_requirements"):
-            module.check_requirements = _check_requirements
+            setattr(module, "check_requirements", _check_requirements)
 
 
 def _candidate_windows_dll_dirs(root: Path) -> list[Path]:
@@ -207,6 +207,11 @@ def setup_ort(config: Config) -> bool:
                     sess_options = ort.SessionOptions()
 
                 for device, options in _STATE.devices:
+                    if (
+                        device.ep_name == "NvTensorRTRTXExecutionProvider"
+                        and not _uses_yolo_profile(path_or_bytes)
+                    ):
+                        options = {}
                     sess_options.add_provider_for_devices([device], options)
 
                 return _original_InferenceSession(
@@ -246,6 +251,13 @@ def get_provider_options(config: Config, provider: str) -> dict:
     if provider == "CoreMLExecutionProvider":
         return _coreml_options()
     return {}
+
+
+def _uses_yolo_profile(path_or_bytes: Any) -> bool:
+    return (
+        not isinstance(path_or_bytes, (str, os.PathLike))
+        or Path(path_or_bytes).name != "miewid.onnx"
+    )
 
 
 def sort_devices_by_provider(devices: list) -> list:
@@ -288,17 +300,20 @@ def get_devices(config: Config, devices: list) -> list[tuple]:
 def _nvtensorrtx_options(config: Config):
     input_name = "images"
     colors = 3
-    yolo_detectors = [detector for detector in config.detectors if detector.yolo]
-    if not yolo_detectors:
+    yolo_configs = [
+        detector.yolo for detector in config.detectors if detector.yolo is not None
+    ]
+    if not yolo_configs:
         return {}
 
-    size_min = min(detector.yolo.imgsz for detector in yolo_detectors)
-    size_max = max(detector.yolo.imgsz for detector in yolo_detectors)
+    size_min = min(yolo.imgsz for yolo in yolo_configs)
+    size_max = max(yolo.imgsz for yolo in yolo_configs)
     streams_max = max(
         [1]
         + [
             len(detector.detection.source)
-            for detector in yolo_detectors
+            for detector in config.detectors
+            if detector.yolo is not None
             if isinstance(detector.detection.source, list)
         ]
     )

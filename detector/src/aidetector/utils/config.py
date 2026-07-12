@@ -44,7 +44,7 @@ class Crop:
     label: str | None = None
     confidence: float | None = None
     track_id: int | None = None
-    identity: IdentityResult | None = None
+    identities: list[IdentityResult] = field(default_factory=list)
 
 
 @dataclass(config=ConfigDict(arbitrary_types_allowed=True))
@@ -77,10 +77,11 @@ class Detection:
         identities = []
         seen = set()
         for crop in self.images.crops:
-            if crop.identity is None or crop.identity.identity in seen:
-                continue
-            identities.append(crop.identity)
-            seen.add(crop.identity.identity)
+            for identity in crop.identities:
+                if identity.identity in seen:
+                    continue
+                identities.append(identity)
+                seen.add(identity.identity)
         return identities
 
 
@@ -100,42 +101,34 @@ class YoloConfig(ModelConfig):
     task: Literal["detect", "segment"] = "detect"
     tracking: bool = False
     imgsz: int = 640
+    iou: float = 0.7
+    tracker: str = "botsort.yaml"
 
 
 @dataclass(kw_only=True)
-class DazzleCowEnrollmentConfig:
-    database: Path
+class CowIdentityEnrollmentConfig:
     identity_count: int | None = None
 
 
 @dataclass(kw_only=True)
-class DazzleCowConfig(ModelConfig):
-    model: str
-    gallery: Path | None = None
-    enrollment: DazzleCowEnrollmentConfig | None = None
-    owl_model: str = "google/owlv2-large-patch14-ensemble"
-    sam_model: str = "sam2.1_l.pt"
-    owl_interval: float = 1
-    prompt: str = "cow"
-    confidence: float = 0.3
-    match_threshold: float = 0.75
-    match_margin: float = 0
-    neighbors: int = 5
-    min_area_ratio: float = 0.025
-    max_area_ratio: float = 0.075
+class CowIdentityConfig:
+    database: Path
+    enrollment: CowIdentityEnrollmentConfig | None = None
+    segment_model: str = "yolo26m-seg.pt"
+    imgsz: int = 640
+    confidence: float = 0.1
+    match_threshold: float = 0.68
+    match_margin: float = 0.05
+    min_area_ratio: float = 0.005
+    max_area_ratio: float = 0.3
     margin: float = 0
     nms_iou: float = 0.5
     track_samples: int = 5
-    track_iou: float = 0.2
     track_max_age: int = 10
-    device: Literal["auto", "cpu", "cuda", "mps"] = "auto"
-    frames_min: int = 1
 
     def __post_init__(self) -> None:
-        if self.gallery is None and self.enrollment is None:
-            raise ValueError("DazzleCow requires a gallery or enrollment database")
         if not 0 <= self.margin < 0.5:
-            raise ValueError("DazzleCow margin must be between 0 and 0.5")
+            raise ValueError("Cow identity margin must be between 0 and 0.5")
 
 
 @dataclass(kw_only=True)
@@ -230,9 +223,13 @@ class HealthcheckConfig(HttpConfig):
 class DetectorConfig:
     detection: DetectionConfig
     yolo: YoloConfig | None = None
-    dazzlecow: DazzleCowConfig | None = None
+    identity: CowIdentityConfig | None = None
     vlm: VLMConfig | list[VLMConfig] | None = None
     exporters: ExportersConfig | None = None
+
+    def __post_init__(self) -> None:
+        if self.identity is not None and self.yolo is None:
+            raise ValueError("Cow identity requires a YOLO detector")
 
 
 @dataclass(kw_only=True)
@@ -269,7 +266,9 @@ def get_timestamped_filename(detection: Detection) -> str:
     return f"{timestamp}_{rounded_confidence}.jpg"
 
 
-def get_date_path(detection: Detection, timespec: Literal["seconds", "milliseconds"]) -> str:
+def get_date_path(
+    detection: Detection, timespec: Literal["seconds", "milliseconds"]
+) -> str:
     return detection.date.isoformat(timespec=timespec).replace(":", "-")
 
 
@@ -329,11 +328,15 @@ def load_config() -> Config:
         if template:
             with open(config_path, "w") as f:
                 json.dump(template, f, indent=4)
-            logger.warning(f"Created {config_path} from template. Please edit the configuration before running.")
+            logger.warning(
+                f"Created {config_path} from template. Please edit the configuration before running."
+            )
             raise FileNotFoundError(f"Configure before running: {config_path}")
         else:
             logger.error(f"Configuration file not found: {config_path}")
-            logger.error("Create a config.json file. See: https://github.com/ESchouten/ai-detector")
+            logger.error(
+                "Create a config.json file. See: https://github.com/ESchouten/ai-detector"
+            )
             raise FileNotFoundError(f"Configuration file not found: {config_path}")
 
     try:
@@ -359,7 +362,9 @@ def load_config() -> Config:
     except ValidationError as e:
         logger.error(f"Configuration validation failed for {config_path}:")
         logger.error(format_validation_errors(e))
-        raise ValueError(f"Configuration validation failed for {config_path}:\n{format_validation_errors(e)}")
+        raise ValueError(
+            f"Configuration validation failed for {config_path}:\n{format_validation_errors(e)}"
+        )
 
 
 config = load_config()

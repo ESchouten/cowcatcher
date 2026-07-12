@@ -88,69 +88,17 @@
       "title": "ChatConfig",
       "type": "object"
     },
-    "DazzleCowConfig": {
+    "CowIdentityConfig": {
       "properties": {
-        "confidence": {
-          "default": 0.3,
-          "title": "Confidence",
-          "type": "number"
-        },
-        "time_max": {
-          "default": 60,
-          "title": "Time Max",
-          "type": "integer"
-        },
-        "timeout": {
-          "default": 5,
-          "title": "Timeout",
-          "type": "integer"
-        },
-        "cooldown": {
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "additionalProperties": {
-                "type": "number"
-              },
-              "type": "object"
-            }
-          ],
-          "default": 0,
-          "title": "Cooldown"
-        },
-        "include_trailing_time": {
-          "default": 1,
-          "title": "Include Trailing Time",
-          "type": "integer"
-        },
-        "frames_min": {
-          "default": 1,
-          "title": "Frames Min",
-          "type": "integer"
-        },
-        "model": {
-          "title": "Model",
+        "database": {
+          "format": "path",
+          "title": "Database",
           "type": "string"
-        },
-        "gallery": {
-          "anyOf": [
-            {
-              "format": "path",
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Gallery"
         },
         "enrollment": {
           "anyOf": [
             {
-              "$ref": "#/$defs/DazzleCowEnrollmentConfig"
+              "$ref": "#/$defs/CowIdentityEnrollmentConfig"
             },
             {
               "type": "null"
@@ -158,48 +106,38 @@
           ],
           "default": null
         },
-        "owl_model": {
-          "default": "google/owlv2-large-patch14-ensemble",
-          "title": "Owl Model",
+        "segment_model": {
+          "default": "yolo26m-seg.pt",
+          "title": "Segment Model",
           "type": "string"
         },
-        "sam_model": {
-          "default": "sam2.1_l.pt",
-          "title": "Sam Model",
-          "type": "string"
+        "imgsz": {
+          "default": 640,
+          "title": "Imgsz",
+          "type": "integer"
         },
-        "owl_interval": {
-          "default": 1,
-          "title": "Owl Interval",
+        "confidence": {
+          "default": 0.1,
+          "title": "Confidence",
           "type": "number"
         },
-        "prompt": {
-          "default": "cow",
-          "title": "Prompt",
-          "type": "string"
-        },
         "match_threshold": {
-          "default": 0.75,
+          "default": 0.68,
           "title": "Match Threshold",
           "type": "number"
         },
         "match_margin": {
-          "default": 0,
+          "default": 0.05,
           "title": "Match Margin",
           "type": "number"
         },
-        "neighbors": {
-          "default": 5,
-          "title": "Neighbors",
-          "type": "integer"
-        },
         "min_area_ratio": {
-          "default": 0.025,
+          "default": 0.005,
           "title": "Min Area Ratio",
           "type": "number"
         },
         "max_area_ratio": {
-          "default": 0.075,
+          "default": 0.3,
           "title": "Max Area Ratio",
           "type": "number"
         },
@@ -218,41 +156,20 @@
           "title": "Track Samples",
           "type": "integer"
         },
-        "track_iou": {
-          "default": 0.2,
-          "title": "Track Iou",
-          "type": "number"
-        },
         "track_max_age": {
           "default": 10,
           "title": "Track Max Age",
           "type": "integer"
-        },
-        "device": {
-          "default": "auto",
-          "enum": [
-            "auto",
-            "cpu",
-            "cuda",
-            "mps"
-          ],
-          "title": "Device",
-          "type": "string"
         }
       },
       "required": [
-        "model"
+        "database"
       ],
-      "title": "DazzleCowConfig",
+      "title": "CowIdentityConfig",
       "type": "object"
     },
-    "DazzleCowEnrollmentConfig": {
+    "CowIdentityEnrollmentConfig": {
       "properties": {
-        "database": {
-          "format": "path",
-          "title": "Database",
-          "type": "string"
-        },
         "identity_count": {
           "anyOf": [
             {
@@ -266,10 +183,7 @@
           "title": "Identity Count"
         }
       },
-      "required": [
-        "database"
-      ],
-      "title": "DazzleCowEnrollmentConfig",
+      "title": "CowIdentityEnrollmentConfig",
       "type": "object"
     },
     "DetectionConfig": {
@@ -326,10 +240,10 @@
           ],
           "default": null
         },
-        "dazzlecow": {
+        "identity": {
           "anyOf": [
             {
-              "$ref": "#/$defs/DazzleCowConfig"
+              "$ref": "#/$defs/CowIdentityConfig"
             },
             {
               "type": "null"
@@ -952,6 +866,16 @@
           "default": 640,
           "title": "Imgsz",
           "type": "integer"
+        },
+        "iou": {
+          "default": 0.7,
+          "title": "Iou",
+          "type": "number"
+        },
+        "tracker": {
+          "default": "botsort.yaml",
+          "title": "Tracker",
+          "type": "string"
         }
       },
       "required": [

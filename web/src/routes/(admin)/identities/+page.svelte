@@ -131,7 +131,7 @@
 	{/if}
 
 	{#if databases.length === 0}
-		<p class="text-sm text-muted-foreground">No DazzleCow enrollment database is configured.</p>
+		<p class="text-sm text-muted-foreground">No cow identity enrollment database is configured.</p>
 	{:else}
 		{#each databases as database (database.database)}
 			<section class="space-y-3">
@@ -140,14 +140,18 @@
 						<h2 class="text-base font-semibold">{database.label}</h2>
 						{#if database.identities.length > 0}
 							<Badge variant="secondary">{database.identities.length} identities</Badge>
-						{:else if database.finalizeRequested}
-							<Badge variant="outline">Finalizing</Badge>
 						{:else}
 							<Badge variant="outline">{database.tracklets} tracklets</Badge>
 						{/if}
+						{#if database.identities.length > 0 && database.pendingTracklets > 0}
+							<Badge variant="outline">{database.pendingTracklets} pending</Badge>
+						{/if}
+						{#if database.finalizeRequested}
+							<Badge variant="outline">Finalizing</Badge>
+						{/if}
 					</div>
 
-					{#if database.identities.length === 0 && database.tracklets > 0}
+					{#if (database.identities.length === 0 && database.tracklets > 0) || (database.identities.length > 0 && database.pendingTracklets > 0)}
 						<Button
 							type="button"
 							size="sm"
@@ -155,13 +159,33 @@
 							onclick={() => finalize(database.database)}
 						>
 							<CheckCheckIcon />
-							{database.finalizeRequested ? 'Finalizing' : 'Finish scan'}
+							{database.finalizeRequested
+								? 'Finalizing'
+								: database.identities.length > 0
+									? 'Add new identities'
+									: 'Finish scan'}
 						</Button>
 					{/if}
 				</header>
 
 				{#if database.finalizeError}
 					<p class="text-sm font-medium text-destructive">{database.finalizeError}</p>
+				{/if}
+
+				{#if database.identities.length > 0 && database.pending.length > 0}
+					<div class="space-y-2 border p-3">
+						<p class="text-sm font-medium">Pending evidence</p>
+						<div class="flex gap-3 overflow-x-auto pb-1">
+							{#each database.pending as tracklet (tracklet.id)}
+								<figure class="w-28 shrink-0 space-y-1">
+									<img src={tracklet.preview} alt="" class="aspect-square w-full object-cover" />
+									<figcaption class="truncate text-xs text-muted-foreground">
+										{tracklet.observations} observations
+									</figcaption>
+								</figure>
+							{/each}
+						</div>
+					</div>
 				{/if}
 
 				{#if database.identities.length > 0}
@@ -233,7 +257,7 @@
 																{mergeTargets[mergeKey] ?? 'Merge into...'}
 															</Select.Trigger>
 															<Select.Content>
-																{#each database.identities.filter((item) => item.identity !== identity.identity) as target}
+																{#each database.identities.filter((item) => item.identity !== identity.identity) as target (target.identity)}
 																	<Select.Item value={target.identity} label={target.identity} />
 																{/each}
 															</Select.Content>

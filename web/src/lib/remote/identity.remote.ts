@@ -27,6 +27,8 @@ export interface CowIdentityDatabase {
 	database: string;
 	label: string;
 	tracklets: number;
+	pendingTracklets: number;
+	pending: CowTracklet[];
 	finalizeRequested: boolean;
 	finalizeError: string | null;
 	identities: CowIdentity[];
@@ -51,6 +53,8 @@ export const getCowIdentities = query(async (): Promise<CowIdentityDatabase[]> =
 					database,
 					label,
 					tracklets: 0,
+					pendingTracklets: 0,
+					pending: [],
 					finalizeRequested: false,
 					finalizeError: null,
 					identities: []
@@ -61,6 +65,18 @@ export const getCowIdentities = query(async (): Promise<CowIdentityDatabase[]> =
 				const tracklets = Number(
 					(connection.prepare('SELECT COUNT(*) AS count FROM tracklets').get() as { count: number })
 						.count
+				);
+				const pendingTracklets = Number(
+					(
+						connection
+							.prepare(
+								`SELECT COUNT(*) AS count
+								 FROM tracklets t
+								 LEFT JOIN identity_tracklets it ON it.tracklet_id = t.id
+								 WHERE it.tracklet_id IS NULL`
+							)
+							.get() as { count: number }
+					).count
 				);
 				const rows = connection
 					.prepare(
@@ -80,10 +96,32 @@ export const getCowIdentities = query(async (): Promise<CowIdentityDatabase[]> =
 					tracklets: number;
 					preview: Uint8Array | null;
 				}>;
+				const pending = connection
+					.prepare(
+						`SELECT t.id, t.source, t.observations, t.preview
+						 FROM tracklets t
+						 LEFT JOIN identity_tracklets it ON it.tracklet_id = t.id
+						 WHERE it.tracklet_id IS NULL
+						 ORDER BY t.observations DESC, t.id
+						 LIMIT 12`
+					)
+					.all() as Array<{
+					id: string;
+					source: string;
+					observations: number;
+					preview: Uint8Array;
+				}>;
 				return {
 					database,
 					label,
 					tracklets,
+					pendingTracklets,
+					pending: pending.map((tracklet) => ({
+						id: tracklet.id,
+						source: tracklet.source,
+						observations: Number(tracklet.observations),
+						preview: `data:image/jpeg;base64,${Buffer.from(tracklet.preview).toString('base64')}`
+					})),
 					finalizeRequested: control(connection, 'finalize_requested') === '1',
 					finalizeError: control(connection, 'finalize_error') || null,
 					identities: rows.map((row) => ({

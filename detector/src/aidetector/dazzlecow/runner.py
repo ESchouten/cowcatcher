@@ -2,149 +2,212 @@ import logging
 from dataclasses import replace
 from datetime import datetime
 
-import numpy as np
-from aidetector.dazzlecow.enrollment import export_named_gallery, finalize_enrollment
-from aidetector.dazzlecow.gallery import DazzleCowGallery
+from aidetector.dazzlecow.enrollment import (
+    finalize_enrollment,
+    finalize_pending_enrollment,
+)
+from aidetector.dazzlecow.gallery import CowIdentityGallery, IdentityMatch
 from aidetector.dazzlecow.localizer import (
     CowCandidate,
-    DazzleCowVideoLocalizer,
+    DazzleCowLocalizer,
     LocalizerSettings,
+    candidates_from_result,
 )
-from aidetector.dazzlecow.model import DazzleCowEncoder
+from aidetector.dazzlecow.model import CowIdentityEncoder, IDENTITY_MODEL
 from aidetector.dazzlecow.tracklet_store import TrackletStore
-from aidetector.dazzlecow.tracks import TrackIdentityAggregator
-from aidetector.utils.config import DazzleCowConfig, Detection, ImageSet
+from aidetector.dazzlecow.tracks import TrackIdentityAggregator, TrackletSnapshot
+from aidetector.detection.yolo import TrackedSourceResult, YoloRunner
+from aidetector.utils.config import (
+    CowIdentityConfig,
+    Detection,
+    ImageSet,
+    OnnxConfig,
+    YoloConfig,
+)
 from numpy import ndarray
 
 logger = logging.getLogger(__name__)
+MAX_LEARNED_SAMPLES_PER_IDENTITY = 20
+MIN_LEARNING_SIMILARITY = 0.75
+MIN_LEARNING_MARGIN = 0.1
 
 
-class DazzleCowRunner:
-    def __init__(self, config: DazzleCowConfig):
-        self.localizer = DazzleCowVideoLocalizer(
-            LocalizerSettings.from_config(config),
-            config.owl_interval,
-        )
-        self.encoder = DazzleCowEncoder(config.model, device=config.device)
-        self.tracklet_store = (
-            TrackletStore(config.enrollment.database)
-            if config.enrollment is not None
-            else None
-        )
-        self.gallery_path = (
-            config.gallery
-            if config.gallery is not None
-            else config.enrollment.database.with_suffix(".npz")
-            if config.enrollment is not None
-            else None
-        )
-        self.gallery_settings = (
-            config.neighbors,
-            config.match_threshold,
-            config.match_margin,
-        )
-        self.gallery = (
-            DazzleCowGallery(
-                config.gallery,
-                neighbors=config.neighbors,
-                match_threshold=config.match_threshold,
-                match_margin=config.match_margin,
+class CowIdentityPipeline:
+    def __init__(
+        self,
+        config: CowIdentityConfig,
+        onnx_config: OnnxConfig,
+        sources: list[str],
+        yolo_config: YoloConfig,
+        yolo_runner: YoloRunner,
+    ):
+        self.config = config
+        self.reuses_primary_yolo = _can_reuse_primary_yolo(yolo_config, yolo_runner)
+        self.localizer = (
+            None
+            if self.reuses_primary_yolo
+            else DazzleCowLocalizer(
+                LocalizerSettings.from_config(config),
+                onnx_config,
+                sources,
             )
-            if config.gallery is not None and config.gallery.is_file()
-            else None
         )
-        self.enrollment_revision = -1
-        self.enrollment_identity_count = (
-            config.enrollment.identity_count if config.enrollment is not None else None
+        self.encoder = CowIdentityEncoder()
+        if config.enrollment is None and not config.database.is_file():
+            raise FileNotFoundError(
+                f"Cow identity database not found: {config.database}"
+            )
+        self.tracklet_store = TrackletStore(config.database)
+        self.tracklet_store.ensure_embedding_model(
+            IDENTITY_MODEL, self.encoder.feature_dim
         )
-        self._sync_enrollment()
+        self.database_revision = -1
+        self.gallery: CowIdentityGallery | None = None
+        self._sync_database()
+        if config.enrollment is None and self.gallery is None:
+            raise ValueError(
+                f"Cow identity database is not finalized: {config.database}"
+            )
         self.identity_tracks = TrackIdentityAggregator(
             self.gallery,
             samples=config.track_samples,
-            iou_threshold=config.track_iou,
             max_age=config.track_max_age,
         )
 
-    def detect(
+    def track_sources(
         self,
-        frames: list[ndarray],
-        sources: list[str] | None = None,
-        dates: list[datetime] | None = None,
-    ) -> list[list[CowCandidate]]:
-        sources = sources or [str(index) for index in range(len(frames))]
-        dates = dates or [datetime.now()] * len(frames)
-        if len(sources) != len(frames):
-            raise ValueError("DazzleCow sources and frames differ in length")
-        if len(dates) != len(frames):
-            raise ValueError("DazzleCow dates and frames differ in length")
-        results = []
-        for source, frame, date in zip(sources, frames, dates, strict=True):
-            candidates = self.localizer.locate(source, frame, date)
-            embeddings = self.encoder.embed(
-                [candidate.image for candidate in candidates]
-            )
-            snapshots = self.identity_tracks.apply(source, candidates, embeddings)
-            tracklet_store = getattr(self, "tracklet_store", None)
-            if tracklet_store is not None and not tracklet_store.is_finalized():
-                for snapshot in snapshots:
-                    tracklet_store.upsert(snapshot)
-            self._sync_enrollment()
-            results.append(candidates)
+        batch: dict[str, list[tuple[datetime, ndarray]]],
+    ) -> list[TrackedSourceResult]:
+        if self.localizer is None:
+            raise RuntimeError("Primary YOLO supplies cow identity candidates")
+        results = self.localizer.track_sources(batch)
+        for tracked in results:
+            tracked.result = self._identify(tracked.source, tracked.result)
         return results
 
-    def _sync_enrollment(self) -> None:
-        store = getattr(self, "tracklet_store", None)
-        if store is None:
-            return
+    def candidates_from_primary(
+        self,
+        source: str,
+        result,
+        frame: ndarray,
+    ) -> list[CowCandidate]:
+        if not self.reuses_primary_yolo:
+            raise RuntimeError("Cow identity uses its own segmentation model")
+        candidates = candidates_from_result(
+            result,
+            frame,
+            LocalizerSettings.from_config(self.config),
+        )
+        return self._identify(source, candidates)
+
+    def live_detection(
+        self,
+        date: datetime,
+        frame: ndarray,
+        candidates: list[CowCandidate],
+    ) -> Detection:
+        crops = [
+            replace(candidate.crop, identities=list(candidate.crop.identities))
+            for candidate in candidates
+        ]
+        return Detection(date, ImageSet(frame, crops), {})
+
+    def _identify(
+        self,
+        source: str,
+        candidates: list[CowCandidate],
+    ) -> list[CowCandidate]:
+        self._sync_database()
+        embeddings = self.encoder.embed([candidate.image for candidate in candidates])
+        snapshots = self.identity_tracks.apply(source, candidates, embeddings)
+        if not self.tracklet_store.is_finalized():
+            for snapshot in snapshots:
+                self.tracklet_store.upsert(snapshot)
+        else:
+            for snapshot in snapshots:
+                match = self._learning_match(snapshot)
+                if match is not None:
+                    try:
+                        self.tracklet_store.update_identity(
+                            snapshot,
+                            max_samples=MAX_LEARNED_SAMPLES_PER_IDENTITY,
+                        )
+                        self.identity_tracks.mark_stored(
+                            snapshot.source, snapshot.track_id
+                        )
+                    except ValueError as error:
+                        logger.warning("Could not update cow identity: %s", error)
+                elif snapshot.identity_key is None:
+                    self.tracklet_store.update_pending(snapshot)
+        self._sync_database()
+        return candidates
+
+    def _learning_match(self, snapshot: TrackletSnapshot) -> IdentityMatch | None:
+        if (
+            snapshot.identity_key is None
+            or self.gallery is None
+            or snapshot.observations < self.config.track_samples * 2
+        ):
+            return None
+        match = self.gallery.match(snapshot.embedding)
+        if (
+            match is None
+            or match.key != snapshot.identity_key
+            or match.similarity
+            < max(self.config.match_threshold, MIN_LEARNING_SIMILARITY)
+            or match.margin < max(self.config.match_margin, MIN_LEARNING_MARGIN)
+        ):
+            return None
+        return match
+
+    def _sync_database(self) -> None:
+        store = self.tracklet_store
         if store.finalize_requested():
             try:
-                if self.gallery_path is None:
-                    raise ValueError("Enrollment has no gallery path")
-                finalize_enrollment(
-                    store,
-                    self.gallery_path,
-                    identity_count=getattr(self, "enrollment_identity_count", None),
-                )
-                logger.info("Finalized DazzleCow enrollment: %s", store.path)
+                if store.is_finalized():
+                    finalize_pending_enrollment(
+                        store,
+                        gallery=self.gallery,
+                        existing_match_threshold=max(
+                            self.config.match_threshold, MIN_LEARNING_SIMILARITY
+                        ),
+                        existing_match_margin=max(
+                            self.config.match_margin, MIN_LEARNING_MARGIN
+                        ),
+                    )
+                else:
+                    finalize_enrollment(
+                        store,
+                        identity_count=(
+                            self.config.enrollment.identity_count
+                            if self.config.enrollment is not None
+                            else None
+                        ),
+                    )
+                logger.info("Finalized cow identity enrollment: %s", store.path)
             except ValueError as error:
                 store.fail_finalize(str(error))
-                logger.error("Could not finalize DazzleCow enrollment: %s", error)
+                logger.error("Could not finalize cow identity enrollment: %s", error)
 
         revision = store.revision()
-        if revision == self.enrollment_revision or not store.is_finalized():
+        if revision == self.database_revision or not store.is_finalized():
             return
-        embeddings, identities = store.gallery_data()
-        if self.gallery_path is not None:
-            export_named_gallery(store, self.gallery_path)
-        neighbors, match_threshold, match_margin = self.gallery_settings
-        self.gallery = DazzleCowGallery.from_data(
+        embeddings, keys, labels = store.gallery_data()
+        self.gallery = CowIdentityGallery(
             embeddings,
-            np.asarray(identities),
-            neighbors=neighbors,
-            match_threshold=match_threshold,
-            match_margin=match_margin,
+            keys,
+            labels,
+            match_threshold=self.config.match_threshold,
+            match_margin=self.config.match_margin,
         )
         if getattr(self, "identity_tracks", None) is not None:
-            self.identity_tracks.gallery = self.gallery
-        self.enrollment_revision = revision
+            self.identity_tracks.set_gallery(self.gallery)
+        self.database_revision = revision
 
-    def detections_from_result(
-        self,
-        result: list[CowCandidate],
-        frames: list[tuple[datetime, ndarray]],
-    ) -> list[Detection] | None:
-        if not result:
-            return None
 
-        crops = [replace(candidate.crop) for candidate in result]
-        confidences = {
-            "cow": max(crop.confidence or 0 for crop in crops),
-        }
-        detections = [
-            Detection(date, ImageSet(frame, [replace(crop) for crop in crops]), {})
-            for date, frame in frames[:-1]
-        ]
-        detections.append(
-            Detection(frames[-1][0], ImageSet(frames[-1][1], crops), confidences)
-        )
-        return detections
+def _can_reuse_primary_yolo(config: YoloConfig, runner: YoloRunner) -> bool:
+    return (
+        config.task == "segment"
+        and config.tracking
+        and any(name == "cow" for name, _ in runner.class_confidences.values())
+    )

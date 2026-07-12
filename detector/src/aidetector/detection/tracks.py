@@ -12,7 +12,10 @@ def tracks_payload(source: str, detection: Detection) -> dict[str, Any]:
         "timestamp": detection.date.isoformat(),
         "width": width,
         "height": height,
-        "objects": [_object_payload(crop, index) for index, crop in enumerate(detection.images.crops)],
+        "objects": [
+            _object_payload(crop, index)
+            for index, crop in enumerate(detection.images.crops)
+        ],
     }
 
 
@@ -30,5 +33,5 @@ def _object_payload(crop: Crop, index: int) -> dict[str, Any]:
             "label": crop.label,
             "confidence": crop.confidence,
         },
-        "identity": asdict(crop.identity) if crop.identity else None,
+        "identities": [asdict(identity) for identity in crop.identities],
     }

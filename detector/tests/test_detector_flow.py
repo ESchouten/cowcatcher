@@ -4,6 +4,8 @@ from datetime import datetime, timedelta
 import numpy as np
 
 from aidetector.detection.detector import Detector
+from aidetector.detection.identity_registry import IdentityRegistry
+from aidetector.detection.manager import Manager
 from aidetector.detection.yolo import TrackedSourceResult
 from aidetector.exporters.disk import DiskExporter
 from aidetector.exporters.telegram import TelegramExporter
@@ -11,13 +13,14 @@ from aidetector.exporters.webhook import WebhookExporter
 from aidetector.utils.config import (
     ChatConfig,
     Config,
-    DazzleCowConfig,
+    Crop,
     Detection,
     DetectionConfig,
     DetectorConfig,
     DiskConfig,
     ExportersConfig,
     ImageSet,
+    IdentityResult,
     OnnxConfig,
     SSEConfig,
     WebhookConfig,
@@ -25,7 +28,9 @@ from aidetector.utils.config import (
 )
 
 
-def make_detection(date: datetime, confidence: dict[str, float] | None = None) -> Detection:
+def make_detection(
+    date: datetime, confidence: dict[str, float] | None = None
+) -> Detection:
     image = np.zeros((80, 120, 3), dtype=np.uint8)
     return Detection(date, ImageSet(image), confidence or {"cow": 0.9})
 
@@ -80,14 +85,16 @@ def make_detector() -> Detector:
     detector.detections = defaultdict(list)
     detector.yolo_config = None
     detector.yolo_runner = None
-    detector.dazzlecow_config = None
-    detector.dazzlecow_runner = None
+    detector.identity_config = None
+    detector.identity_pipeline = None
+    detector.identity_registry = IdentityRegistry()
+    detector.identity_producer = "test-detector"
     detector.validator = FakeValidator(True)
     detector.exporters = []
     detector.export_executor = ImmediateExecutor()
     detector.last_detection_time = {}
     detector.last_frame_time = datetime.min
-    detector.last_dazzlecow_result_time = {}
+    detector.last_identity_result_time = {}
     return detector
 
 
@@ -242,6 +249,53 @@ def test_tracks_are_published_for_latest_yolo_detection():
     assert processed == [(source, detections)]
 
 
+def test_detector_uses_identities_published_by_another_detector():
+    source = "camera"
+    detected_at = datetime(2026, 1, 1, 12, 0, 0)
+    detector = make_detector()
+    detector.yolo_config = YoloConfig(model="model.pt", confidence=0.8)
+    identity_detection = Detection(
+        detected_at,
+        ImageSet(
+            np.zeros((80, 120, 3), dtype=np.uint8),
+            [
+                Crop(
+                    10,
+                    10,
+                    30,
+                    30,
+                    track_id=7,
+                    identities=[IdentityResult("NL-123", 0.95)],
+                )
+            ],
+        ),
+        {},
+    )
+    event = Detection(
+        detected_at,
+        ImageSet(
+            np.zeros((160, 240, 3), dtype=np.uint8),
+            [Crop(0, 0, 80, 80, label="mounting")],
+        ),
+        {"mounting": 0.9},
+    )
+    detector.identity_registry.publish(source, "identity-detector", identity_detection)
+    detector.yolo_runner = type(
+        "FakeYoloRunner",
+        (),
+        {"detections_from_result": lambda *_args, **_kwargs: [event]},
+    )()
+    detector._process = lambda *_args, **_kwargs: None
+
+    detector._handle_model_result(
+        source,
+        object(),
+        [(detected_at, np.zeros((160, 240, 3), dtype=np.uint8))],
+    )
+
+    assert event.identities == [IdentityResult("NL-123", 0.95)]
+
+
 def test_empty_tracks_are_published_when_yolo_has_no_detection():
     source = "camera"
     detected_at = datetime(2026, 1, 1, 12, 0, 0)
@@ -273,8 +327,8 @@ def test_detector_batches_sources_when_tracking_is_disabled():
     detector.yolo_config = YoloConfig(model="model.pt", tracking=False)
     detector.yolo_runner = RecordingYoloRunner()
     handled = []
-    detector._handle_model_result = (
-        lambda source, result, frames: handled.append((source, result, len(frames)))
+    detector._handle_model_result = lambda source, result, frames: handled.append(
+        (source, result, len(frames))
     )
     frame = np.zeros((80, 120, 3), dtype=np.uint8)
 
@@ -298,8 +352,8 @@ def test_detector_tracks_sources_as_stream_batch_when_tracking_is_enabled():
     detector.yolo_config = YoloConfig(model="model.pt", tracking=True)
     detector.yolo_runner = RecordingYoloRunner()
     handled = []
-    detector._handle_model_result = (
-        lambda source, result, frames: handled.append((source, result, len(frames)))
+    detector._handle_model_result = lambda source, result, frames: handled.append(
+        (source, result, len(frames))
     )
     frame = np.zeros((80, 120, 3), dtype=np.uint8)
 
@@ -320,34 +374,47 @@ def test_detector_tracks_sources_as_stream_batch_when_tracking_is_enabled():
     ]
 
 
-class RecordingDazzleCowRunner:
+class RecordingIdentityYoloRunner:
     def __init__(self):
         self.calls = []
 
-    def detect(self, frames, sources, dates):
-        self.calls.append((len(frames), sources, dates))
-        return [[f"cow-{index}"] for index in range(len(frames))]
+    def track_sources(self, batch):
+        self.calls.append({source: len(frames) for source, frames in batch.items()})
+        return [
+            TrackedSourceResult(
+                source,
+                [f"cow-{len(frames) - 1}"],
+                frames,
+            )
+            for source, frames in batch.items()
+        ]
 
     def detections_from_result(self, result, frames):
         return [make_detection(frames[-1][0], {result[0]: 0.9})]
 
 
-def test_dazzlecow_tracks_every_frame_but_processes_at_detection_interval():
+class RecordingIdentityPipeline:
+    reuses_primary_yolo = True
+
+    def candidates_from_primary(self, _source, _result, _frame):
+        return []
+
+    def live_detection(self, date, frame, _candidates):
+        return Detection(date, ImageSet(frame), {})
+
+
+def test_identity_tracks_every_batch_but_processes_at_detection_interval():
     source = "camera"
     detector = make_detector()
     detector.detection = DetectionConfig(source=[source], interval=1)
-    detector.dazzlecow_config = DazzleCowConfig(
-        model="model.pt",
-        gallery="gallery.npz",
-    )
-    detector.dazzlecow_runner = RecordingDazzleCowRunner()
+    detector.yolo_config = YoloConfig(model="yolo26m-seg.pt", tracking=True)
+    detector.yolo_runner = RecordingIdentityYoloRunner()
+    detector.identity_pipeline = RecordingIdentityPipeline()
     handled = []
     published = RecordingTracksExporter()
     detector.exporters = [published]
-    detector._handle_model_result = (
-        lambda item_source, result, frames: handled.append(
-            (item_source, result, len(frames))
-        )
+    detector._handle_model_result = lambda item_source, result, frames: handled.append(
+        (item_source, result, len(frames))
     )
     frame = np.zeros((80, 120, 3), dtype=np.uint8)
     start = datetime(2026, 1, 1, 12, 0, 0)
@@ -360,14 +427,14 @@ def test_dazzlecow_tracks_every_frame_but_processes_at_detection_interval():
             ]
         }
     )
-    detector._handle_frame_batch(
-        {source: [(start + timedelta(seconds=0.4), frame)]}
-    )
-    detector._handle_frame_batch(
-        {source: [(start + timedelta(seconds=1.2), frame)]}
-    )
+    detector._handle_frame_batch({source: [(start + timedelta(seconds=0.4), frame)]})
+    detector._handle_frame_batch({source: [(start + timedelta(seconds=1.2), frame)]})
 
-    assert [call[0] for call in detector.dazzlecow_runner.calls] == [2, 1, 1]
+    assert detector.yolo_runner.calls == [
+        {source: 2},
+        {source: 1},
+        {source: 1},
+    ]
     assert handled == [
         (source, ["cow-1"], 2),
         (source, ["cow-0"], 1),
@@ -375,3 +442,20 @@ def test_dazzlecow_tracks_every_frame_but_processes_at_detection_interval():
     assert len(published.calls) == 1
     assert published.calls[0][0] == source
     assert published.calls[0][1].confidence == {"cow-0": 0.9}
+
+
+def test_manager_shares_one_identity_registry_between_detectors():
+    config = Config(
+        detectors=[
+            DetectorConfig(detection=DetectionConfig(source=["camera"])),
+            DetectorConfig(detection=DetectionConfig(source=["camera"])),
+        ],
+        onnx=OnnxConfig(),
+    )
+
+    manager = Manager.from_config(config)
+
+    assert all(
+        detector.identity_registry is manager.identity_registry
+        for detector in manager.detectors
+    )

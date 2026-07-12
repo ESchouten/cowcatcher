@@ -4,7 +4,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
-import { mergeIdentities, splitTracklet } from '../src/lib/server/identity-store.ts';
+import {
+	mergeIdentities,
+	requestIdentityFinalization,
+	splitTracklet
+} from '../src/lib/server/identity-store.ts';
 
 function databaseFixture() {
 	const directory = mkdtempSync(path.join(tmpdir(), 'cow-id-store-'));
@@ -79,6 +83,31 @@ test('keeps both identities when conflicting animal numbers prevent a merge', ()
 		assert.equal(
 			fixture.database.prepare("SELECT value FROM control WHERE key = 'revision'").get().value,
 			'0'
+		);
+	} finally {
+		fixture.close();
+	}
+});
+
+test('requests identity finalization and clears an earlier error', () => {
+	const fixture = databaseFixture();
+	try {
+		fixture.database.exec(`
+			INSERT INTO control VALUES ('finalize_requested', '0');
+			INSERT INTO control VALUES ('finalize_error', 'Not enough evidence');
+		`);
+
+		requestIdentityFinalization(fixture.database);
+
+		assert.equal(
+			fixture.database.prepare("SELECT value FROM control WHERE key = 'finalize_requested'").get()
+				.value,
+			'1'
+		);
+		assert.equal(
+			fixture.database.prepare("SELECT value FROM control WHERE key = 'finalize_error'").get()
+				.value,
+			''
 		);
 	} finally {
 		fixture.close();

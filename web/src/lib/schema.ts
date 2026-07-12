@@ -9,30 +9,37 @@ export interface IdentityResult {
 	similarity: number;
 }
 
-export interface DazzleCowConfig {
-	model: string;
-	gallery?: string;
+export interface Metadata {
+	type: string;
+	timestamp: string;
+	validated: boolean | null;
+	confidence: number;
+	confidences: Record<string, number>;
+	identities: IdentityResult[];
+	detections: number;
+	start: string;
+	end: string;
+	duration: number;
+	crop?: { x1: number; y1: number; x2: number; y2: number } | null;
+	crops?: Array<Record<string, unknown>>;
+}
+
+export interface CowIdentityConfig {
+	database: string;
 	enrollment?: {
-		database: string;
 		identity_count?: number;
 	};
-	owl_model?: string;
-	sam_model?: string;
-	owl_interval?: number;
-	prompt?: string;
+	segment_model?: string;
+	imgsz?: number;
 	confidence?: number;
 	match_threshold?: number;
 	match_margin?: number;
-	neighbors?: number;
 	min_area_ratio?: number;
 	max_area_ratio?: number;
 	margin?: number;
 	nms_iou?: number;
 	track_samples?: number;
-	track_iou?: number;
 	track_max_age?: number;
-	device?: 'auto' | 'cpu' | 'cuda' | 'mps';
-	frames_min?: number;
 }
 
 export interface DetectorConfig {
@@ -42,11 +49,14 @@ export interface DetectorConfig {
 	};
 	yolo?: {
 		model: string;
-		confidence: number;
+		confidence: number | Record<string, number>;
+		task?: 'detect' | 'segment';
 		tracking?: boolean;
-		frames_min: number;
+		tracker?: string;
+		imgsz?: number;
+		frames_min?: number;
 	};
-	dazzlecow?: DazzleCowConfig;
+	identity?: CowIdentityConfig;
 	exporters?: {
 		telegram?: TelegramConfig[];
 		sse?: SSEConfig[];

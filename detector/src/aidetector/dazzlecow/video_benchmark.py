@@ -9,16 +9,16 @@ from typing import Iterable
 
 import cv2
 import numpy as np
-from aidetector.dazzlecow.gallery import DazzleCowGallery
+from aidetector.dazzlecow.gallery import CowIdentityGallery
 from aidetector.dazzlecow.geometry import box_iou
 from aidetector.dazzlecow.localizer import (
     CowCandidate,
     DazzleCowLocalizer,
-    DazzleCowVideoLocalizer,
     LocalizerSettings,
     segment_candidates,
 )
-from aidetector.dazzlecow.model import DazzleCowEncoder
+from aidetector.dazzlecow.model import CowIdentityEncoder, IDENTITY_MODEL
+from aidetector.dazzlecow.tracklet_store import TrackletStore
 from aidetector.dazzlecow.tracks import TrackIdentityAggregator
 from numpy import ndarray
 
@@ -78,10 +78,10 @@ class _Metrics:
                 self.track_id_switches += 1
             self.last_track_by_identity[truth.identity] = track_id
 
-            if crop.identity is None:
+            if not crop.identities:
                 continue
             self.identified += 1
-            result = crop.identity.identity
+            result = crop.identities[0].identity
             self.track_identified_after.setdefault(
                 track_id,
                 observation_index - self.track_first_seen[track_id],
@@ -127,10 +127,9 @@ class _Metrics:
 
 def evaluate_observations(
     observations: Iterable[VideoObservation],
-    gallery: DazzleCowGallery,
+    gallery: CowIdentityGallery,
     *,
     sample_counts: list[int],
-    track_iou: float,
     track_max_age: int,
     ground_truth_iou: float,
 ) -> dict[str, dict[str, float | int]]:
@@ -138,7 +137,6 @@ def evaluate_observations(
         samples: TrackIdentityAggregator(
             gallery,
             samples=samples,
-            iou_threshold=track_iou,
             max_age=track_max_age,
         )
         for samples in sorted(set(sample_counts))
@@ -148,7 +146,7 @@ def evaluate_observations(
         for samples, tracker in trackers.items():
             candidates = [
                 CowCandidate(
-                    replace(candidate.crop, track_id=None, identity=None),
+                    replace(candidate.crop, identities=[]),
                     candidate.image,
                 )
                 for candidate in observation.candidates
@@ -200,7 +198,7 @@ def video_observations(
     video: Path,
     annotations: Path,
     localize,
-    encoder: DazzleCowEncoder,
+    encoder: CowIdentityEncoder,
     *,
     start_frame: int,
     end_frame: int | None,
@@ -266,33 +264,32 @@ def _ground_truth(rows, width: int, height: int) -> list[GroundTruth]:
 def _candidate_box(candidate: CowCandidate) -> tuple[int, int, int, int]:
     crop = candidate.crop
     return crop.x1, crop.y1, crop.x2, crop.y2
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Benchmark the complete DazzleCow video identity pipeline"
     )
     parser.add_argument("--video", type=Path, required=True)
     parser.add_argument("--annotations", type=Path, required=True)
-    parser.add_argument("--model", type=Path, required=True)
-    parser.add_argument("--gallery", type=Path, required=True)
+    parser.add_argument("--database", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(
         "--localizer",
-        choices=("video", "image", "annotations"),
-        default="video",
+        choices=("yolo", "annotations"),
+        default="yolo",
     )
-    parser.add_argument("--owl-model", default="google/owlv2-large-patch14-ensemble")
+    parser.add_argument("--segment-model", default="yolo26m-seg.pt")
     parser.add_argument("--sam-model", default="sam2.1_l.pt")
-    parser.add_argument("--owl-interval", type=float, default=1)
-    parser.add_argument("--prompt", default="cow")
-    parser.add_argument("--confidence", type=float, default=0.3)
-    parser.add_argument("--min-area-ratio", type=float, default=0.025)
-    parser.add_argument("--max-area-ratio", type=float, default=0.075)
+    parser.add_argument("--confidence", type=float, default=0.1)
+    parser.add_argument("--min-area-ratio", type=float, default=0.005)
+    parser.add_argument("--max-area-ratio", type=float, default=0.3)
+    parser.add_argument("--margin", type=float, default=0)
     parser.add_argument("--nms-iou", type=float, default=0.5)
-    parser.add_argument("--neighbors", type=int, default=5)
-    parser.add_argument("--match-threshold", type=float, default=0.75)
-    parser.add_argument("--match-margin", type=float, default=0)
+    parser.add_argument("--imgsz", type=int, default=640)
+    parser.add_argument("--match-threshold", type=float, default=0.7)
+    parser.add_argument("--match-margin", type=float, default=0.2)
     parser.add_argument("--track-samples", type=int, nargs="+", default=[1, 3, 5])
-    parser.add_argument("--track-iou", type=float, default=0.2)
     parser.add_argument("--track-max-age", type=int, default=10)
     parser.add_argument("--ground-truth-iou", type=float, default=0.3)
     parser.add_argument("--start-frame", type=int, default=1)
@@ -304,46 +301,49 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO)
 
     settings = LocalizerSettings(
-        arguments.owl_model,
-        arguments.sam_model,
-        arguments.prompt,
+        arguments.segment_model,
         arguments.confidence,
         arguments.min_area_ratio,
         arguments.max_area_ratio,
+        arguments.margin,
         arguments.nms_iou,
-        arguments.device,
+        arguments.imgsz,
     )
-    if arguments.localizer == "video":
-        localizer = DazzleCowVideoLocalizer(settings, arguments.owl_interval)
+    if arguments.localizer == "yolo":
+        localizer = DazzleCowLocalizer(settings, sources=["video"])
 
         def localize(frame, _truth, date):
-            return localizer.locate("video", frame, date)
-
-    elif arguments.localizer == "image":
-        localizer = DazzleCowLocalizer(
-            settings
-        )
-
-        def localize(frame, _truth, _date):
-            return localizer.locate(frame)
+            results = localizer.track_sources({"video": [(date, frame)]})
+            return results[0].result if results else []
 
     else:
         from ultralytics import SAM
 
         sam = SAM(arguments.sam_model)
+        oracle_tracks: dict[str, int] = {}
+
         def localize(frame, truth, _date):
-            return segment_candidates(
+            candidates = segment_candidates(
                 sam,
                 frame,
                 [list(item.box) for item in truth],
                 [1.0] * len(truth),
                 device=arguments.device,
             )
+            for candidate, item in zip(candidates, truth, strict=False):
+                candidate.crop.track_id = oracle_tracks.setdefault(
+                    item.identity,
+                    len(oracle_tracks) + 1,
+                )
+            return candidates
 
-    encoder = DazzleCowEncoder(arguments.model, device=arguments.device)
-    gallery = DazzleCowGallery(
-        arguments.gallery,
-        neighbors=arguments.neighbors,
+    encoder = CowIdentityEncoder()
+    with TrackletStore(arguments.database) as store:
+        embeddings, keys, labels = store.gallery_data()
+    gallery = CowIdentityGallery(
+        embeddings,
+        keys,
+        labels,
         match_threshold=arguments.match_threshold,
         match_margin=arguments.match_margin,
     )
@@ -367,11 +367,11 @@ def main() -> None:
             observations,
             gallery,
             sample_counts=arguments.track_samples,
-            track_iou=arguments.track_iou,
             track_max_age=arguments.track_max_age,
             ground_truth_iou=arguments.ground_truth_iou,
         ),
     }
+    report["settings"]["model"] = IDENTITY_MODEL
     arguments.output.parent.mkdir(parents=True, exist_ok=True)
     arguments.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     print(json.dumps(report["metrics"], indent=2, sort_keys=True))

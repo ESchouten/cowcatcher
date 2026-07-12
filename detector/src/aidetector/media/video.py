@@ -54,10 +54,7 @@ def generate_mp4(
                         frames.append(frame)
 
         if not frames:
-            frames = [
-                get_plot(d) if plot else d.images.jpg
-                for d in detections
-            ]
+            frames = [get_plot(d) if plot else d.images.jpg for d in detections]
 
         # 1. Calculate FPS
         fps = (
@@ -230,9 +227,10 @@ def get_plot(detection: Detection, crops: list[Crop] | None = None) -> np.ndarra
 
         cv2.rectangle(image, (x1, y1), (x2, y2), color, thickness)
 
-        labels = []
-        if crop.identity is not None:
-            labels.append(f"{crop.identity.identity} {crop.identity.similarity:.0%}")
+        labels = [
+            f"{identity.identity} {identity.similarity:.0%}"
+            for identity in crop.identities
+        ]
         if crop.label is not None and crop.confidence is not None:
             labels.append(f"{crop.label} {crop.confidence:.0%}")
         if not labels:

@@ -1,146 +1,67 @@
 from pathlib import Path
-from typing import Any, Callable, cast
+from typing import Any
 
 import cv2
 import numpy as np
-import torch
+from huggingface_hub import hf_hub_download
 from numpy import ndarray
 
-IMAGENET_MEAN = torch.tensor((0.485, 0.456, 0.406))[:, None, None]
-IMAGENET_STD = torch.tensor((0.229, 0.224, 0.225))[:, None, None]
+MIEWID_REPOSITORY = "james-burgess/miewid"
+MIEWID_REVISION = "8ef0f5c426dd089bccc396b7cf07bf9a8fed5140"
+MIEWID_FILENAME = "miewid.onnx"
+IDENTITY_MODEL = f"{MIEWID_REPOSITORY}@{MIEWID_REVISION}"
+IMAGE_SIZE = 440
+MEAN = np.asarray([0.485, 0.456, 0.406], dtype=np.float32)
+STD = np.asarray([0.229, 0.224, 0.225], dtype=np.float32)
 
 
-class DazzleCowEncoder:
-    def __init__(
-        self,
-        checkpoint: str | Path | None = None,
-        *,
-        device: str = "auto",
-        feature_dim: int = 128,
-        pretrained: bool = False,
-    ):
-        self.device = resolve_device(device)
-        if checkpoint is not None and str(checkpoint).startswith("hf-hub:"):
-            self.model, self.transform, self.feature_dim = _timm_encoder(
-                str(checkpoint)
+class CowIdentityEncoder:
+    def __init__(self):
+        import onnxruntime as ort
+
+        model = Path(
+            hf_hub_download(
+                repo_id=MIEWID_REPOSITORY,
+                filename=MIEWID_FILENAME,
+                revision=MIEWID_REVISION,
             )
-            self.model.to(self.device).eval()
-            return
-
-        checkpoint_path = Path(checkpoint) if checkpoint is not None else None
-        payload = (
-            torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-            if checkpoint_path is not None
-            else None
         )
-        if isinstance(payload, dict):
-            feature_dim = int(payload.get("feature_dim", feature_dim))
-        self.image_size = (
-            int(payload.get("image_size", 256)) if isinstance(payload, dict) else 256
+        self.session: Any = ort.InferenceSession(
+            str(model), providers=ort.get_available_providers()
         )
-        architecture = (
-            str(payload.get("architecture", "resnet50"))
-            if isinstance(payload, dict)
-            else "resnet50"
-        )
-        self.feature_dim = feature_dim
-        self.model = _resnet(architecture, feature_dim, pretrained=pretrained)
-        self.transform = lambda image: image_tensor(image, self.image_size)
-        if payload is not None:
-            self._load(payload, checkpoint_path)
-        self.model.to(self.device).eval()
+        input_metadata = self.session.get_inputs()[0]
+        output_metadata = self.session.get_outputs()[0]
+        if list(input_metadata.shape) != [1, 3, IMAGE_SIZE, IMAGE_SIZE]:
+            raise ValueError(f"Unexpected MiewID input shape: {input_metadata.shape}")
+        if len(output_metadata.shape) != 2 or not isinstance(
+            output_metadata.shape[1], int
+        ):
+            raise ValueError(f"Unexpected MiewID output shape: {output_metadata.shape}")
+        self.input_name = input_metadata.name
+        self.output_name = output_metadata.name
+        self.feature_dim = output_metadata.shape[1]
 
     def embed(self, images: list[ndarray]) -> ndarray:
         if not images:
             return np.empty((0, self.feature_dim), dtype=np.float32)
 
-        batch = torch.stack(
-            [self.transform(image) for image in images]
-        ).to(self.device)
-        with torch.inference_mode():
-            embeddings = torch.nn.functional.normalize(self.model(batch), dim=1)
-        return embeddings.cpu().numpy().astype(np.float32)
-
-    def _load(self, payload: Any, checkpoint: Path | None) -> None:
-        state_dict = (
-            payload.get("state_dict", payload) if isinstance(payload, dict) else payload
-        )
-        if not isinstance(state_dict, dict):
-            raise ValueError(f"Invalid DazzleCow checkpoint: {checkpoint}")
-
-        state_dict = {
-            key.removeprefix("model.").removeprefix("net."): value
-            for key, value in state_dict.items()
-        }
-        self.model.load_state_dict(state_dict)
+        embeddings = [
+            np.asarray(
+                self.session.run(
+                    [self.output_name],
+                    {self.input_name: _preprocess(image)},
+                )[0][0],
+                dtype=np.float32,
+            )
+            for image in images
+        ]
+        values = np.asarray(embeddings, dtype=np.float32)
+        norms = np.linalg.norm(values, axis=1, keepdims=True)
+        return values / np.maximum(norms, np.finfo(np.float32).eps)
 
 
-def create_encoder_model(
-    feature_dim: int = 128,
-    pretrained: bool = True,
-    architecture: str = "resnet50",
-):
-    return _resnet(architecture, feature_dim, pretrained=pretrained)
-
-
-def image_tensor(image: ndarray, size: int = 256) -> torch.Tensor:
-    rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    resized = cv2.resize(rgb, (size, size), interpolation=cv2.INTER_AREA)
-    tensor = torch.from_numpy(resized.copy()).permute(2, 0, 1).float().div(255)
-    return (tensor - IMAGENET_MEAN) / IMAGENET_STD
-
-
-def resolve_device(device: str) -> torch.device:
-    if device == "auto":
-        if torch.cuda.is_available():
-            device = "cuda"
-        elif torch.backends.mps.is_available():
-            device = "mps"
-        else:
-            device = "cpu"
-    return torch.device(device)
-
-
-def _resnet(architecture: str, feature_dim: int, pretrained: bool):
-    from torchvision.models import (
-        ResNet18_Weights,
-        ResNet50_Weights,
-        resnet18,
-        resnet50,
-    )
-
-    architectures = {
-        "resnet18": (resnet18, ResNet18_Weights.DEFAULT),
-        "resnet50": (resnet50, ResNet50_Weights.DEFAULT),
-    }
-    try:
-        factory, default_weights = architectures[architecture]
-    except KeyError as error:
-        raise ValueError(
-            f"Unsupported DazzleCow architecture: {architecture}"
-        ) from error
-    model = factory(weights=default_weights if pretrained else None)
-    model.fc = torch.nn.Sequential(
-        model.fc,
-        torch.nn.ReLU(),
-        torch.nn.Linear(1000, feature_dim),
-    )
-    return model
-
-
-def _timm_encoder(
-    model_name: str,
-) -> tuple[torch.nn.Module, Callable[[ndarray], torch.Tensor], int]:
-    import timm
-    from PIL import Image
-    from timm.data import create_transform, resolve_data_config
-
-    model = timm.create_model(model_name, pretrained=True)
-    config = resolve_data_config(model.pretrained_cfg, model=model)
-    transform = create_transform(**config, is_training=False)
-
-    def apply(image: ndarray) -> torch.Tensor:
-        rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        return transform(Image.fromarray(rgb))
-
-    return model, apply, cast(int, model.num_features)
+def _preprocess(image: ndarray) -> ndarray:
+    resized = cv2.resize(image, (IMAGE_SIZE, IMAGE_SIZE))
+    rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB).astype(np.float32) / 255
+    normalized = (rgb - MEAN) / STD
+    return np.ascontiguousarray(normalized.transpose(2, 0, 1)[None])

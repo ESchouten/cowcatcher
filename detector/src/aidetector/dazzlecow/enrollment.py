@@ -1,13 +1,17 @@
 import argparse
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
-from aidetector.dazzlecow.gallery import save_gallery
-from aidetector.dazzlecow.tracklet_store import TrackletStore
+from aidetector.dazzlecow.gallery import CowIdentityGallery
+from aidetector.dazzlecow.tracklet_store import StoredTracklet, TrackletStore
 from numpy import ndarray
 from scipy.optimize import linear_sum_assignment
+
+DEFAULT_ENROLLMENT_SIMILARITY = 0.76
+DEFAULT_ENROLLMENT_MARGIN = 0.0
 
 
 @dataclass(frozen=True)
@@ -228,7 +232,10 @@ def cluster_known_count(
             labels = updated
             centers = _normalize(
                 np.asarray(
-                    [embeddings[labels == label].mean(axis=0) for label in range(identity_count)]
+                    [
+                        embeddings[labels == label].mean(axis=0)
+                        for label in range(identity_count)
+                    ]
                 )
             )
         if labels is None:
@@ -323,36 +330,11 @@ def match_camera_tracks(
     }
 
 
-def save_enrollment(
-    path: Path,
-    tracks: list[EnrollmentTrack],
-    assignments: dict[str, str],
-) -> None:
-    if set(assignments) != {track.key for track in tracks}:
-        raise ValueError("Every enrollment track must have exactly one identity")
-    save_gallery(
-        path,
-        np.asarray([track.embedding for track in tracks], dtype=np.float32),
-        [assignments[track.key] for track in tracks],
-    )
-    clusters: dict[str, list[str]] = {}
-    for track in tracks:
-        clusters.setdefault(assignments[track.key], []).append(track.key)
-    manifest = {
-        "gallery": path.name,
-        "identities": {
-            identity: sorted(keys) for identity, keys in sorted(clusters.items())
-        },
-    }
-    path.with_suffix(".json").write_text(json.dumps(manifest, indent=2) + "\n")
-
-
 def finalize_enrollment(
     store: TrackletStore,
-    gallery: Path,
     *,
-    similarity_threshold: float = 0.7,
-    margin_threshold: float = 0.02,
+    similarity_threshold: float = DEFAULT_ENROLLMENT_SIMILARITY,
+    margin_threshold: float = DEFAULT_ENROLLMENT_MARGIN,
     identity_count: int | None = None,
 ) -> dict[str, str]:
     stored = store.tracklets()
@@ -361,21 +343,7 @@ def finalize_enrollment(
     sessions = {tracklet.session for tracklet in stored}
     if len(sessions) != 1:
         raise ValueError("Finalize one enrollment session per database")
-    tracks = [
-        EnrollmentTrack(
-            tracklet.id,
-            tracklet.embedding,
-            frozenset(
-                other.id
-                for other in stored
-                if other.source == tracklet.source
-                and other.id != tracklet.id
-                and max(other.first_frame, tracklet.first_frame)
-                <= min(other.last_frame, tracklet.last_frame)
-            ),
-        )
-        for tracklet in stored
-    ]
+    tracks = _enrollment_tracks(stored)
     if identity_count is None:
         assignments = cluster_tracklets(
             tracks,
@@ -398,13 +366,124 @@ def finalize_enrollment(
             else cluster_known_count(tracks, identity_count)
         )
     store.replace_assignments(assignments)
-    save_enrollment(gallery, tracks, assignments)
     return assignments
 
 
-def export_named_gallery(store: TrackletStore, gallery: Path) -> None:
-    embeddings, identities = store.gallery_data()
-    save_gallery(gallery, embeddings, identities)
+def finalize_pending_enrollment(
+    store: TrackletStore,
+    *,
+    similarity_threshold: float = DEFAULT_ENROLLMENT_SIMILARITY,
+    margin_threshold: float = DEFAULT_ENROLLMENT_MARGIN,
+    create_after: int = 3,
+    gallery: CowIdentityGallery | None = None,
+    existing_match_threshold: float = 0.9,
+    existing_match_margin: float = 0.2,
+) -> dict[str, str]:
+    if create_after < 1:
+        raise ValueError("Pending identity maturity must be positive")
+    if gallery is None:
+        embeddings, keys, labels = store.gallery_data()
+        gallery = CowIdentityGallery(embeddings, keys, labels)
+    stored = store.pending_tracklets()
+    if not stored:
+        raise ValueError("Identity database has no pending tracklets")
+    assignments = cluster_tracklets(
+        _enrollment_tracks(stored),
+        similarity_threshold=similarity_threshold,
+        margin_threshold=margin_threshold,
+        identity_prefix="pending",
+    )
+    group_counts = {
+        group: sum(value == group for value in assignments.values())
+        for group in set(assignments.values())
+    }
+    groups = sorted(
+        group for group, count in group_counts.items() if count >= create_after
+    )
+    if not groups:
+        raise ValueError(
+            f"Pending identities need at least {create_after} tracklets each"
+        )
+    grouped_tracklets = {
+        group: [tracklet for tracklet in stored if assignments[tracklet.id] == group]
+        for group in groups
+    }
+    group_identities = {}
+    new_groups = []
+    for group in groups:
+        identity = _match_existing_identity(
+            grouped_tracklets[group],
+            gallery,
+            existing_match_threshold,
+            existing_match_margin,
+        )
+        if identity is None:
+            new_groups.append(group)
+        else:
+            group_identities[group] = identity
+    new_identities = iter(_next_identity_ids(store.identity_keys(), len(new_groups)))
+    for group in new_groups:
+        group_identities[group] = next(new_identities)
+    assignments = {
+        tracklet: group_identities[group]
+        for tracklet, group in assignments.items()
+        if group in group_identities
+    }
+    store.assign_pending(assignments)
+    return assignments
+
+
+def _match_existing_identity(
+    tracklets: list[StoredTracklet],
+    gallery: CowIdentityGallery,
+    similarity_threshold: float,
+    margin_threshold: float,
+) -> str | None:
+    embedding = _normalize(
+        np.mean([tracklet.embedding for tracklet in tracklets], axis=0, keepdims=True)
+    )[0]
+    match = gallery.score(embedding)
+    if match.similarity < similarity_threshold or match.margin < margin_threshold:
+        return None
+    return match.key
+
+
+def _enrollment_tracks(stored) -> list[EnrollmentTrack]:
+    return [
+        EnrollmentTrack(
+            tracklet.id,
+            tracklet.embedding,
+            frozenset(
+                other.id
+                for other in stored
+                if other.run == tracklet.run
+                and other.source == tracklet.source
+                and other.id != tracklet.id
+                and max(other.first_frame, tracklet.first_frame)
+                <= min(other.last_frame, tracklet.last_frame)
+            ),
+        )
+        for tracklet in stored
+    ]
+
+
+def _next_identity_ids(existing: list[str], count: int) -> list[str]:
+    used = set(existing)
+    number = max(
+        (
+            int(match.group(1))
+            for identity in existing
+            if (match := re.fullmatch(r"cow-(\d+)", identity))
+        ),
+        default=0,
+    )
+    identities = []
+    while len(identities) < count:
+        number += 1
+        identity = f"cow-{number:04d}"
+        if identity not in used:
+            identities.append(identity)
+    return identities
 
 
 def _cannot_merge(
@@ -453,14 +532,21 @@ def _normalize(values: ndarray) -> ndarray:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Manage DazzleCow enrollment")
+    parser = argparse.ArgumentParser(description="Manage cow identity enrollment")
     parser.add_argument("--database", type=Path, required=True)
     commands = parser.add_subparsers(dest="command", required=True)
 
     finalize = commands.add_parser("finalize")
-    finalize.add_argument("--gallery", type=Path, required=True)
-    finalize.add_argument("--similarity-threshold", type=float, default=0.7)
-    finalize.add_argument("--margin-threshold", type=float, default=0.02)
+    finalize.add_argument(
+        "--similarity-threshold",
+        type=float,
+        default=DEFAULT_ENROLLMENT_SIMILARITY,
+    )
+    finalize.add_argument(
+        "--margin-threshold",
+        type=float,
+        default=DEFAULT_ENROLLMENT_MARGIN,
+    )
     finalize.add_argument("--identity-count", type=int)
 
     commands.add_parser("list")
@@ -468,17 +554,23 @@ def main() -> None:
     name = commands.add_parser("name")
     name.add_argument("identity")
     name.add_argument("animal_number")
-    name.add_argument("--gallery", type=Path, required=True)
 
     arguments = parser.parse_args()
     with TrackletStore(arguments.database) as store:
         if arguments.command == "finalize":
-            assignments = finalize_enrollment(
-                store,
-                arguments.gallery,
-                similarity_threshold=arguments.similarity_threshold,
-                margin_threshold=arguments.margin_threshold,
-                identity_count=arguments.identity_count,
+            assignments = (
+                finalize_pending_enrollment(
+                    store,
+                    similarity_threshold=arguments.similarity_threshold,
+                    margin_threshold=arguments.margin_threshold,
+                )
+                if store.is_finalized()
+                else finalize_enrollment(
+                    store,
+                    similarity_threshold=arguments.similarity_threshold,
+                    margin_threshold=arguments.margin_threshold,
+                    identity_count=arguments.identity_count,
+                )
             )
             print(
                 json.dumps(
@@ -491,6 +583,5 @@ def main() -> None:
             )
         elif arguments.command == "name":
             store.set_animal_number(arguments.identity, arguments.animal_number)
-            export_named_gallery(store, arguments.gallery)
         else:
             print(json.dumps(store.identities(), indent=2))

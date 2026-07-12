@@ -94,7 +94,15 @@ class YoloResultMapper:
             confidences[class_name] = max(confidences.get(class_name, 0), confidence)
             x1, y1, x2, y2 = map(int, box.xyxy[0])
             crops.append(
-                Crop(x1, y1, x2, y2, label=class_name, confidence=confidence)
+                Crop(
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                    label=class_name,
+                    confidence=confidence,
+                    track_id=_track_id(box),
+                )
             )
         return crops, confidences
 
@@ -175,6 +183,7 @@ class YoloRunner:
                     stream=True,
                 ),
                 persist=True,
+                tracker=self.config.tracker,
             )
         )
         self._log_predict_time(then, len(frames), "Tracking")
@@ -233,8 +242,10 @@ class YoloRunner:
             "stream": stream,
             "classes": list(self.class_confidences.keys()) or None,
             "imgsz": self.config.imgsz,
+            "iou": self.config.iou,
             "rect": should_rect(),
             "batch": batch,
+            "verbose": False,
         }
 
     def _reset_tracking_if_batch_size_changed(self, batch_size: int) -> None:
@@ -304,3 +315,8 @@ class YoloRunner:
             class_confidences[class_id] = (id_to_name[class_id], float(threshold))
 
         return class_confidences
+
+
+def _track_id(box: Any) -> int | None:
+    value = getattr(box, "id", None)
+    return int(value.item()) if value is not None else None

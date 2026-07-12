@@ -210,7 +210,7 @@ jobs:
           - job_name: Windows WindowsML Executable
             artifact_prefix: aidetector-winml
             type: windowsml
-            uv_run_args: --extra windowsml --extra dazzlecow
+            uv_run_args: --extra windowsml --extra identity
             needs_cuda_install: false
             publish_release_asset: "true"
           - job_name: Windows CUDA 13.0 Executable
@@ -259,7 +259,7 @@ jobs:
         if: ${{ matrix.needs_cuda_install }}
         run: |
           uv venv --python ${{ env.PYTHON_VERSION }}
-          uv pip install --pre ".[dazzlecow]" torch torchvision pyinstaller --index-url ${{ matrix.cuda_index_url }} --extra-index-url https://pypi.org/simple --index-strategy unsafe-best-match
+          uv pip install --pre ".[identity]" torch torchvision pyinstaller --index-url ${{ matrix.cuda_index_url }} --extra-index-url https://pypi.org/simple --index-strategy unsafe-best-match
 
       - name: Build Executable
         run: |
@@ -324,7 +324,7 @@ jobs:
         run: |
           echo 'TYPE = "default"' > ${{ env.VERSION_FILE }}
           echo 'REF_NAME = "${{ github.ref_name }}"' >> ${{ env.VERSION_FILE }}
-          uv run --extra default --extra dazzlecow pyinstaller src/aidetector/__init__.py --name "${ARTIFACT_NAME}.command" ${{ env.PYINSTALLER_ARGS }}
+          uv run --extra default --extra identity pyinstaller src/aidetector/__init__.py --name "${ARTIFACT_NAME}.command" ${{ env.PYINSTALLER_ARGS }}
 
       - name: Zip Executable
         run: |

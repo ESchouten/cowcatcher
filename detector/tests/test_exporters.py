@@ -66,7 +66,9 @@ def test_exporter_filters_by_confidence_and_rejected_state():
 
 def test_disk_exporter_writes_detection_files(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("aidetector.exporters.disk.generate_mp4", lambda *_args, **_kwargs: b"mp4")
+    monkeypatch.setattr(
+        "aidetector.exporters.disk.generate_mp4", lambda *_args, **_kwargs: b"mp4"
+    )
     detections = make_detections()
 
     exporter = DiskExporter(DiskConfig(directory=Path("events")))
@@ -102,7 +104,7 @@ def test_sse_payloads_include_live_crops_and_detection_summary():
             "track_id": None,
             "label": "cow",
             "confidence": 0.9,
-            "identity": None,
+            "identities": [],
             "crop": {
                 "x1": 12,
                 "y1": 12,
@@ -184,7 +186,9 @@ def test_webhook_explicit_body_overrides_generated_payload(monkeypatch):
 
 
 def test_telegram_exporter_respects_alert_every(monkeypatch):
-    monkeypatch.setattr("aidetector.exporters.telegram.generate_mp4", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "aidetector.exporters.telegram.generate_mp4", lambda *_args, **_kwargs: None
+    )
     detections = make_detections()
     exporter = TelegramExporter(
         ChatConfig(

@@ -22,7 +22,7 @@ export async function getIdentityDatabases(): Promise<IdentityDatabaseConfig[]> 
 	const databases = new Map<string, IdentityDatabaseConfig>();
 
 	for (const [index, detector] of config.detectors.entries()) {
-		const database = detector.dazzlecow?.enrollment?.database;
+		const database = detector.identity?.database;
 		if (!database || path.isAbsolute(database)) continue;
 		const resolved = resolveWithinDirectory(DATA_DIR, database);
 		if (!resolved) continue;

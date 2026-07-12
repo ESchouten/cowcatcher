@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from pathlib import Path
+from typing import Protocol
 
 import numpy as np
 from aidetector.utils.config import IdentityResult
@@ -7,122 +7,99 @@ from numpy import ndarray
 
 
 @dataclass(frozen=True)
-class GalleryScore:
-    identity: str
+class IdentityMatch:
+    key: str
+    label: str
     similarity: float
     margin: float
 
+    @property
+    def result(self) -> IdentityResult:
+        return IdentityResult(self.label, self.similarity)
 
-class DazzleCowGallery:
+
+class IdentityMatcher(Protocol):
+    def match(self, embedding: ndarray, /) -> IdentityMatch | None: ...
+
+
+class CowIdentityGallery:
     def __init__(
         self,
-        path: Path,
-        *,
-        neighbors: int = 5,
-        match_threshold: float = 0.75,
-        match_margin: float = 0,
-    ):
-        data = np.load(path, allow_pickle=False)
-        self._initialize(
-            data["embeddings"],
-            data["identities"],
-            neighbors,
-            match_threshold,
-            match_margin,
-        )
-
-    @classmethod
-    def from_data(
-        cls,
         embeddings: ndarray,
-        identities: ndarray,
+        keys: list[str] | ndarray,
+        labels: list[str] | ndarray,
         *,
-        neighbors: int = 5,
-        match_threshold: float = 0.75,
-        match_margin: float = 0,
-    ) -> "DazzleCowGallery":
-        gallery = cls.__new__(cls)
-        gallery._initialize(
+        match_threshold: float = 0.68,
+        match_margin: float = 0.05,
+    ):
+        self._initialize(
             embeddings,
-            identities,
-            neighbors,
+            np.asarray(keys),
+            np.asarray(labels),
             match_threshold,
             match_margin,
         )
-        return gallery
 
     def _initialize(
         self,
         embeddings: ndarray,
-        identities: ndarray,
-        neighbors: int,
+        keys: ndarray,
+        labels: ndarray,
         match_threshold: float,
         match_margin: float,
     ) -> None:
         self.embeddings = _normalize(np.asarray(embeddings, dtype=np.float32))
-        self.identities = np.asarray(identities, dtype=str)
+        self.keys = np.asarray(keys, dtype=str)
+        self.labels = np.asarray(labels, dtype=str)
         if self.embeddings.ndim != 2:
-            raise ValueError("DazzleCow gallery embeddings must be a 2D array")
-        if self.identities.ndim != 1:
-            raise ValueError("DazzleCow gallery identities must be a 1D array")
-        if len(self.embeddings) != len(self.identities):
-            raise ValueError("DazzleCow gallery embeddings and identities differ in length")
-        if len(self.identities) == 0:
-            raise ValueError("DazzleCow gallery is empty")
-        self.neighbors = max(1, neighbors)
+            raise ValueError("Cow identity embeddings must be a 2D array")
+        if self.keys.ndim != 1 or self.labels.ndim != 1:
+            raise ValueError("Cow identity keys and labels must be 1D arrays")
+        if len(self.embeddings) != len(self.keys) or len(self.keys) != len(self.labels):
+            raise ValueError(
+                "Cow identity embeddings, keys, and labels differ in length"
+            )
+        if len(self.keys) == 0:
+            raise ValueError("Cow identity database has no assigned tracklets")
+        self.identity_keys = np.unique(self.keys)
+        self.identity_labels = {}
+        for key in self.identity_keys:
+            key_labels = np.unique(self.labels[self.keys == key])
+            if len(key_labels) != 1:
+                raise ValueError(f"Cow identity {key} has conflicting labels")
+            self.identity_labels[str(key)] = str(key_labels[0])
         self.match_threshold = match_threshold
         self.match_margin = match_margin
 
-    def match(self, embedding: ndarray) -> IdentityResult | None:
+    def match(self, embedding: ndarray) -> IdentityMatch | None:
         score = self.score(embedding)
-        if (
-            score.similarity < self.match_threshold
-            or score.margin < self.match_margin
-        ):
+        if score.similarity < self.match_threshold or score.margin < self.match_margin:
             return None
-        return IdentityResult(score.identity, score.similarity)
+        return score
 
-    def score(self, embedding: ndarray) -> GalleryScore:
+    def score(self, embedding: ndarray) -> IdentityMatch:
         embedding = np.asarray(embedding, dtype=np.float32)
         if embedding.ndim != 1 or embedding.shape[0] != self.embeddings.shape[1]:
             raise ValueError(
-                "DazzleCow embedding dimension does not match the gallery "
+                "Cow identity embedding dimension does not match the database "
                 f"({embedding.shape} != ({self.embeddings.shape[1]},))"
             )
         similarities = self.embeddings @ _normalize(embedding.reshape(1, -1))[0]
-        count = min(self.neighbors, len(similarities))
-        indices = np.argpartition(similarities, -count)[-count:]
-
-        votes: dict[str, float] = {}
-        for index in indices:
-            identity = str(self.identities[index])
-            votes[identity] = votes.get(identity, 0) + max(0, float(similarities[index]))
-
-        ranked = sorted(votes, key=lambda item: votes[item], reverse=True)
-        identity = ranked[0]
-        similarity = max(
-            float(similarities[index])
-            for index in indices
-            if self.identities[index] == identity
+        scores = np.asarray(
+            [np.max(similarities[self.keys == key]) for key in self.identity_keys]
         )
-        total = sum(votes.values())
-        second_vote = votes[ranked[1]] if len(ranked) > 1 else 0
-        margin = (votes[identity] - second_vote) / total if total else 0
-        return GalleryScore(identity, similarity, margin)
-
-
-def save_gallery(path: Path, embeddings: ndarray, identities: list[str]) -> None:
-    embeddings = np.asarray(embeddings, dtype=np.float32)
-    if embeddings.ndim != 2:
-        raise ValueError("DazzleCow gallery embeddings must be a 2D array")
-    if len(embeddings) != len(identities):
-        raise ValueError("DazzleCow gallery embeddings and identities differ in length")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(
-        path,
-        embeddings=_normalize(embeddings),
-        identities=np.asarray(identities, dtype=str),
-    )
+        order = np.argsort(scores)
+        key = str(self.identity_keys[order[-1]])
+        similarity = float(scores[order[-1]])
+        margin = (
+            similarity - float(scores[order[-2]]) if len(order) > 1 else float("inf")
+        )
+        return IdentityMatch(
+            key,
+            self.identity_labels[key],
+            similarity,
+            margin,
+        )
 
 
 def _normalize(values: ndarray) -> ndarray:

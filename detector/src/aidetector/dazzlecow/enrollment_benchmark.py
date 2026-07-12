@@ -7,15 +7,17 @@ from pathlib import Path
 import cv2
 import numpy as np
 from aidetector.dazzlecow.enrollment import (
+    DEFAULT_ENROLLMENT_MARGIN,
+    DEFAULT_ENROLLMENT_SIMILARITY,
     EnrollmentTrack,
     cluster_known_count,
     cluster_tracklets,
     cluster_tracks,
     match_camera_tracks,
-    save_enrollment,
 )
-from aidetector.dazzlecow.model import DazzleCowEncoder
-from aidetector.dazzlecow.train import discover_public_dataset
+from aidetector.dazzlecow.gallery import CowIdentityGallery
+from aidetector.dazzlecow.datasets import discover_public_dataset
+from aidetector.dazzlecow.model import CowIdentityEncoder, IDENTITY_MODEL
 from sklearn.cluster import KMeans
 from sklearn.metrics import roc_auc_score
 
@@ -29,13 +31,11 @@ class LabeledTrack:
 
 
 def build_track_embeddings(
-    model: str | Path,
     source: Path,
     *,
     samples_per_track: int,
     fragments_per_sequence: int,
     batch_size: int,
-    device: str,
     synchronized_frames: bool = True,
 ) -> list[LabeledTrack]:
     if fragments_per_sequence < 1:
@@ -61,7 +61,7 @@ def build_track_embeddings(
         indices = np.linspace(0, len(paths) - 1, count, dtype=int)
         selected.extend((group, paths[index]) for index in indices)
 
-    encoder = DazzleCowEncoder(model, device=device)
+    encoder = CowIdentityEncoder()
     embeddings = defaultdict(list)
     for offset in range(0, len(selected), batch_size):
         batch = selected[offset : offset + batch_size]
@@ -149,8 +149,7 @@ def enrollment_metrics(
         tracks
     )
     complete_identities = sum(
-        len(clusters) == 1
-        and len(true_by_cluster[next(iter(clusters))]) == 1
+        len(clusters) == 1 and len(true_by_cluster[next(iter(clusters))]) == 1
         for clusters in clusters_by_true.values()
     )
     true_identities = len(set(true_by_key.values()))
@@ -173,6 +172,17 @@ def enrollment_metrics(
             len(clusters) > 1 for clusters in clusters_by_true.values()
         ),
     }
+
+
+def production_open_enrollment_metrics(
+    tracks: list[LabeledTrack],
+) -> dict[str, float | int]:
+    assignments = cluster_tracklets(
+        [track.track for track in tracks],
+        similarity_threshold=DEFAULT_ENROLLMENT_SIMILARITY,
+        margin_threshold=DEFAULT_ENROLLMENT_MARGIN,
+    )
+    return enrollment_metrics(tracks, assignments)
 
 
 def verification_metrics(tracks: list[LabeledTrack]) -> dict[str, float | int]:
@@ -218,10 +228,86 @@ def known_count_metrics(tracks: list[LabeledTrack]) -> dict[str, float | int]:
         random_state=84000,
     ).fit_predict(embeddings)
     assignments = {
-        track.track.key: str(label)
-        for track, label in zip(tracks, labels, strict=True)
+        track.track.key: str(label) for track, label in zip(tracks, labels, strict=True)
     }
     return enrollment_metrics(tracks, assignments)
+
+
+def camera_disjoint_identity_metrics(
+    tracks: list[LabeledTrack],
+    *,
+    unknown_tracks: list[LabeledTrack] | None = None,
+    match_threshold: float = 0.7,
+    match_margin: float = 0.2,
+) -> dict:
+    totals = Counter()
+    per_camera = {}
+    for camera in sorted({track.camera for track in tracks}):
+        gallery_tracks = [track for track in tracks if track.camera != camera]
+        gallery_identities = {track.identity for track in gallery_tracks}
+        queries = [
+            track
+            for track in tracks
+            if track.camera == camera and track.identity in gallery_identities
+        ]
+        if not gallery_tracks or not queries:
+            continue
+
+        gallery = CowIdentityGallery(
+            np.asarray([track.track.embedding for track in gallery_tracks]),
+            [track.identity for track in gallery_tracks],
+            [track.identity for track in gallery_tracks],
+            match_threshold=match_threshold,
+            match_margin=match_margin,
+        )
+        counts = Counter()
+        for query in queries:
+            score = gallery.score(query.track.embedding)
+            accepted = (
+                score.similarity >= match_threshold and score.margin >= match_margin
+            )
+            counts["queries"] += 1
+            counts["top1"] += score.key == query.identity
+            counts["identified"] += accepted and score.key == query.identity
+            counts["misidentified"] += accepted and score.key != query.identity
+            counts["rejected"] += not accepted
+
+        for query in unknown_tracks or []:
+            if query.camera != camera or query.identity in gallery_identities:
+                continue
+            score = gallery.score(query.track.embedding)
+            counts["unknown_queries"] += 1
+            counts["unknown_false_accepts"] += (
+                score.similarity >= match_threshold and score.margin >= match_margin
+            )
+
+        totals.update(counts)
+        per_camera[camera] = _identity_rates(counts)
+
+    return {
+        "match_threshold": match_threshold,
+        "match_margin": match_margin,
+        **_identity_rates(totals),
+        "per_camera": per_camera,
+    }
+
+
+def _identity_rates(counts: Counter) -> dict:
+    queries = counts["queries"]
+    unknown = counts["unknown_queries"]
+    return {
+        "queries": queries,
+        "top1_accuracy": counts["top1"] / queries if queries else None,
+        "identification_rate": counts["identified"] / queries if queries else None,
+        "misidentification_rate": (
+            counts["misidentified"] / queries if queries else None
+        ),
+        "rejection_rate": counts["rejected"] / queries if queries else None,
+        "unknown_queries": unknown,
+        "unknown_false_acceptance_rate": (
+            counts["unknown_false_accepts"] / unknown if unknown else None
+        ),
+    }
 
 
 def constrained_known_count_metrics(
@@ -268,7 +354,6 @@ def evaluate_threshold(
 
 def run_enrollment_benchmark(
     *,
-    model: str | Path,
     calibration_source: Path | None,
     test_source: Path,
     output: Path,
@@ -276,36 +361,37 @@ def run_enrollment_benchmark(
     fragments_per_sequence: int,
     batch_size: int,
     neighbors: int,
-    device: str,
     strategy: str,
     similarity_threshold: float | None = None,
     margin_threshold: float = 0.0,
     clustering_attempts: int = 1000,
     synchronized_frames: bool = True,
+    identity_match_threshold: float = 0.68,
+    identity_match_margin: float = 0.05,
 ) -> dict:
     test_tracks = build_track_embeddings(
-        model,
         test_source,
         samples_per_track=samples_per_track,
         fragments_per_sequence=fragments_per_sequence,
         batch_size=batch_size,
-        device=device,
         synchronized_frames=synchronized_frames,
     )
-    calibration_best = None
-    calibration_selected = None
-    if similarity_threshold is None:
-        if calibration_source is None:
-            raise ValueError("Calibration source or similarity threshold is required")
-        calibration_tracks = build_track_embeddings(
-            model,
+    calibration_tracks = (
+        build_track_embeddings(
             calibration_source,
             samples_per_track=samples_per_track,
             fragments_per_sequence=fragments_per_sequence,
             batch_size=batch_size,
-            device=device,
             synchronized_frames=synchronized_frames,
         )
+        if calibration_source is not None
+        else None
+    )
+    calibration_best = None
+    calibration_selected = None
+    if similarity_threshold is None:
+        if calibration_tracks is None:
+            raise ValueError("Calibration source or similarity threshold is required")
         calibration = []
         thresholds, margins = _calibration_grid(strategy)
         for threshold in thresholds:
@@ -327,9 +413,7 @@ def run_enrollment_benchmark(
         calibration_best = select_enrollment_threshold(calibration)
         calibration_selected = select_enrollment_threshold(
             calibration,
-            margin_buffer=(
-                0.01 if strategy in {"agglomerative", "hungarian"} else 0.0
-            ),
+            margin_buffer=(0.01 if strategy in {"agglomerative", "hungarian"} else 0.0),
         )
         similarity_threshold = calibration_selected["threshold"]
         margin_threshold = calibration_selected["margin"]
@@ -341,17 +425,8 @@ def run_enrollment_benchmark(
         strategy,
     )
     output.mkdir(parents=True, exist_ok=True)
-    save_enrollment(
-        output / "gallery.npz",
-        [track.track for track in test_tracks],
-        assignments,
-    )
     report = {
-        "model": (
-            str(model)
-            if str(model).startswith("hf-hub:")
-            else str(Path(model).resolve())
-        ),
+        "model": IDENTITY_MODEL,
         "samples_per_track": samples_per_track,
         "fragments_per_sequence": fragments_per_sequence,
         "synchronized_frames": synchronized_frames,
@@ -362,7 +437,14 @@ def run_enrollment_benchmark(
         "calibration_best": calibration_best,
         "calibration": calibration_selected,
         "test": test,
+        "production_open_enrollment": production_open_enrollment_metrics(test_tracks),
         "verification": verification_metrics(test_tracks),
+        "camera_disjoint_identity": camera_disjoint_identity_metrics(
+            test_tracks,
+            unknown_tracks=calibration_tracks,
+            match_threshold=identity_match_threshold,
+            match_margin=identity_match_margin,
+        ),
         "known_identity_count": known_count_metrics(test_tracks),
         "constrained_known_identity_count": constrained_known_count_metrics(
             test_tracks,
@@ -437,7 +519,6 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Calibrate and evaluate automatic cow enrollment"
     )
-    parser.add_argument("--model", required=True)
     parser.add_argument("--calibration", type=Path)
     parser.add_argument("--test", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -450,14 +531,14 @@ def main() -> None:
         choices=("agglomerative", "hungarian", "mutual"),
         default="agglomerative",
     )
-    parser.add_argument("--device", default="auto")
     parser.add_argument("--similarity-threshold", type=float)
     parser.add_argument("--margin-threshold", type=float, default=0.0)
+    parser.add_argument("--identity-match-threshold", type=float, default=0.68)
+    parser.add_argument("--identity-match-margin", type=float, default=0.05)
     parser.add_argument("--clustering-attempts", type=int, default=1000)
     parser.add_argument("--independent-sequences", action="store_true")
     arguments = parser.parse_args()
     report = run_enrollment_benchmark(
-        model=arguments.model,
         calibration_source=arguments.calibration,
         test_source=arguments.test,
         output=arguments.output,
@@ -465,11 +546,12 @@ def main() -> None:
         fragments_per_sequence=arguments.fragments_per_sequence,
         batch_size=arguments.batch_size,
         neighbors=arguments.neighbors,
-        device=arguments.device,
         strategy=arguments.strategy,
         similarity_threshold=arguments.similarity_threshold,
         margin_threshold=arguments.margin_threshold,
         clustering_attempts=arguments.clustering_attempts,
         synchronized_frames=not arguments.independent_sequences,
+        identity_match_threshold=arguments.identity_match_threshold,
+        identity_match_margin=arguments.identity_match_margin,
     )
     print(json.dumps(report, indent=2))
