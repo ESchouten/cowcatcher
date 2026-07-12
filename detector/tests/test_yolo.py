@@ -3,11 +3,12 @@ from datetime import datetime, timedelta
 import numpy as np
 import pytest
 
-from aidetector.detection.yolo import (
+from aidetector.adapters.models.yolo import (
     UltralyticsStreamBatch,
     YoloResultMapper,
     YoloRunner,
 )
+from aidetector.domain.frames import Frame
 from aidetector.utils.config import YoloConfig
 
 
@@ -48,24 +49,29 @@ def test_yolo_result_mapper_keeps_all_boxes_above_threshold():
     )
     start = datetime(2026, 1, 1, 12, 0, 0)
     frames = [
-        (start, np.zeros((100, 100, 3), dtype=np.uint8)),
-        (start + timedelta(seconds=1), np.zeros((100, 100, 3), dtype=np.uint8)),
+        Frame(start, np.zeros((100, 100, 3), dtype=np.uint8)),
+        Frame(
+            start + timedelta(seconds=1),
+            np.zeros((100, 100, 3), dtype=np.uint8),
+        ),
     ]
 
-    detections = mapper.detections_from_result(result, frames)
+    observations = mapper.observations_from_result(result, frames)
 
-    assert detections is not None
-    assert len(detections) == 2
-    assert detections[0].confidence == {}
-    assert detections[1].confidence == {"cow": 0.8}
-    assert len(detections[1].images.crops) == 2
-    assert detections[1].images.crops[0].label == "cow"
-    assert detections[1].images.crops[0].track_id == 7
+    assert observations is not None
+    assert len(observations) == 2
+    assert observations[0].confidences == {}
+    assert observations[0].objects == ()
+    assert observations[1].confidences == {"cow": 0.8}
+    assert len(observations[1].objects) == 2
+    assert observations[1].objects[0].label == "cow"
+    assert observations[1].objects[0].track_id == 7
 
 
 class FakeModel:
     def __init__(self, name="model"):
         self.name = name
+        self.names = {19: "cow"}
         self.calls = []
 
     def predict(self, **kwargs):
@@ -82,13 +88,11 @@ class FakeModel:
 
 
 def make_runner() -> YoloRunner:
-    runner = YoloRunner.__new__(YoloRunner)
-    runner.config = YoloConfig(model="model.pt")
-    runner.model = FakeModel("base")
-    runner.sources = ["camera-1", "camera-2"]
-    runner.tracking_last_frames = {}
-    runner.class_confidences = {19: ("cow", 0.5)}
-    return runner
+    return YoloRunner(
+        YoloConfig(model="model.pt", confidence={"cow": 0.5}),
+        ["camera-1", "camera-2"],
+        FakeModel("base"),
+    )
 
 
 def test_ultralytics_stream_batch_behaves_like_stream_loader():
@@ -126,10 +130,10 @@ def test_yolo_runner_tracks_latest_sources_as_stream_batch():
     frame_2 = np.full((10, 10, 3), 2, dtype=np.uint8)
 
     first = runner.track_sources(
-        {"camera-1": [(detected_at, frame_1)]},
+        {"camera-1": [Frame(detected_at, frame_1)]},
     )
     second = runner.track_sources(
-        {"camera-2": [(detected_at + timedelta(seconds=1), frame_2)]},
+        {"camera-2": [Frame(detected_at + timedelta(seconds=1), frame_2)]},
     )
 
     assert [(item.source, item.result) for item in first] == [

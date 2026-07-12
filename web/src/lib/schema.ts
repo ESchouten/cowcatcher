@@ -14,7 +14,11 @@ export const STAGES = ['approved', 'rejected', 'unvalidated'] as const;
 export type Stage = (typeof STAGES)[number];
 
 export type Metadata = MetadataDocument;
-export type DetectionMetadata = Metadata & { type: string };
+export type DetectionMetadata = Metadata & {
+	type: string;
+	stage: Stage;
+	locator: string;
+};
 
 export const DEFAULT_SCHEMA_URL =
 	'https://raw.githubusercontent.com/ESchouten/ai-detector/main/config/config.schema.json';

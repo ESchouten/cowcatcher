@@ -14,7 +14,7 @@ interface DetectionPage {
 interface DetectionLocator {
 	type: string;
 	stage: Stage;
-	timestamp: string;
+	locator: string;
 	epoch: number;
 }
 
@@ -33,11 +33,11 @@ async function listFolders(directoryPath: string): Promise<string[]> {
 async function readDetection(
 	type: string,
 	stage: Stage,
-	timestamp: string
+	locator: string
 ): Promise<DetectionMetadata> {
-	const metadataPath = path.join(DETECTIONS_DIR, type, stage, timestamp, 'metadata.json');
+	const metadataPath = path.join(DETECTIONS_DIR, type, stage, locator, 'metadata.json');
 	const metadata = JSON.parse(await fs.readFile(metadataPath, 'utf8'));
-	return { ...metadata, type } as DetectionMetadata;
+	return { ...metadata, type, stage, locator } as DetectionMetadata;
 }
 
 function toEpoch(value: unknown): number {
@@ -68,13 +68,13 @@ async function listDetectionLocators(
 	for (const type of types) {
 		for (const stage of stages) {
 			const stagePath = path.join(DETECTIONS_DIR, type, stage);
-			const timestamps = await listFolders(stagePath);
-			for (const timestamp of timestamps) {
+			const directories = await listFolders(stagePath);
+			for (const locator of directories) {
 				locators.push({
 					type,
 					stage,
-					timestamp,
-					epoch: toEpoch(timestamp)
+					locator,
+					epoch: toEpoch(locator)
 				});
 			}
 		}
@@ -83,7 +83,7 @@ async function listDetectionLocators(
 	return locators.sort(
 		(a, b) =>
 			b.epoch - a.epoch ||
-			b.timestamp.localeCompare(a.timestamp) ||
+			b.locator.localeCompare(a.locator) ||
 			a.type.localeCompare(b.type) ||
 			a.stage.localeCompare(b.stage)
 	);
@@ -102,7 +102,7 @@ export const getDetectionPage = query(
 		const locators = await listDetectionLocators(types, stages);
 		const page = locators.slice(offset, offset + limit);
 		const items = await Promise.all(
-			page.map(({ type, stage, timestamp }) => readDetection(type, stage, timestamp))
+			page.map(({ type, stage, locator }) => readDetection(type, stage, locator))
 		);
 
 		return {

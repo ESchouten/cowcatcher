@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 from aidetector.utils.config import Config
-from aidetector.exporters.metadata import DetectionMetadata
+from aidetector.adapters.sinks.metadata import DetectionMetadata
 from pydantic import TypeAdapter
 
 

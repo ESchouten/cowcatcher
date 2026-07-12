@@ -25,7 +25,7 @@ class Healthcheck:
     def stop(self) -> None:
         self._stop.set()
         if self._thread is not None:
-            self._thread.join(timeout=self.config.timeout + 1)
+            self._thread.join()
 
     def _run(self) -> None:
         logger.info(

@@ -31,16 +31,16 @@ def start() -> None:
     config = load_config()
     logger.info("Starting application with %d detector(s)", len(config.detectors))
     setup_ort(config)
-    from aidetector.detection.manager import Manager
+    from aidetector.application import Application
 
-    manager = Manager.from_config(config)
-    manager.start()
+    application = Application.from_config(config)
+    application.start()
     try:
-        manager.wait()
+        application.wait()
     except KeyboardInterrupt:
         logger.info("Shutdown requested")
     finally:
-        manager.stop()
+        application.stop()
 
 
 def main() -> None:

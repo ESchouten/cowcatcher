@@ -33,6 +33,7 @@ export type Key = string | null;
 export type Url = string | null;
 export type Strategy = 'IMAGE' | 'VIDEO';
 export type CropPadding = number;
+export type Timeout1 = number;
 export type Disk = DiskConfig | DiskConfig[] | null;
 export type Confidence1 =
 	| number
@@ -62,11 +63,11 @@ export type VideoCrf = number;
 export type Token = string;
 export type Chat = string;
 export type AlertEvery = number;
-export type Timeout1 = number;
+export type Timeout2 = number;
 export type Webhook = WebhookConfig | WebhookConfig[] | null;
 export type Url1 = string;
 export type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
-export type Timeout2 = number | null;
+export type Timeout3 = number | null;
 export type Headers = {
 	[k: string]: string;
 } | null;
@@ -104,7 +105,7 @@ export type Winml = boolean;
 export type Opset = number;
 export type Url2 = string;
 export type Method1 = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
-export type Timeout3 = number;
+export type Timeout4 = number;
 export type Headers1 = {
 	[k: string]: string;
 } | null;
@@ -147,6 +148,7 @@ export interface VLMConfig {
 	url?: Url;
 	strategy?: Strategy;
 	crop_padding?: CropPadding;
+	timeout?: Timeout1;
 }
 export interface ExportersConfig {
 	disk?: Disk;
@@ -174,12 +176,12 @@ export interface ChatConfig {
 	token: Token;
 	chat: Chat;
 	alert_every?: AlertEvery;
-	timeout?: Timeout1;
+	timeout?: Timeout2;
 }
 export interface WebhookConfig {
 	url: Url1;
 	method?: Method;
-	timeout?: Timeout2;
+	timeout?: Timeout3;
 	headers?: Headers;
 	body?: Body;
 	confidence?: Confidence3;
@@ -210,7 +212,7 @@ export interface OnnxConfig {
 export interface HealthcheckConfig {
 	url: Url2;
 	method?: Method1;
-	timeout?: Timeout3;
+	timeout?: Timeout4;
 	headers?: Headers1;
 	body?: Body1;
 	interval?: Interval1;

@@ -40,8 +40,6 @@
 	type TrackObject = {
 		id?: number;
 		track_id?: number | null;
-		label: string | null;
-		confidence: number | null;
 		crop: TrackCrop;
 	};
 
@@ -124,8 +122,8 @@
 	}
 
 	function objectLabel(object: TrackObject) {
-		const objectName = object.label ?? object.crop.label ?? 'object';
-		const confidence = formatPercent(object.confidence ?? object.crop.confidence);
+		const objectName = object.crop.label ?? 'object';
+		const confidence = formatPercent(object.crop.confidence);
 		return confidence ? `${objectName} ${confidence}` : objectName;
 	}
 

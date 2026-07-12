@@ -30,12 +30,8 @@
 	let { entry }: Props = $props();
 	let isPlaying = $state(false);
 
-	const stage = $derived(
-		entry.validated === true ? 'approved' : entry.validated === false ? 'rejected' : 'unvalidated'
-	);
-
 	function getResource(resource: string) {
-		return `/detections/${[entry.type, stage, entry.timestamp, resource]
+		return `/detections/${[entry.type, entry.stage, entry.locator, resource]
 			.map((segment) => encodeURIComponent(segment))
 			.join('/')}`;
 	}
@@ -69,8 +65,8 @@
 
 	{#snippet overlay()}
 		<div class="flex flex-wrap items-center gap-2 text-xs">
-			<Badge variant={stageBadgeVariants[stage]} class={stageBadgeClasses[stage]}>
-				{stageLabels[stage]}
+			<Badge variant={stageBadgeVariants[entry.stage]} class={stageBadgeClasses[entry.stage]}>
+				{stageLabels[entry.stage]}
 			</Badge>
 			<Badge variant="secondary" class={overlayBadgeClass}>
 				{capitalize(entry.type)}

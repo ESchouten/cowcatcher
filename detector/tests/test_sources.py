@@ -2,10 +2,12 @@ from threading import Event
 from time import monotonic
 
 import numpy as np
+import pytest
 
 from aidetector.services.healthcheck import Healthcheck
-from aidetector.sources.collector import FrameCollector
-from aidetector.utils.config import HealthcheckConfig
+from aidetector.adapters.sources.collector import FrameCollector
+from aidetector.adapters.sources.source import SourceProvider
+from aidetector.utils.config import DetectionConfig, HealthcheckConfig
 
 
 def test_frame_collector_enforces_exact_retention_and_takes_snapshot():
@@ -19,8 +21,15 @@ def test_frame_collector_enforces_exact_retention_and_takes_snapshot():
     snapshot = collector.take()
 
     assert len(snapshot["camera"]) == 2
-    assert snapshot["camera"][0][1][0, 0, 0] == 1
+    assert snapshot["camera"][0].require_image()[0, 0, 0] == 1
     assert collector.frames == {}
+
+
+def test_source_provider_rejects_mixed_files_and_streams():
+    with pytest.raises(ValueError, match="cannot mix"):
+        SourceProvider(
+            DetectionConfig(source=["recording.mp4", "rtsp://camera/stream"])
+        )
 
 
 def test_healthcheck_stop_interrupts_long_interval(monkeypatch):

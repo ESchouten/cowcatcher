@@ -56,6 +56,14 @@
   },
   "additionalProperties": false,
   "properties": {
+    "event_id": {
+      "title": "Event Id",
+      "type": "string"
+    },
+    "source": {
+      "title": "Source",
+      "type": "string"
+    },
     "timestamp": {
       "title": "Timestamp",
       "type": "string"
@@ -82,8 +90,8 @@
       "title": "Confidences",
       "type": "object"
     },
-    "detections": {
-      "title": "Detections",
+    "observations": {
+      "title": "Observations",
       "type": "integer"
     },
     "start": {
@@ -118,11 +126,13 @@
     }
   },
   "required": [
+    "event_id",
+    "source",
     "timestamp",
     "validated",
     "confidence",
     "confidences",
-    "detections",
+    "observations",
     "start",
     "end",
     "duration"

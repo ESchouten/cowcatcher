@@ -1,9 +1,11 @@
 /* Generated from config JSON Schema. Do not edit manually. */
 
+export type EventId = string;
+export type Source = string;
 export type Timestamp = string;
 export type Validated = boolean | null;
 export type Confidence = number;
-export type Detections = number;
+export type Observations = number;
 export type Start = string;
 export type End = string;
 export type Duration = number;
@@ -16,11 +18,13 @@ export type Confidence1 = number | null;
 export type Crops = CropMetadata[];
 
 export interface DetectionMetadata {
+	event_id: EventId;
+	source: Source;
 	timestamp: Timestamp;
 	validated: Validated;
 	confidence: Confidence;
 	confidences: Confidences;
-	detections: Detections;
+	observations: Observations;
 	start: Start;
 	end: End;
 	duration: Duration;

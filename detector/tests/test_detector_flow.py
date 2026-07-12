@@ -1,42 +1,42 @@
 from datetime import datetime, timedelta
 
 import numpy as np
+import pytest
 
-from aidetector.detection.detector import Detector, ModelRuntime
-from aidetector.detection.events import DetectionEvent, EventCollector
-from aidetector.detection.models import Detection, ImageSet
-from aidetector.detection.yolo import TrackedSourceResult
-from aidetector.exporters.disk import DiskExporter
-from aidetector.exporters.dispatcher import ExportDispatcher
-from aidetector.exporters.factory import build_exporters
-from aidetector.exporters.telegram import TelegramExporter
-from aidetector.exporters.webhook import WebhookExporter
+from aidetector.adapters.sinks.disk import DiskSink
+from aidetector.adapters.sinks.factory import build_sinks
+from aidetector.adapters.sinks.telegram import TelegramSink
+from aidetector.adapters.sinks.webhook import WebhookSink
+from aidetector.domain.events import DetectionEvent
+from aidetector.domain.frames import Frame
+from aidetector.domain.policies import CooldownPolicy, EventPolicy
+from aidetector.media.artifacts import EventArtifacts
+from aidetector.media.storage import compact_observation
+from aidetector.pipeline.aggregation import EventAggregator
+from aidetector.pipeline.cooldown import CooldownTracker
+from aidetector.pipeline.dispatch import EventDispatcher
+from aidetector.pipeline.inference import InferenceStage
+from aidetector.pipeline.ports import ModelBatchResult
+from aidetector.pipeline.processor import DetectionPipeline
 from aidetector.utils.config import (
     ChatConfig,
-    DetectionConfig,
     DiskConfig,
     ExportersConfig,
     SSEConfig,
     WebhookConfig,
-    YoloConfig,
 )
+from tests.factories import make_observation
 
 
-def make_detection(
-    date: datetime,
-    confidence: dict[str, float] | None = None,
-) -> Detection:
-    image = np.zeros((80, 120, 3), dtype=np.uint8)
-    return Detection(
-        date,
-        ImageSet(image),
-        confidence if confidence is not None else {"cow": 0.9},
-    )
-
-
-class ImmediateExecutor:
-    def submit(self, function, *args):
-        function(*args)
+def event_policy(**overrides) -> EventPolicy:
+    values = {
+        "frames_min": 1,
+        "timeout": 5,
+        "time_max": 60,
+        "trailing_time": 1,
+        **overrides,
+    }
+    return EventPolicy(**values)
 
 
 class FakeValidator:
@@ -44,41 +44,26 @@ class FakeValidator:
         self.value = value
         self.calls = []
 
-    def validate(self, event):
-        self.calls.append(event)
+    def validate(self, event, artifacts):
+        self.calls.append((event, artifacts))
         return self.value
 
 
-class RecordingExporter:
+class RecordingSink:
     def __init__(self):
-        self.calls = []
-        self.closed = False
+        self.messages = []
 
-    def export(self, event, validated):
-        self.calls.append((event, validated))
-
-    def close(self):
-        self.closed = True
+    def send(self, message):
+        self.messages.append(message)
 
 
-class RecordingPublisher:
-    def __init__(self):
-        self.calls = []
-
-    def publish_tracks(self, source, detection):
-        self.calls.append((source, detection))
-
-
-class FakeSourceProvider:
-    def __init__(self, *, stream=True, batches=None, error=None):
+class FakeSource:
+    def __init__(self, *, realtime=True, batches=None, error=None):
         self.sources = ["camera-1", "camera-2"]
-        self.stream = stream
+        self.realtime = realtime
         self.batches = batches or []
         self.error = error
         self.closed = False
-
-    def is_stream(self):
-        return self.stream
 
     def iter_batches(self):
         yield from self.batches
@@ -101,14 +86,33 @@ class RecordingRunner:
     def track_sources(self, batch):
         self.calls.append(("track_sources", list(batch)))
         return [
-            TrackedSourceResult(source, f"{source}-tracked", frames)
+            ModelBatchResult(source, f"{source}-tracked", frames)
             for source, frames in batch.items()
         ]
 
-    def detections_from_result(self, result, frames):
+    def observations_from_result(self, result, frames):
         if callable(self.mapped):
             return self.mapped(result, frames)
         return self.mapped
+
+
+def build_test_pipeline(*, tracking=False, runner=None, source=None, live_sink=None):
+    source = source or FakeSource()
+    dispatcher = RecordingDispatcher()
+    pipeline = DetectionPipeline(
+        interval=0,
+        source=source,
+        inference=InferenceStage(
+            tracking,
+            runner or RecordingRunner(),
+            EventAggregator(event_policy(time_max=0)),
+        ),
+        dispatcher=dispatcher,
+        live_sinks=[live_sink] if live_sink else [],
+        compact=lambda observation: observation,
+        resources=[],
+    )
+    return pipeline, dispatcher
 
 
 class RecordingDispatcher:
@@ -119,220 +123,232 @@ class RecordingDispatcher:
     def submit(self, event):
         self.events.append(event)
 
+    def start(self):
+        pass
+
     def close(self):
         self.closed = True
 
 
-def build_test_detector(
-    config: YoloConfig,
-    *,
-    runner=None,
-    source_provider=None,
-    publisher=None,
-):
-    source_provider = source_provider or FakeSourceProvider()
-    dispatcher = RecordingDispatcher()
-    return (
-        Detector(
-            DetectionConfig(source=source_provider.sources),
-            source_provider,
-            ModelRuntime(
-                config,
-                runner or RecordingRunner(),
-                EventCollector(config),
-            ),
-            dispatcher,
-            [publisher] if publisher else [],
-        ),
-        dispatcher,
-    )
-
-
-def test_exporter_factory_builds_explicit_exporter_types(tmp_path, monkeypatch):
+def test_sink_factory_builds_explicit_adapter_types(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    targets = build_exporters(
+    bundle = build_sinks(
         ExportersConfig(
             disk=DiskConfig(directory="events"),
             webhook=WebhookConfig(url="https://example.test/hook"),
             telegram=ChatConfig(token="token", chat="chat-id"),
         ),
-        detector_index=0,
+        pipeline_index=0,
     )
 
-    assert [type(exporter) for exporter in targets.exporters] == [
-        TelegramExporter,
-        WebhookExporter,
-        DiskExporter,
+    assert [type(sink.target.target) for sink in bundle.events] == [
+        TelegramSink,
+        WebhookSink,
+        DiskSink,
     ]
-    assert targets.track_publishers == []
+    assert bundle.live == []
 
 
-def test_exporter_factory_assigns_sse_endpoint_without_mutating_config(monkeypatch):
+def test_sink_factory_assigns_sse_endpoint_without_mutating_config(monkeypatch):
     created = []
 
-    class RecordingSSEExporter:
+    class RecordingSSESink:
         def __init__(self, config):
             self.config = config
             created.append(self)
 
-        def publish_tracks(self, source, detection):
+        def send(self, message):
             pass
 
-        def export(self, event, validated):
+        def close(self):
             pass
 
     monkeypatch.setattr(
-        "aidetector.exporters.factory.SSEExporter",
-        RecordingSSEExporter,
+        "aidetector.adapters.sinks.factory.SSESink",
+        RecordingSSESink,
     )
     config = SSEConfig(port=9876)
 
-    targets = build_exporters(ExportersConfig(sse=config), detector_index=2)
+    bundle = build_sinks(ExportersConfig(sse=config), pipeline_index=2)
 
     assert config.endpoint is None
     assert created[0].config.endpoint == "/events/2"
-    assert created[0].config.port == 9876
-    assert targets.track_publishers == created
+    assert bundle.live == created
+    assert bundle.resources[-1:] == created
 
 
-def test_event_collector_selects_best_complete_event():
-    config = YoloConfig(model="model.pt", frames_min=2)
-    collector = EventCollector(config)
+def test_event_aggregator_selects_best_complete_event():
+    aggregator = EventAggregator(event_policy(frames_min=2))
     start = datetime(2026, 1, 1, 12, 0, 0)
-
-    collector.add("camera", [make_detection(start, {"cow": 0.7})], now=start)
-    collector.add(
+    aggregator.add("camera", [make_observation(start, {"cow": 0.7})], now=start)
+    aggregator.add(
         "camera",
-        [make_detection(start + timedelta(seconds=1), {"cow": 0.9})],
-        now=start + timedelta(seconds=1),
-    )
-    events = collector.flush_all()
-
-    assert len(events) == 1
-    assert len(events[0].detections) == 2
-    assert events[0].best.confidence == {"cow": 0.9}
-
-
-def test_event_collector_expires_and_keeps_trailing_frames():
-    config = YoloConfig(
-        model="model.pt",
-        frames_min=1,
-        timeout=5,
-        include_trailing_time=2,
-    )
-    collector = EventCollector(config)
-    start = datetime(2026, 1, 1, 12, 0, 0)
-    collector.add("camera", [make_detection(start)], now=start)
-    collector.add_trailing(
-        "camera",
-        [make_detection(start + timedelta(seconds=1), {})],
+        [make_observation(start + timedelta(seconds=1), {"cow": 0.9})],
         now=start + timedelta(seconds=1),
     )
 
-    events = collector.flush_expired(now=start + timedelta(seconds=6))
+    events = aggregator.flush_all()
 
     assert len(events) == 1
-    assert len(events[0].detections) == 2
-    assert events[0].detections[-1].confidence == {}
+    assert len(events[0].observations) == 2
+    assert events[0].best.confidences == {"cow": 0.9}
 
 
-def test_export_dispatcher_validates_and_exports_event():
-    validator = FakeValidator(True)
-    exporter = RecordingExporter()
-    dispatcher = ExportDispatcher(
-        validator,
-        [exporter],
-        YoloConfig(model="model.pt", confidence=0.5),
-        executor=ImmediateExecutor(),
+def test_event_aggregator_expires_and_keeps_trailing_frames():
+    aggregator = EventAggregator(event_policy(timeout=5, trailing_time=2))
+    start = datetime(2026, 1, 1, 12, 0, 0)
+    aggregator.add("camera", [make_observation(start)], now=start)
+    aggregator.add_trailing(
+        "camera",
+        [make_observation(start + timedelta(seconds=1), {})],
+        now=start + timedelta(seconds=1),
     )
-    detection = make_detection(datetime.now())
-    event = DetectionEvent("camera", (detection,), detection)
 
-    dispatcher.submit(event)
+    events = aggregator.flush_expired(now=start + timedelta(seconds=6))
 
-    assert len(validator.calls) == 1
-    assert exporter.calls == [(event, True)]
+    assert len(events) == 1
+    assert len(events[0].observations) == 2
+    assert events[0].observations[-1].confidences == {}
 
 
-def test_export_dispatcher_serializes_cooldown_and_closes_exporters():
+def test_event_aggregator_compacts_stored_frames():
+    aggregator = EventAggregator(event_policy(), compact_observation)
+    observation = make_observation(datetime.now())
+
+    aggregator.add("camera", [observation])
+    event = aggregator.flush_all()[0]
+
+    assert observation.frame.image is not None
+    assert event.best.frame.image is None
+    assert event.best.frame.jpeg is not None
+
+
+def test_observation_confidences_are_immutable():
+    observation = make_observation(datetime.now())
+
+    with pytest.raises(TypeError):
+        observation.confidences["cow"] = 0.1  # type: ignore[index]
+
+
+def test_dispatcher_validates_and_sends_completed_event():
     validator = FakeValidator(True)
-    exporter = RecordingExporter()
-    dispatcher = ExportDispatcher(
+    sink = RecordingSink()
+    dispatcher = EventDispatcher(
         validator,
-        [exporter],
-        YoloConfig(model="model.pt", confidence=0.5, cooldown=60),
-        executor=ImmediateExecutor(),
+        [sink],
+        CooldownTracker(CooldownPolicy(0.5, 0)),
+        EventArtifacts,
     )
-    detection = make_detection(datetime.now())
-    event = DetectionEvent("camera", (detection,), detection)
+    dispatcher.start()
+    observation = make_observation(datetime.now())
+    event = DetectionEvent("camera", (observation,), observation)
 
-    dispatcher.submit(event)
     dispatcher.submit(event)
     dispatcher.close()
 
-    assert len(validator.calls) == 1
-    assert len(exporter.calls) == 1
-    assert exporter.closed is True
+    assert validator.calls[0][0] is event
+    assert sink.messages[0].event is event
+    assert sink.messages[0].validated is True
 
 
-def test_export_dispatcher_compares_cooldown_using_event_timestamps():
+def test_dispatcher_applies_cooldown_using_event_timestamps():
     validator = FakeValidator(True)
-    exporter = RecordingExporter()
-    dispatcher = ExportDispatcher(
+    sink = RecordingSink()
+    dispatcher = EventDispatcher(
         validator,
-        [exporter],
-        YoloConfig(model="model.pt", confidence=0.5, cooldown=60),
-        executor=ImmediateExecutor(),
+        [sink],
+        CooldownTracker(CooldownPolicy(0.5, 60)),
+        EventArtifacts,
     )
-    first = make_detection(datetime(2020, 1, 1, 12, 0, 0))
-    second = make_detection(datetime(2020, 1, 1, 12, 0, 30))
+    dispatcher.start()
+    first = make_observation(datetime(2020, 1, 1, 12, 0, 0))
+    second = make_observation(datetime(2020, 1, 1, 12, 0, 30))
 
     dispatcher.submit(DetectionEvent("camera", (first,), first))
     dispatcher.submit(DetectionEvent("camera", (second,), second))
+    dispatcher.close()
 
-    assert len(exporter.calls) == 1
+    assert len(validator.calls) == 1
+    assert len(sink.messages) == 1
 
 
-def test_detector_batches_sources_when_tracking_is_disabled():
-    config = YoloConfig(model="model.pt", tracking=False)
+def test_cooldown_only_records_eligible_classes():
+    tracker = CooldownTracker(
+        CooldownPolicy(
+            {"cow": 0.5, "calf": 0.5},
+            {"cow": 60, "calf": 0},
+        )
+    )
+    first_at = datetime(2020, 1, 1, 12, 0, 0)
+    first = make_observation(first_at, {"cow": 0.9, "calf": 0.9})
+    first_event = DetectionEvent("camera", (first,), first)
+    first_classes = tracker.eligible_classes(first_event)
+    assert first_classes == ["cow", "calf"]
+    tracker.record("camera", first_classes, first_at)
+
+    second = make_observation(
+        first_at + timedelta(seconds=1),
+        {"cow": 0.9, "calf": 0.9},
+    )
+    second_event = DetectionEvent("camera", (second,), second)
+
+    assert tracker.eligible_classes(second_event) == ["calf"]
+
+
+def test_dispatcher_continues_after_event_processing_failure():
+    attempts = []
+
+    def artifact_factory(event):
+        attempts.append(event)
+        if len(attempts) == 1:
+            raise ValueError("artifact failure")
+        return EventArtifacts(event)
+
+    sink = RecordingSink()
+    dispatcher = EventDispatcher(
+        FakeValidator(True),
+        [sink],
+        CooldownTracker(CooldownPolicy(0.5, 0)),
+        artifact_factory,
+    )
+    dispatcher.start()
+    first = make_observation(datetime(2020, 1, 1, 12, 0, 0))
+    second = make_observation(datetime(2020, 1, 1, 12, 0, 1))
+
+    dispatcher.submit(DetectionEvent("camera", (first,), first))
+    dispatcher.submit(DetectionEvent("camera", (second,), second))
+    dispatcher.close()
+
+    assert len(attempts) == 2
+    assert len(sink.messages) == 1
+    assert sink.messages[0].event.best is second
+
+
+def test_pipeline_batches_sources_when_tracking_is_disabled():
     runner = RecordingRunner()
-    detector, _ = build_test_detector(config, runner=runner)
+    pipeline, _ = build_test_pipeline(runner=runner)
     handled = []
-    detector._handle_model_result = lambda source, result, frames: handled.append(
-        (source, result, len(frames))
+    pipeline.processor._handle_model_result = lambda source, result, frames: (
+        handled.append((source, result, len(frames)))
     )
-    frame = np.zeros((80, 120, 3), dtype=np.uint8)
+    frame = Frame(datetime.now(), np.zeros((80, 120, 3), dtype=np.uint8))
 
-    detector._handle_frame_batch(
-        {
-            "camera-1": [(datetime.now(), frame)],
-            "camera-2": [(datetime.now(), frame)],
-        }
-    )
+    pipeline.processor.process({"camera-1": [frame], "camera-2": [frame]})
 
     assert runner.calls == [("detect", 2)]
-    assert handled == [
-        ("camera-1", "batch-0", 1),
-        ("camera-2", "batch-1", 1),
-    ]
+    assert handled == [("camera-1", "batch-0", 1), ("camera-2", "batch-1", 1)]
 
 
-def test_detector_tracks_sources_as_one_stream_batch():
-    config = YoloConfig(model="model.pt", tracking=True)
+def test_pipeline_tracks_sources_as_one_stream_batch():
     runner = RecordingRunner()
-    detector, _ = build_test_detector(config, runner=runner)
+    pipeline, _ = build_test_pipeline(tracking=True, runner=runner)
     handled = []
-    detector._handle_model_result = lambda source, result, frames: handled.append(
-        (source, result, len(frames))
+    pipeline.processor._handle_model_result = lambda source, result, frames: (
+        handled.append((source, result, len(frames)))
     )
-    frame = np.zeros((80, 120, 3), dtype=np.uint8)
+    frame = Frame(datetime.now(), np.zeros((80, 120, 3), dtype=np.uint8))
 
-    detector._handle_frame_batch(
-        {
-            "camera-1": [(datetime.now(), frame), (datetime.now(), frame)],
-            "camera-2": [(datetime.now(), frame)],
-        }
-    )
+    pipeline.processor.process({"camera-1": [frame, frame], "camera-2": [frame]})
 
     assert runner.calls == [("track_sources", ["camera-1", "camera-2"])]
     assert handled == [
@@ -341,45 +357,38 @@ def test_detector_tracks_sources_as_one_stream_batch():
     ]
 
 
-def test_detector_publishes_live_result_and_submits_completed_event():
+def test_pipeline_publishes_live_observation_and_completed_event():
     now = datetime.now()
-    detections = [make_detection(now)]
-    publisher = RecordingPublisher()
-    runner = RecordingRunner(mapped=detections)
-    config = YoloConfig(model="model.pt", frames_min=1, time_max=0)
-    detector, dispatcher = build_test_detector(
-        config,
-        runner=runner,
-        publisher=publisher,
+    observations = [make_observation(now)]
+    live = RecordingSink()
+    pipeline, dispatcher = build_test_pipeline(
+        runner=RecordingRunner(mapped=observations),
+        live_sink=live,
     )
+    frame = Frame(now, np.zeros((80, 120, 3), dtype=np.uint8))
 
-    detector._handle_model_result(
-        "camera-1",
-        object(),
-        [(now, np.zeros((80, 120, 3), dtype=np.uint8))],
-    )
+    pipeline.processor._handle_model_result("camera-1", object(), [frame])
 
-    assert publisher.calls == [("0:0", detections[-1])]
+    assert live.messages[0].source == "0:0"
+    assert live.messages[0].observation is observations[-1]
     assert len(dispatcher.events) == 1
 
 
-def test_detector_records_worker_failure_for_manager():
-    source = FakeSourceProvider(error=ValueError("broken source"))
-    config = YoloConfig(model="model.pt")
-    detector, dispatcher = build_test_detector(config, source_provider=source)
+def test_pipeline_records_worker_failure_for_application():
+    source = FakeSource(error=ValueError("broken source"))
+    pipeline, dispatcher = build_test_pipeline(source=source)
 
-    detector.start()
-    detector.join(timeout=2)
+    pipeline.start()
+    pipeline.join(timeout=2)
 
-    assert isinstance(detector.error, ValueError)
+    assert isinstance(pipeline.error, ValueError)
     assert source.closed is True
     assert dispatcher.closed is True
 
 
-def test_detector_close_before_start_closes_dispatcher():
-    config = YoloConfig(model="model.pt")
-    detector, dispatcher = build_test_detector(config)
+def test_pipeline_close_before_start_closes_dispatcher():
+    pipeline, dispatcher = build_test_pipeline()
 
-    detector.close()
+    pipeline.close()
 
     assert dispatcher.closed is True

@@ -24,17 +24,6 @@ def config_list(value: T | list[T] | None) -> list[T]:
     return list(value) if isinstance(value, list) else [value]
 
 
-def _default_frames_min() -> int:
-    try:
-        import torch
-
-        if torch.cuda.is_available():
-            return 6
-    except ImportError:
-        pass
-    return 3
-
-
 HttpMethod = Literal["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]
 NonEmptyString = Annotated[str, Field(min_length=1)]
 Probability = Annotated[float, Field(ge=0, le=1)]
@@ -59,7 +48,7 @@ class YoloConfig:
     timeout: NonNegativeFloat = 5
     cooldown: Cooldown = 0
     include_trailing_time: NonNegativeFloat = 1
-    frames_min: PositiveInt = field(default_factory=_default_frames_min)
+    frames_min: PositiveInt = 3
     imgsz: PositiveInt = 640
 
 
@@ -79,6 +68,7 @@ class VLMConfig:
     url: str | None = None
     strategy: Literal["IMAGE", "VIDEO"] = "VIDEO"
     crop_padding: NonNegativeFloat = 0.1
+    timeout: PositiveFloat = 30
 
 
 @dataclass(config=STRICT_CONFIG, kw_only=True)

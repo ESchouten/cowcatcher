@@ -195,7 +195,7 @@
 						<Badge variant="outline">{dayGroup[1].length}</Badge>
 					</div>
 					<div class="grid gap-2 lg:grid-cols-2 2xl:grid-cols-3">
-						{#each dayGroup[1] as entry (`${entry.type}:${entry.timestamp}`)}
+						{#each dayGroup[1] as entry (`${entry.type}:${entry.stage}:${entry.locator}`)}
 							<DetectionCard {entry} />
 						{/each}
 					</div>

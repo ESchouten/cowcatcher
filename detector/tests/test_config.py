@@ -3,8 +3,8 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from aidetector.detection.models import confidence_matches, matching_confidences
-from aidetector.utils.config import Config, load_config
+from aidetector.domain.detections import confidence_matches, matching_confidences
+from aidetector.utils.config import Config, YoloConfig, load_config
 
 
 def test_example_config_validates():
@@ -14,6 +14,10 @@ def test_example_config_validates():
     assert len(config.detectors) == 1
     assert config.detectors[0].detection.source == ["sprong24.mp4"]
     assert config.detectors[0].exporters is not None
+
+
+def test_yolo_defaults_are_deterministic():
+    assert YoloConfig(model="model.pt").frames_min == 3
 
 
 def test_confidence_helpers_support_global_and_per_class_thresholds():

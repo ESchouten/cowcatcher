@@ -1,26 +1,10 @@
 import json
-from datetime import datetime
-
-import numpy as np
 from litellm.exceptions import ServiceUnavailableError
 
-from aidetector.detection.events import DetectionEvent
-from aidetector.detection.models import Detection, ImageSet
-from aidetector.detection.validator import MAX_ATTEMPTS, Validator
+from aidetector.adapters.validation.vlm import MAX_ATTEMPTS, VLMValidator
+from aidetector.media.artifacts import EventArtifacts
 from aidetector.utils.config import VLMConfig
-
-
-def detection() -> Detection:
-    return Detection(
-        datetime.now(),
-        ImageSet(np.zeros((40, 60, 3), dtype=np.uint8)),
-        {"cow": 0.9},
-    )
-
-
-def event() -> DetectionEvent:
-    item = detection()
-    return DetectionEvent("camera", (item,), item)
+from tests.factories import make_event
 
 
 def response(detected: bool):
@@ -38,7 +22,8 @@ def response(detected: bool):
 
 
 def test_validator_returns_none_without_models():
-    assert Validator([]).validate(event()) is None
+    item = make_event()
+    assert VLMValidator([]).validate(item, EventArtifacts(item)) is None
 
 
 def test_validator_falls_back_to_next_model(monkeypatch):
@@ -50,12 +35,13 @@ def test_validator_falls_back_to_next_model(monkeypatch):
             raise ValueError("bad response")
         return response(True)
 
-    validator = Validator(
+    validator = VLMValidator(
         [VLMConfig(prompt="A cow?", model=["first", "second"], strategy="IMAGE")],
         completion=completion,
     )
 
-    assert validator.validate(event()) is True
+    item = make_event()
+    assert validator.validate(item, EventArtifacts(item)) is True
     assert [call["model"] for call in calls] == ["first", "second"]
     assert calls[-1]["messages"][0]["content"][1]["type"] == "image_url"
 
@@ -70,12 +56,13 @@ def test_validator_retries_temporary_unavailability():
             raise ServiceUnavailableError("offline", "model", "provider")
         return response(False)
 
-    validator = Validator(
+    validator = VLMValidator(
         [VLMConfig(prompt="A cow?", model="model", strategy="IMAGE")],
         completion=completion,
         sleeper=sleeps.append,
     )
 
-    assert validator.validate(event()) is False
+    item = make_event()
+    assert validator.validate(item, EventArtifacts(item)) is False
     assert len(attempts) == MAX_ATTEMPTS
     assert sleeps == [1, 2, 3, 4]

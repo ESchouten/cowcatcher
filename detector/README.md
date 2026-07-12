@@ -68,6 +68,22 @@ uv run ty check src
 uv run pytest
 ```
 
+### Internal architecture
+
+The Python application is organized around a one-way dependency rule:
+
+```text
+domain <- pipeline <- adapters <- application
+```
+
+- `domain/` contains frames, observations, events, and immutable policies. It has no infrastructure dependencies.
+- `pipeline/` performs scheduling, aggregation, cooldown, validation dispatch, filtering, and lifecycle coordination through typed ports.
+- `adapters/` contains Ultralytics, video sources, VLM validation, HTTP/SSE, Telegram, webhook, and disk implementations.
+- `application.py` is the composition root. It is the only module that translates configuration objects into runtime policies and concrete adapters.
+- `media/` renders and caches event artifacts. Equal artifact requests within one event are encoded only once.
+
+Live observations and completed events are sent through the same generic `Sink.send()` contract. Validation and every event sink have small bounded queues. When an external service falls behind, only its oldest pending event is replaced so inference continues. `tests/test_architecture.py` enforces the dependency direction.
+
 ---
 
 ## Configuration
@@ -135,7 +151,7 @@ This is the fast first-pass AI that scans every frame. Without a YOLO model, the
 | `timeout`               | `5`          | Seconds of no detections before the current event is considered over. |
 | `cooldown`              | `0`          | Seconds to wait after finishing one event before starting a new one. Prevents repeat alerts for the same ongoing situation. Can be set per class. |
 | `include_trailing_time` | `1`          | Seconds of extra footage to include after the last detected frame so the event does not end too abruptly. |
-| `frames_min`            | `6` / `3`    | How many frames in a row must match before the event counts. Default is `6` when `torch.cuda.is_available()` is true, otherwise `3`. |
+| `frames_min`            | `3`          | How many frames in a row must match before the event counts. |
 | `imgsz`                 | `640`        | The image size fed into the model. Higher values are more accurate but slower. Most models expect `640`. |
 
 > **Tip — per-class confidence thresholds:**
@@ -165,6 +181,7 @@ Can be a single object or a list. If you provide a list, the VLMs are tried in o
 | `key`      |              | API key for the model provider (Gemini, OpenAI, etc.). |
 | `url`      |              | Custom API endpoint, if you're running a local model. |
 | `strategy` | `"VIDEO"`    | `"VIDEO"` — sends the full detection clip to the AI. `"IMAGE"` — sends only a single frame. Video is more accurate but costs more tokens. |
+| `timeout`  | `30`         | Maximum seconds to wait for a model response. |
 
 ---
 
@@ -212,6 +229,8 @@ Sends an alert to a Telegram chat. The bot can include images or a video clip.
 #### 🔗 Webhook (`webhook`)
 
 Posts detection data to an HTTP endpoint. Useful for integrating with other systems.
+Generated payload fields follow `config/metadata.schema.json`. Multipart requests
+JSON-encode nested fields such as `confidences` and `crops`.
 
 | Field             | Default      | Description |
 | :---------------- | :----------- | :---------- |
@@ -219,7 +238,7 @@ Posts detection data to an HTTP endpoint. Useful for integrating with other syst
 | `method`          | `"POST"`     | HTTP method to use: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, or `HEAD`. |
 | `headers`         |              | Optional HTTP headers map. |
 | `body`            |              | Optional raw request body. When set, this is sent instead of the generated detection payload. |
-| `timeout`         |              | Optional request timeout in seconds. |
+| `timeout`         | `30`         | Request timeout in seconds. The runtime uses 30 seconds when omitted. |
 | `token`           |              | Authorization token sent in the request headers. |
 | `confidence`      |              | Minimum confidence required to trigger. Leave empty to always trigger. |
 | `data_type`       | `"binary"`   | How image/video data is sent: `"binary"`, `"base64"`, or `"none"` for no generated body/files. |

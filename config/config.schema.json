@@ -564,6 +564,12 @@
           "minimum": 0,
           "title": "Crop Padding",
           "type": "number"
+        },
+        "timeout": {
+          "default": 30,
+          "exclusiveMinimum": 0,
+          "title": "Timeout",
+          "type": "number"
         }
       },
       "required": [
@@ -826,6 +832,7 @@
           "type": "number"
         },
         "frames_min": {
+          "default": 3,
           "exclusiveMinimum": 0,
           "title": "Frames Min",
           "type": "integer"
