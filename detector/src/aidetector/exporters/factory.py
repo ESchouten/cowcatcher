@@ -1,14 +1,11 @@
 from dataclasses import dataclass, replace
-from typing import TypeVar
 
 from aidetector.exporters.disk import DiskExporter
 from aidetector.exporters.exporter import Exporter, TrackPublisher
 from aidetector.exporters.sse import SSEExporter, default_sse_endpoint
 from aidetector.exporters.telegram import TelegramExporter
 from aidetector.exporters.webhook import WebhookExporter
-from aidetector.utils.config import ExportersConfig
-
-T = TypeVar("T")
+from aidetector.utils.config import ExportersConfig, config_list
 
 
 @dataclass(frozen=True)
@@ -24,12 +21,12 @@ def build_exporters(
     if config is None:
         return ExportTargets([], [])
 
-    telegram = [TelegramExporter(item) for item in _items(config.telegram)]
-    webhooks = [WebhookExporter(item) for item in _items(config.webhook)]
-    disks = [DiskExporter(item) for item in _items(config.disk)]
+    telegram = [TelegramExporter(item) for item in config_list(config.telegram)]
+    webhooks = [WebhookExporter(item) for item in config_list(config.webhook)]
+    disks = [DiskExporter(item) for item in config_list(config.disk)]
     streams: list[SSEExporter] = []
     try:
-        for item in _items(config.sse):
+        for item in config_list(config.sse):
             streams.append(
                 SSEExporter(
                     replace(
@@ -46,9 +43,3 @@ def build_exporters(
         [*telegram, *webhooks, *disks, *streams],
         list(streams),
     )
-
-
-def _items(value: T | list[T] | None) -> list[T]:
-    if value is None:
-        return []
-    return value if isinstance(value, list) else [value]

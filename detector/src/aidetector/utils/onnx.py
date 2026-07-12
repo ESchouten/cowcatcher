@@ -9,7 +9,7 @@ from importlib import util
 from pathlib import Path
 from typing import Any
 
-from aidetector.utils.config import Config
+from aidetector.utils.config import Config, config_list
 from aidetector.utils.version import TYPE
 from aidetector.utils.winml import WinML
 
@@ -298,10 +298,9 @@ def _nvtensorrtx_options(config: Config):
     streams_max = max(
         [1]
         + [
-            len(detector.detection.source)
+            len(config_list(detector.detection.source))
             for detector in config.detectors
             if detector.yolo is not None
-            if isinstance(detector.detection.source, list)
         ]
     )
     streams_max = max(streams_max, 1)

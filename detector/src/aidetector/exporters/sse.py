@@ -6,9 +6,10 @@ from queue import Empty, Full, Queue
 from threading import Lock, Thread
 from typing import Any
 
-from aidetector.detection.models import Detection, max_confidence
-from aidetector.detection.tracks import crop_payload, tracks_payload
+from aidetector.detection.events import DetectionEvent
+from aidetector.detection.models import Crop, Detection
 from aidetector.exporters.exporter import Exporter
+from aidetector.exporters.metadata import CropMetadata, DetectionMetadata
 from aidetector.utils.config import SSEConfig
 
 logger = logging.getLogger(__name__)
@@ -34,14 +35,13 @@ class SSEExporter(Exporter[SSEConfig]):
 
     def _export(
         self,
-        best_detection: Detection,
-        detections: list[Detection],
+        event: DetectionEvent,
         validated: bool | None,
     ) -> None:
-        self.hub.publish(
-            "detection",
-            detection_payload(best_detection, detections, validated),
-        )
+        payload = DetectionMetadata.from_event(
+            event.best.date.isoformat(), event, validated
+        ).as_dict()
+        self.hub.publish("detection", {"type": "detection", **payload})
 
     def close(self) -> None:
         with self._servers_lock:
@@ -184,29 +184,33 @@ class _SSEHub:
             self.unregister(client)
 
 
-def detection_payload(
-    best_detection: Detection,
-    detections: list[Detection],
-    validated: bool | None,
-) -> dict[str, Any]:
-    region = best_detection.images.crop_region
+def default_sse_endpoint(detector_index: int) -> str:
+    return f"/events/{detector_index}"
+
+
+def tracks_payload(source: str, detection: Detection) -> dict[str, Any]:
+    height, width = detection.images.jpg.shape[:2]
     return {
-        "type": "detection",
-        "timestamp": best_detection.date.isoformat(),
-        "confidence": max_confidence(best_detection.confidence),
-        "confidences": best_detection.confidence,
-        "validated": validated,
-        "detections": len(detections),
-        "start": detections[0].date.isoformat(),
-        "end": detections[-1].date.isoformat(),
-        "duration": (detections[-1].date - detections[0].date).total_seconds(),
-        "crop": crop_payload(region) if region else None,
-        "crops": [crop_payload(crop) for crop in best_detection.images.crops],
+        "type": "tracks",
+        "source": source,
+        "timestamp": detection.date.isoformat(),
+        "width": width,
+        "height": height,
+        "objects": [
+            _track_payload(crop, index)
+            for index, crop in enumerate(detection.images.crops)
+        ],
     }
 
 
-def default_sse_endpoint(detector_index: int) -> str:
-    return f"/events/{detector_index}"
+def _track_payload(crop: Crop, index: int) -> dict[str, Any]:
+    return {
+        "id": crop.track_id if crop.track_id is not None else index,
+        "track_id": crop.track_id,
+        "label": crop.label,
+        "confidence": crop.confidence,
+        "crop": CropMetadata.from_crop(crop).as_dict(),
+    }
 
 
 def _normalize_endpoint(endpoint: str | None) -> str:

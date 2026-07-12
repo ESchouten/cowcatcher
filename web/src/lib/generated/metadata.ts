@@ -11,6 +11,9 @@ export type X1 = number;
 export type Y1 = number;
 export type X2 = number;
 export type Y2 = number;
+export type Label = string | null;
+export type Confidence1 = number | null;
+export type Crops = CropMetadata[];
 
 export interface DetectionMetadata {
 	timestamp: Timestamp;
@@ -22,6 +25,7 @@ export interface DetectionMetadata {
 	end: End;
 	duration: Duration;
 	crop?: CropMetadata | null;
+	crops?: Crops;
 }
 export interface Confidences {
 	[k: string]: number;
@@ -31,4 +35,6 @@ export interface CropMetadata {
 	y1: Y1;
 	x2: X2;
 	y2: Y2;
+	label?: Label;
+	confidence?: Confidence1;
 }

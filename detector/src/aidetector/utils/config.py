@@ -2,7 +2,7 @@ import json
 import logging
 from dataclasses import field
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, TypeVar
 
 import requests
 from aidetector.utils.version import REF_NAME
@@ -11,10 +11,17 @@ from pydantic.dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 STRICT_CONFIG = ConfigDict(extra="forbid")
+T = TypeVar("T")
 
 
 class ConfigurationError(ValueError):
     pass
+
+
+def config_list(value: T | list[T] | None) -> list[T]:
+    if value is None:
+        return []
+    return list(value) if isinstance(value, list) else [value]
 
 
 def _default_frames_min() -> int:
@@ -91,31 +98,31 @@ class HttpConfig:
 
 
 @dataclass(config=STRICT_CONFIG, kw_only=True)
-class ChatConfig(ExporterConfig):
-    token: NonEmptyString = field(repr=False)
-    chat: NonEmptyString
-    alert_every: PositiveInt = 1
-    timeout: PositiveFloat = 30
+class MediaExporterConfig(ExporterConfig):
     include_image: bool = False
     include_plot: bool = False
     include_crop: bool = False
-    include_video: bool = True
+    include_video: bool = False
     video_width: PositiveInt | None = 1280
     video_crf: Crf = 28
 
 
 @dataclass(config=STRICT_CONFIG, kw_only=True)
-class WebhookConfig(ExporterConfig, HttpConfig):
+class ChatConfig(MediaExporterConfig):
+    token: NonEmptyString = field(repr=False)
+    chat: NonEmptyString
+    alert_every: PositiveInt = 1
+    timeout: PositiveFloat = 30
+    include_video: bool = True
+
+
+@dataclass(config=STRICT_CONFIG, kw_only=True)
+class WebhookConfig(MediaExporterConfig, HttpConfig):
     method: HttpMethod = "POST"
     token: str | None = field(default=None, repr=False)
     data_type: Literal["binary", "base64", "none"] = "binary"
     data_max: PositiveInt | None = None
-    include_image: bool = False
-    include_plot: bool = False
     include_crop: bool = True
-    include_video: bool = False
-    video_width: PositiveInt | None = 1280
-    video_crf: Crf = 28
 
 
 @dataclass(config=STRICT_CONFIG, kw_only=True)

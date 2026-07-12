@@ -6,9 +6,9 @@ from time import sleep
 from typing import Any
 
 import litellm
-from aidetector.detection.models import Detection
+from aidetector.detection.events import DetectionEvent
 from aidetector.media.video import generate_mp4, get_crop, get_image
-from aidetector.utils.config import VLMConfig
+from aidetector.utils.config import VLMConfig, config_list
 from litellm.exceptions import ServiceUnavailableError
 
 logger = logging.getLogger(__name__)
@@ -46,11 +46,10 @@ class Validator:
 
     def validate(
         self,
-        detection: Detection,
-        detections: list[Detection],
+        event: DetectionEvent,
     ) -> bool | None:
         for config in self.vlms:
-            messages = _messages(config, detection, detections)
+            messages = _messages(config, event)
             options = {
                 key: value
                 for key, value in {
@@ -59,8 +58,7 @@ class Validator:
                 }.items()
                 if value is not None
             }
-            models = [config.model] if isinstance(config.model, str) else config.model
-            for model in models:
+            for model in config_list(config.model):
                 result = self._validate_model(model, messages, options)
                 if result is not None:
                     return result
@@ -105,13 +103,12 @@ class Validator:
 
 def _messages(
     config: VLMConfig,
-    detection: Detection,
-    detections: list[Detection],
+    event: DetectionEvent,
 ) -> list[dict[str, Any]]:
     content: list[dict[str, Any]] = [{"type": "text", "text": config.prompt}]
     video = (
         generate_mp4(
-            detections,
+            event.detections,
             width=1280,
             plot=False,
             padding=config.crop_padding,
@@ -129,10 +126,10 @@ def _messages(
         )
     else:
         crop = get_crop(
-            detection,
+            event.best,
             padding=config.crop_padding,
         )
-        image = crop if crop is not None else detection.images.jpg
+        image = crop if crop is not None else event.best.images.jpg
         encoded = base64.b64encode(get_image(image)).decode("ascii")
         content.append(
             {

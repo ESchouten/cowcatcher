@@ -55,7 +55,6 @@ class ExportDispatcher:
                 logger.exception("Failed to close %s", exporter.__class__.__name__)
 
     def _dispatch(self, event: DetectionEvent) -> None:
-        detections = list(event.detections)
         matching = (
             matching_confidences(event.best.confidence, self.model_config.confidence)
             if self.model_config
@@ -66,7 +65,7 @@ class ExportDispatcher:
             return
 
         try:
-            validated = self.validator.validate(event.best, detections)
+            validated = self.validator.validate(event)
         except Exception:
             logger.exception("Detection validation failed")
             return
@@ -76,7 +75,7 @@ class ExportDispatcher:
 
         for exporter in self.exporters:
             try:
-                exporter.export(event.best, detections, validated)
+                exporter.export(event, validated)
             except Exception:
                 logger.exception("Exporter %s failed", exporter.__class__.__name__)
 

@@ -1,20 +1,16 @@
 import logging
 from dataclasses import dataclass
-from datetime import datetime
 from threading import Event, Thread
 from time import monotonic
 from typing import Any, Protocol
 
 from aidetector.detection.events import DetectionEvent, EventCollector
-from aidetector.detection.models import Detection, ImageSet
+from aidetector.detection.models import Detection, Frame, FrameBatch
 from aidetector.exporters.dispatcher import ExportDispatcher
 from aidetector.exporters.exporter import TrackPublisher
 from aidetector.sources.source import SourceProvider
 from aidetector.utils.config import DetectionConfig, YoloConfig
 from numpy import ndarray
-
-Frame = tuple[datetime, ndarray]
-FrameBatch = dict[str, list[Frame]]
 
 
 class ModelRunner(Protocol):
@@ -107,8 +103,7 @@ class Detector:
             self.error = error
             self.logger.exception("Detector frame processing failed")
         finally:
-            self._stop.set()
-            self.source_provider.close()
+            self.stop()
             if self.model is not None:
                 self._submit(self.model.events.flush_all())
             self.dispatcher.close()
@@ -124,9 +119,7 @@ class Detector:
 
         if self.model is None:
             for source, frames in batch.items():
-                detections = [
-                    Detection(date, ImageSet(frame), {}) for date, frame in frames
-                ]
+                detections = [Detection.from_frame(frame) for frame in frames]
                 if detections:
                     self.dispatcher.submit(
                         DetectionEvent(
@@ -178,12 +171,8 @@ class Detector:
             self._submit(self.model.events.add(source_id, detections))
             return
 
-        latest_date, latest_frame = frames[-1]
-        self._publish_tracks(
-            source_id,
-            Detection(latest_date, ImageSet(latest_frame), {}),
-        )
-        trailing = [Detection(date, ImageSet(frame), {}) for date, frame in frames]
+        trailing = [Detection.from_frame(frame) for frame in frames]
+        self._publish_tracks(source_id, trailing[-1])
         self._submit(self.model.events.add_trailing(source_id, trailing))
 
     def _publish_tracks(self, source: str, detection: Detection) -> None:

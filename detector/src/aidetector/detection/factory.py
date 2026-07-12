@@ -5,7 +5,7 @@ from aidetector.detection.yolo import YoloRunner
 from aidetector.exporters.dispatcher import ExportDispatcher
 from aidetector.exporters.factory import build_exporters
 from aidetector.sources.source import SourceProvider
-from aidetector.utils.config import DetectorConfig, OnnxConfig, VLMConfig
+from aidetector.utils.config import DetectorConfig, OnnxConfig, config_list
 
 
 def build_detector(
@@ -23,8 +23,7 @@ def build_detector(
         if config.yolo
         else None
     )
-    vlms = [config.vlm] if isinstance(config.vlm, VLMConfig) else list(config.vlm or [])
-    validator = Validator(vlms)
+    validator = Validator(config_list(config.vlm))
     targets = build_exporters(config.exporters, detector_index)
     dispatcher = ExportDispatcher(validator, targets.exporters, config.yolo)
     return Detector(

@@ -3,9 +3,9 @@ from collections.abc import Iterator
 from datetime import datetime
 from threading import Event, Lock
 
+from aidetector.detection.models import FrameBatch
 from aidetector.sources.streaming import StreamBatcher
-from aidetector.utils.config import DetectionConfig
-from numpy import ndarray
+from aidetector.utils.config import DetectionConfig, config_list
 from ultralytics.data.loaders import LoadImagesAndVideos
 from ultralytics.data.utils import IMG_FORMATS, VID_FORMATS
 
@@ -14,9 +14,7 @@ logger = logging.getLogger(__name__)
 
 class SourceProvider:
     def __init__(self, config: DetectionConfig):
-        self.sources = (
-            [config.source] if isinstance(config.source, str) else list(config.source)
-        )
+        self.sources = config_list(config.source)
         self.width = config.frames_width
         self.retention = config.frame_retention
         self._stop = Event()
@@ -29,7 +27,7 @@ class SourceProvider:
         )
         return self.sources[0].isnumeric() or not is_file
 
-    def iter_batches(self) -> Iterator[dict[str, list[tuple[datetime, ndarray]]]]:
+    def iter_batches(self) -> Iterator[FrameBatch]:
         if self.is_stream():
             yield from self._iter_stream_batches()
         else:
@@ -37,7 +35,7 @@ class SourceProvider:
 
     def _iter_stream_batches(
         self,
-    ) -> Iterator[dict[str, list[tuple[datetime, ndarray]]]]:
+    ) -> Iterator[FrameBatch]:
         logger.info("Starting stream processing for %d source(s)", len(self.sources))
         batcher = StreamBatcher(self.sources, self.width, self.retention)
         with self._batcher_lock:
@@ -55,7 +53,7 @@ class SourceProvider:
 
     def _iter_file_batches(
         self,
-    ) -> Iterator[dict[str, list[tuple[datetime, ndarray]]]]:
+    ) -> Iterator[FrameBatch]:
         loader = LoadImagesAndVideos(self.sources)
         try:
             for sources, images, _ in loader:

@@ -3,9 +3,9 @@ from typing import Any
 
 import requests
 
-from aidetector.detection.models import Detection, max_confidence
+from aidetector.detection.events import DetectionEvent
 from aidetector.exporters.exporter import Exporter
-from aidetector.exporters.media import EncodedFile, MediaOptions, encode_media
+from aidetector.exporters.media import EncodedFile, encode_media
 from aidetector.utils.config import ChatConfig
 
 TELEGRAM_API = "https://api.telegram.org"
@@ -18,25 +18,15 @@ class TelegramExporter(Exporter[ChatConfig]):
 
     def _export(
         self,
-        best_detection: Detection,
-        detections: list[Detection],
+        event: DetectionEvent,
         validated: bool | None,
     ) -> None:
         files = encode_media(
-            best_detection,
-            detections,
-            MediaOptions(
-                self.config.include_image,
-                self.config.include_plot,
-                self.config.include_crop,
-                self.config.include_video,
-                self.config.video_width,
-                self.config.video_crf,
-                self.config.crop_padding,
-                12_000_000,
-            ),
+            event,
+            self.config,
+            data_max=12_000_000,
         )
-        caption = self._caption(best_detection, detections, validated)
+        caption = self._caption(event, validated)
         silent = self._next_alert_is_silent()
         if not files:
             self._request(
@@ -119,14 +109,12 @@ class TelegramExporter(Exporter[ChatConfig]):
 
     @staticmethod
     def _caption(
-        best_detection: Detection,
-        detections: list[Detection],
+        event: DetectionEvent,
         validated: bool | None,
     ) -> str:
         status = " approved" if validated else " rejected" if validated is False else ""
         feedback = "\nApprove or reject this detection." if validated is None else ""
-        duration = round((detections[-1].date - detections[0].date).total_seconds())
         return (
-            f"{max_confidence(best_detection.confidence):.0%}{status}\n"
-            f"{duration} second(s){feedback}"
+            f"{event.confidence:.0%}{status}\n"
+            f"{round(event.duration)} second(s){feedback}"
         )

@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from aidetector.detection.models import Detection
+from aidetector.detection.events import DetectionEvent
 from aidetector.exporters.naming import timestamped_filename
 from aidetector.media.video import (
     compress_jpg,
@@ -9,18 +9,7 @@ from aidetector.media.video import (
     get_image,
     get_plot,
 )
-
-
-@dataclass(frozen=True)
-class MediaOptions:
-    include_image: bool
-    include_plot: bool
-    include_crop: bool
-    include_video: bool
-    video_width: int | None
-    video_crf: int
-    crop_padding: float
-    data_max: int | None = None
+from aidetector.utils.config import MediaExporterConfig
 
 
 @dataclass(frozen=True)
@@ -34,39 +23,41 @@ class EncodedFile:
 
 
 def encode_media(
-    detection: Detection,
-    detections: list[Detection],
-    options: MediaOptions,
+    event: DetectionEvent,
+    config: MediaExporterConfig,
+    *,
+    data_max: int | None = None,
 ) -> dict[str, EncodedFile]:
+    detection = event.best
     filename = timestamped_filename(detection)
     media: dict[str, EncodedFile] = {}
-    if options.include_image:
+    if config.include_image:
         media["image"] = EncodedFile(
             filename,
-            _encode_jpg(detection.images.jpg, options.data_max),
+            _encode_jpg(detection.images.jpg, data_max),
             "image/jpeg",
         )
-    if options.include_plot:
+    if config.include_plot:
         media["photo"] = EncodedFile(
             filename,
-            _encode_jpg(get_plot(detection), options.data_max),
+            _encode_jpg(get_plot(detection), data_max),
             "image/jpeg",
         )
-    if options.include_crop:
-        crop = get_crop(detection, padding=options.crop_padding)
+    if config.include_crop:
+        crop = get_crop(detection, padding=config.crop_padding)
         if crop is not None:
             media["crop"] = EncodedFile(
                 filename.replace(".jpg", "_crop.jpg"),
-                _encode_jpg(crop, options.data_max),
+                _encode_jpg(crop, data_max),
                 "image/jpeg",
             )
-    if options.include_video:
+    if config.include_video:
         video = generate_mp4(
-            detections,
-            width=options.video_width,
-            crf=options.video_crf,
-            data_max=options.data_max,
-            padding=options.crop_padding,
+            event.detections,
+            width=config.video_width,
+            crf=config.video_crf,
+            data_max=data_max,
+            padding=config.crop_padding,
         )
         if video is not None:
             media["video"] = EncodedFile(

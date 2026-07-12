@@ -2,6 +2,7 @@ import logging
 import os
 import subprocess
 import tempfile
+from collections.abc import Sequence
 
 import cv2
 import numpy as np
@@ -16,7 +17,7 @@ def even_width(value: int) -> int:
 
 
 def generate_mp4(
-    detections: list[Detection],
+    detections: Sequence[Detection],
     width: int | None = None,
     crf: int = 0,
     crop: bool = True,

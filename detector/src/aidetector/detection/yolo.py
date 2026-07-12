@@ -1,6 +1,5 @@
 import logging
 from dataclasses import dataclass
-from datetime import datetime
 from time import perf_counter
 from typing import Any
 
@@ -9,7 +8,8 @@ from aidetector.detection.models import (
     Confidence,
     Crop,
     Detection,
-    ImageSet,
+    Frame,
+    FrameBatch,
     min_confidence,
 )
 from aidetector.utils.config import (
@@ -57,7 +57,7 @@ class UltralyticsStreamBatch(LoadStreams):
 class TrackedSourceResult:
     source: str
     result: Any
-    frames: list[tuple[datetime, ndarray]]
+    frames: list[Frame]
 
 
 class YoloResultMapper:
@@ -65,22 +65,15 @@ class YoloResultMapper:
         self.class_confidences = class_confidences
 
     def detections_from_result(
-        self, result: Any, frames: list[tuple[datetime, ndarray]]
+        self, result: Any, frames: list[Frame]
     ) -> list[Detection] | None:
         crops, confidences = self._collect_crops(result)
         if not crops:
             return None
 
-        detections = [
-            Detection(frame_date, ImageSet(frame, list(crops)), {})
-            for frame_date, frame in frames[:-1]
-        ]
+        detections = [Detection.from_frame(frame, crops=crops) for frame in frames[:-1]]
         detections.append(
-            Detection(
-                frames[-1][0],
-                ImageSet(frames[-1][1], list(crops)),
-                confidences,
-            )
+            Detection.from_frame(frames[-1], crops=crops, confidence=confidences)
         )
         return detections
 
@@ -119,7 +112,7 @@ class YoloRunner:
     model: YOLO
     model_path: str
     sources: list[str]
-    tracking_last_frames: dict[str, tuple[datetime, ndarray]]
+    tracking_last_frames: dict[str, Frame]
     class_confidences: dict[int, tuple[str, float]]
     mapper: YoloResultMapper
 
@@ -173,7 +166,7 @@ class YoloRunner:
 
     def track_sources(
         self,
-        batch: dict[str, list[tuple[datetime, ndarray]]],
+        batch: FrameBatch,
     ) -> list[TrackedSourceResult]:
         then = perf_counter()
         prepared = self._tracking_batch(batch)
@@ -204,12 +197,12 @@ class YoloRunner:
 
     def _tracking_batch(
         self,
-        batch: dict[str, list[tuple[datetime, ndarray]]],
+        batch: FrameBatch,
     ) -> (
         tuple[
             list[str],
             list[ndarray],
-            dict[str, list[tuple[datetime, ndarray]]],
+            FrameBatch,
         ]
         | None
     ):
@@ -259,7 +252,7 @@ class YoloRunner:
         )
 
     def detections_from_result(
-        self, result: Any, frames: list[tuple[datetime, ndarray]]
+        self, result: Any, frames: list[Frame]
     ) -> list[Detection] | None:
         return self.mapper.detections_from_result(result, frames)
 

@@ -18,6 +18,30 @@
         "y2": {
           "title": "Y2",
           "type": "integer"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        },
+        "confidence": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confidence"
         }
       },
       "required": [
@@ -84,6 +108,13 @@
         }
       ],
       "default": null
+    },
+    "crops": {
+      "items": {
+        "$ref": "#/$defs/CropMetadata"
+      },
+      "title": "Crops",
+      "type": "array"
     }
   },
   "required": [

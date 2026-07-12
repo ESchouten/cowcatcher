@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from aidetector.detection.models import Detection
+from aidetector.detection.events import DetectionEvent
 from aidetector.exporters.exporter import Exporter
 from aidetector.exporters.metadata import DetectionMetadata
 from aidetector.exporters.naming import date_path, timestamped_filename
@@ -22,12 +22,11 @@ class DiskExporter(Exporter[DiskConfig]):
 
     def _export(
         self,
-        best_detection: Detection,
-        detections: list[Detection],
+        event: DetectionEvent,
         validated: bool | None,
     ) -> None:
-        self.logger.info("Saving %d frames to disk", len(detections))
-        timestamp = date_path(best_detection, "seconds")
+        self.logger.info("Saving %d frames to disk", len(event.detections))
+        timestamp = date_path(event.best, "seconds")
         subfolder = (
             "approved"
             if validated
@@ -37,7 +36,7 @@ class DiskExporter(Exporter[DiskConfig]):
         )
 
         label = max(
-            best_detection.confidence.items(),
+            event.best.confidence.items(),
             key=lambda item: item[1],
             default=("unclassified", 0),
         )[0]
@@ -47,23 +46,22 @@ class DiskExporter(Exporter[DiskConfig]):
         timestamped_directory = directory / subfolder / timestamp
         timestamped_directory.mkdir(parents=True, exist_ok=True)
         if self.config.strategy == "ALL":
-            for result in detections:
+            for result in event.detections:
                 image_name = timestamped_filename(result)
                 image_path = timestamped_directory / image_name
                 with open(image_path, "wb") as f:
                     f.write(get_image(result.images.jpg))
         image_path = timestamped_directory / "best.jpg"
-        image_path.write_bytes(get_image(get_plot(best_detection)))
+        image_path.write_bytes(get_image(get_plot(event.best)))
         clean_image_path = timestamped_directory / "clean.jpg"
-        clean_image_path.write_bytes(get_image(best_detection.images.jpg))
-        video = generate_mp4(detections, padding=self.config.crop_padding)
+        clean_image_path.write_bytes(get_image(event.best.images.jpg))
+        video = generate_mp4(event.detections, padding=self.config.crop_padding)
         if video:
             video_path = timestamped_directory / "video.mp4"
             video_path.write_bytes(video)
         metadata = DetectionMetadata.from_event(
             timestamp,
-            best_detection,
-            detections,
+            event,
             validated,
         )
         metadata_path = timestamped_directory / "metadata.json"

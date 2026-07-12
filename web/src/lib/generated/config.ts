@@ -53,16 +53,16 @@ export type Confidence2 =
 	| null;
 export type CropPadding2 = number;
 export type ExportRejected1 = boolean;
-export type Token = string;
-export type Chat = string;
-export type AlertEvery = number;
-export type Timeout1 = number;
 export type IncludeImage = boolean;
 export type IncludePlot = boolean;
 export type IncludeCrop = boolean;
 export type IncludeVideo = boolean;
 export type VideoWidth = number | null;
 export type VideoCrf = number;
+export type Token = string;
+export type Chat = string;
+export type AlertEvery = number;
+export type Timeout1 = number;
 export type Webhook = WebhookConfig | WebhookConfig[] | null;
 export type Url1 = string;
 export type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
@@ -79,15 +79,15 @@ export type Confidence3 =
 	| null;
 export type CropPadding3 = number;
 export type ExportRejected2 = boolean;
-export type Token1 = string | null;
-export type DataType = 'binary' | 'base64' | 'none';
-export type DataMax = number | null;
 export type IncludeImage1 = boolean;
 export type IncludePlot1 = boolean;
 export type IncludeCrop1 = boolean;
 export type IncludeVideo1 = boolean;
 export type VideoWidth1 = number | null;
 export type VideoCrf1 = number;
+export type Token1 = string | null;
+export type DataType = 'binary' | 'base64' | 'none';
+export type DataMax = number | null;
 export type Sse = SSEConfig | SSEConfig[] | null;
 export type Confidence4 =
 	| number
@@ -165,16 +165,16 @@ export interface ChatConfig {
 	confidence?: Confidence2;
 	crop_padding?: CropPadding2;
 	export_rejected?: ExportRejected1;
-	token: Token;
-	chat: Chat;
-	alert_every?: AlertEvery;
-	timeout?: Timeout1;
 	include_image?: IncludeImage;
 	include_plot?: IncludePlot;
 	include_crop?: IncludeCrop;
 	include_video?: IncludeVideo;
 	video_width?: VideoWidth;
 	video_crf?: VideoCrf;
+	token: Token;
+	chat: Chat;
+	alert_every?: AlertEvery;
+	timeout?: Timeout1;
 }
 export interface WebhookConfig {
 	url: Url1;
@@ -185,15 +185,15 @@ export interface WebhookConfig {
 	confidence?: Confidence3;
 	crop_padding?: CropPadding3;
 	export_rejected?: ExportRejected2;
-	token?: Token1;
-	data_type?: DataType;
-	data_max?: DataMax;
 	include_image?: IncludeImage1;
 	include_plot?: IncludePlot1;
 	include_crop?: IncludeCrop1;
 	include_video?: IncludeVideo1;
 	video_width?: VideoWidth1;
 	video_crf?: VideoCrf1;
+	token?: Token1;
+	data_type?: DataType;
+	data_max?: DataMax;
 }
 export interface SSEConfig {
 	confidence?: Confidence4;

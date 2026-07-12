@@ -5,6 +5,8 @@ from numpy import ndarray
 
 Confidence = dict[str, float]
 ConfidenceThreshold = float | Confidence
+Frame = tuple[datetime, ndarray]
+FrameBatch = dict[str, list[Frame]]
 
 
 @dataclass
@@ -42,6 +44,17 @@ class Detection:
     date: datetime
     images: ImageSet
     confidence: Confidence
+
+    @classmethod
+    def from_frame(
+        cls,
+        frame: Frame,
+        *,
+        crops: list[Crop] | None = None,
+        confidence: Confidence | None = None,
+    ) -> "Detection":
+        date, image = frame
+        return cls(date, ImageSet(image, list(crops or [])), confidence or {})
 
 
 def min_confidence(confidence: ConfidenceThreshold | None) -> float:

@@ -6,13 +6,14 @@ from queue import Queue
 import numpy as np
 import pytest
 
+from aidetector.detection.events import DetectionEvent
 from aidetector.detection.models import Crop, Detection, ImageSet
-from aidetector.detection.tracks import tracks_payload
 from aidetector.exporters.disk import DiskExporter
 from aidetector.exporters.exporter import Exporter
 from aidetector.exporters.factory import build_exporters
 from aidetector.exporters.media import EncodedFile
-from aidetector.exporters.sse import SSEExporter, _SSEHub, detection_payload
+from aidetector.exporters.metadata import DetectionMetadata
+from aidetector.exporters.sse import SSEExporter, _SSEHub, tracks_payload
 from aidetector.exporters.telegram import TelegramExporter
 from aidetector.exporters.webhook import WebhookExporter
 from aidetector.utils.config import (
@@ -42,29 +43,33 @@ def make_detections() -> list[Detection]:
     ]
 
 
+def make_event(detections: list[Detection] | None = None) -> DetectionEvent:
+    detections = detections or make_detections()
+    return DetectionEvent("camera", tuple(detections), detections[-1])
+
+
 class RecordingExporter(Exporter[ExporterConfig]):
     def __init__(self, config: ExporterConfig):
         super().__init__(config)
         self.calls = []
 
-    def _export(self, best_detection, detections, validated):
-        self.calls.append((best_detection, detections, validated))
+    def _export(self, event, validated):
+        self.calls.append((event, validated))
 
 
 def test_exporter_filters_by_confidence_and_rejected_state():
-    detections = make_detections()
-    best = detections[-1]
+    event = make_event()
 
     exporter = RecordingExporter(ExporterConfig(confidence=0.95))
-    exporter.export(best, detections, True)
+    exporter.export(event, True)
     assert exporter.calls == []
 
     exporter = RecordingExporter(ExporterConfig(confidence=0.5, export_rejected=False))
-    exporter.export(best, detections, False)
+    exporter.export(event, False)
     assert exporter.calls == []
 
     exporter = RecordingExporter(ExporterConfig(confidence=0.5, export_rejected=True))
-    exporter.export(best, detections, False)
+    exporter.export(event, False)
     assert len(exporter.calls) == 1
 
 
@@ -73,10 +78,10 @@ def test_disk_exporter_writes_detection_files(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "aidetector.exporters.disk.generate_mp4", lambda *_args, **_kwargs: b"mp4"
     )
-    detections = make_detections()
+    event = make_event()
 
     exporter = DiskExporter(DiskConfig(directory=Path("events")))
-    exporter.export(detections[-1], detections, True)
+    exporter.export(event, True)
 
     event_dirs = list((tmp_path / "detections" / "events" / "approved").iterdir())
     assert len(event_dirs) == 1
@@ -89,7 +94,14 @@ def test_disk_exporter_writes_detection_files(tmp_path, monkeypatch):
     assert metadata["validated"] is True
     assert metadata["confidence"] == 0.9
     assert metadata["detections"] == 2
-    assert metadata["crop"] == {"x1": 12, "y1": 12, "x2": 42, "y2": 52}
+    assert metadata["crop"] == {
+        "x1": 12,
+        "y1": 12,
+        "x2": 42,
+        "y2": 52,
+        "label": "cow",
+        "confidence": 0.9,
+    }
 
 
 def test_disk_exporter_supports_events_without_model_confidence(tmp_path, monkeypatch):
@@ -104,16 +116,18 @@ def test_disk_exporter_supports_events_without_model_confidence(tmp_path, monkey
         {},
     )
 
-    DiskExporter(DiskConfig()).export(item, [item], None)
+    DiskExporter(DiskConfig()).export(make_event([item]), None)
 
     assert list((tmp_path / "detections" / "unclassified" / "unvalidated").iterdir())
 
 
-def test_sse_payloads_include_live_crops_and_detection_summary():
-    detections = make_detections()
+def test_track_payload_and_detection_metadata_include_crops():
+    event = make_event()
 
-    tracks = tracks_payload("0:0", detections[-1])
-    detection = detection_payload(detections[-1], detections, True)
+    tracks = tracks_payload("0:0", event.best)
+    detection = DetectionMetadata.from_event(
+        event.best.date.isoformat(), event, True
+    ).as_dict()
 
     assert tracks["type"] == "tracks"
     assert tracks["source"] == "0:0"
@@ -135,7 +149,6 @@ def test_sse_payloads_include_live_crops_and_detection_summary():
             },
         }
     ]
-    assert detection["type"] == "detection"
     assert detection["validated"] is True
     assert detection["confidence"] == 0.9
     assert detection["detections"] == 2
@@ -147,6 +160,7 @@ def test_sse_payloads_include_live_crops_and_detection_summary():
         "label": "cow",
         "confidence": 0.9,
     }
+    assert detection["crops"] == [detection["crop"]]
 
 
 def test_sse_server_is_shared_and_closed_by_last_exporter(monkeypatch):
@@ -223,7 +237,7 @@ def test_webhook_exporter_sends_no_body_for_none_data_type(monkeypatch):
         return type("Response", (), {"raise_for_status": lambda self: None})()
 
     monkeypatch.setattr("aidetector.exporters.webhook.requests.request", fake_request)
-    detections = make_detections()
+    event = make_event()
     exporter = WebhookExporter(
         WebhookConfig(
             url="https://example.test/hook",
@@ -234,7 +248,7 @@ def test_webhook_exporter_sends_no_body_for_none_data_type(monkeypatch):
         )
     )
 
-    exporter.export(detections[-1], detections, True)
+    exporter.export(event, True)
 
     assert calls == [
         (
@@ -253,7 +267,7 @@ def test_webhook_explicit_body_overrides_generated_payload(monkeypatch):
         return type("Response", (), {"raise_for_status": lambda self: None})()
 
     monkeypatch.setattr("aidetector.exporters.webhook.requests.request", fake_request)
-    detections = make_detections()
+    event = make_event()
     exporter = WebhookExporter(
         WebhookConfig(
             url="https://example.test/hook",
@@ -263,12 +277,40 @@ def test_webhook_explicit_body_overrides_generated_payload(monkeypatch):
         )
     )
 
-    exporter.export(detections[-1], detections, True)
+    exporter.export(event, True)
 
     request = calls[0][2]
     assert request["data"] == "fixed-body"
     assert "json" not in request
     assert "files" not in request
+
+
+def test_webhook_encodes_base64_media(monkeypatch):
+    calls = []
+
+    def fake_request(method, url, **kwargs):
+        calls.append(kwargs)
+        return type("Response", (), {"raise_for_status": lambda self: None})()
+
+    monkeypatch.setattr("aidetector.exporters.webhook.requests.request", fake_request)
+    monkeypatch.setattr(
+        "aidetector.exporters.webhook.encode_media",
+        lambda *_args, **_kwargs: {
+            "image": EncodedFile("image.jpg", b"jpg", "image/jpeg")
+        },
+    )
+    exporter = WebhookExporter(
+        WebhookConfig(
+            url="https://example.test/hook",
+            data_type="base64",
+            include_image=True,
+        )
+    )
+
+    exporter.export(make_event(), True)
+
+    assert calls[0]["json"]["image"] == "anBn"
+    assert calls[0]["json"]["confidence"] == 0.9
 
 
 def test_telegram_exporter_respects_alert_every(monkeypatch):
@@ -285,7 +327,7 @@ def test_telegram_exporter_respects_alert_every(monkeypatch):
             "image": EncodedFile("image.jpg", b"jpg", "image/jpeg")
         },
     )
-    detections = make_detections()
+    event = make_event()
     exporter = TelegramExporter(
         ChatConfig(
             token="token",
@@ -296,8 +338,8 @@ def test_telegram_exporter_respects_alert_every(monkeypatch):
         )
     )
 
-    exporter.export(detections[-1], detections, None)
-    exporter.export(detections[-1], detections, None)
+    exporter.export(event, None)
+    exporter.export(event, None)
 
     assert calls[0][0].endswith("/sendPhoto")
     assert calls[0][1]["data"]["chat_id"] == "chat-id"
@@ -318,10 +360,10 @@ def test_telegram_exporter_sends_text_when_media_is_unavailable(monkeypatch):
         "aidetector.exporters.telegram.encode_media",
         lambda *_args, **_kwargs: {},
     )
-    detections = make_detections()
+    event = make_event()
     exporter = TelegramExporter(ChatConfig(token="token", chat="chat-id"))
 
-    exporter.export(detections[-1], detections, True)
+    exporter.export(event, True)
 
     assert calls[0][0].endswith("/sendMessage")
     assert calls[0][1]["data"]["text"].startswith("90% approved")

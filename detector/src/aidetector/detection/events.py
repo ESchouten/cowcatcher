@@ -16,6 +16,22 @@ class DetectionEvent:
     detections: tuple[Detection, ...]
     best: Detection
 
+    @property
+    def started_at(self) -> datetime:
+        return self.detections[0].date
+
+    @property
+    def ended_at(self) -> datetime:
+        return self.detections[-1].date
+
+    @property
+    def duration(self) -> float:
+        return (self.ended_at - self.started_at).total_seconds()
+
+    @property
+    def confidence(self) -> float:
+        return max_confidence(self.best.confidence)
+
 
 class EventCollector:
     """Builds independent detection events for each source."""
@@ -34,12 +50,7 @@ class EventCollector:
     ) -> list[DetectionEvent]:
         now = now or datetime.now()
         with self._lock:
-            expired = self._pop_expired(source, now)
-            completed = [expired] if expired else []
-            self._detections[source].extend(detections)
-            if self._time_exceeded(source, now) and (event := self._pop(source)):
-                completed.append(event)
-            return completed
+            return self._collect(source, detections, now, trailing=False)
 
     def add_trailing(
         self,
@@ -52,17 +63,30 @@ class EventCollector:
             return []
         now = now or datetime.now()
         with self._lock:
-            expired = self._pop_expired(source, now)
-            completed = [expired] if expired else []
-            latest = self._latest_detection(source)
-            if latest is None:
-                return completed
-            elapsed = (detections[-1].date - latest.date).total_seconds()
-            if elapsed <= self.config.include_trailing_time:
-                self._detections[source].extend(detections)
-            if self._time_exceeded(source, now) and (event := self._pop(source)):
-                completed.append(event)
-            return completed
+            return self._collect(source, detections, now, trailing=True)
+
+    def _collect(
+        self,
+        source: str,
+        detections: list[Detection],
+        now: datetime,
+        *,
+        trailing: bool,
+    ) -> list[DetectionEvent]:
+        expired = self._pop_expired(source, now)
+        completed = [expired] if expired else []
+
+        latest = self._latest_detection(source)
+        if not trailing or (
+            latest is not None
+            and (detections[-1].date - latest.date).total_seconds()
+            <= self.config.include_trailing_time
+        ):
+            self._detections[source].extend(detections)
+
+        if self._time_exceeded(source, now) and (event := self._pop(source)):
+            completed.append(event)
+        return completed
 
     def flush_expired(self, *, now: datetime | None = None) -> list[DetectionEvent]:
         now = now or datetime.now()
@@ -98,14 +122,15 @@ class EventCollector:
         if len(detected) < self.config.frames_min:
             return None
         best = max(detected, key=lambda item: max_confidence(item.confidence))
+        event = DetectionEvent(source, tuple(detections), best)
         logger.info(
             "Collected %d frames for %s over %.1fs (confidence %.3f)",
             len(detections),
             source,
-            (detections[-1].date - detections[0].date).total_seconds(),
-            max_confidence(best.confidence),
+            event.duration,
+            event.confidence,
         )
-        return DetectionEvent(source, tuple(detections), best)
+        return event
 
     def _latest_detection(self, source: str) -> Detection | None:
         return next(

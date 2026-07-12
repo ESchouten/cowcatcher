@@ -56,10 +56,7 @@ class StreamBatcher:
                     logger.exception("Stream loader %d crashed", index)
             finally:
                 if loader is not None:
-                    try:
-                        loader.close()
-                    except Exception:
-                        logger.info("Failed to close stream loader", exc_info=True)
+                    _close_loader(loader)
                 with self._loaders_lock:
                     self.loaders[index] = None
             self._stop.wait(1)
@@ -75,12 +72,8 @@ class StreamBatcher:
         with self._loaders_lock:
             loaders = list(self.loaders)
         for loader in loaders:
-            if loader is None:
-                continue
-            try:
-                loader.close()
-            except Exception:
-                logger.info("Failed to close stream loader", exc_info=True)
+            if loader is not None:
+                _close_loader(loader)
         for thread in self.threads:
             thread.join(timeout=5)
             if thread.is_alive():
@@ -127,3 +120,10 @@ class _SuppressLoadStreamsFilter(logging.Filter):
 
 
 logging.getLogger("ultralytics").addFilter(_SuppressLoadStreamsFilter())
+
+
+def _close_loader(loader: LoadStreams) -> None:
+    try:
+        loader.close()
+    except Exception:
+        logger.info("Failed to close stream loader", exc_info=True)

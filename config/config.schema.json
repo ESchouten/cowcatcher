@@ -36,28 +36,6 @@
           "title": "Export Rejected",
           "type": "boolean"
         },
-        "token": {
-          "minLength": 1,
-          "title": "Token",
-          "type": "string"
-        },
-        "chat": {
-          "minLength": 1,
-          "title": "Chat",
-          "type": "string"
-        },
-        "alert_every": {
-          "default": 1,
-          "exclusiveMinimum": 0,
-          "title": "Alert Every",
-          "type": "integer"
-        },
-        "timeout": {
-          "default": 30,
-          "exclusiveMinimum": 0,
-          "title": "Timeout",
-          "type": "number"
-        },
         "include_image": {
           "default": false,
           "title": "Include Image",
@@ -97,6 +75,28 @@
           "minimum": 0,
           "title": "Video Crf",
           "type": "integer"
+        },
+        "token": {
+          "minLength": 1,
+          "title": "Token",
+          "type": "string"
+        },
+        "chat": {
+          "minLength": 1,
+          "title": "Chat",
+          "type": "string"
+        },
+        "alert_every": {
+          "default": 1,
+          "exclusiveMinimum": 0,
+          "title": "Alert Every",
+          "type": "integer"
+        },
+        "timeout": {
+          "default": 30,
+          "exclusiveMinimum": 0,
+          "title": "Timeout",
+          "type": "number"
         }
       },
       "required": [
@@ -667,41 +667,6 @@
           "title": "Export Rejected",
           "type": "boolean"
         },
-        "token": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Token"
-        },
-        "data_type": {
-          "default": "binary",
-          "enum": [
-            "binary",
-            "base64",
-            "none"
-          ],
-          "title": "Data Type",
-          "type": "string"
-        },
-        "data_max": {
-          "anyOf": [
-            {
-              "exclusiveMinimum": 0,
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Data Max"
-        },
         "include_image": {
           "default": false,
           "title": "Include Image",
@@ -741,6 +706,41 @@
           "minimum": 0,
           "title": "Video Crf",
           "type": "integer"
+        },
+        "token": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Token"
+        },
+        "data_type": {
+          "default": "binary",
+          "enum": [
+            "binary",
+            "base64",
+            "none"
+          ],
+          "title": "Data Type",
+          "type": "string"
+        },
+        "data_max": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Data Max"
         }
       },
       "required": [

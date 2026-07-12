@@ -44,8 +44,8 @@ class FakeValidator:
         self.value = value
         self.calls = []
 
-    def validate(self, best_detection, detections):
-        self.calls.append((best_detection, detections))
+    def validate(self, event):
+        self.calls.append(event)
         return self.value
 
 
@@ -54,8 +54,8 @@ class RecordingExporter:
         self.calls = []
         self.closed = False
 
-    def export(self, best_detection, detections, validated):
-        self.calls.append((best_detection, detections, validated))
+    def export(self, event, validated):
+        self.calls.append((event, validated))
 
     def close(self):
         self.closed = True
@@ -178,7 +178,7 @@ def test_exporter_factory_assigns_sse_endpoint_without_mutating_config(monkeypat
         def publish_tracks(self, source, detection):
             pass
 
-        def export(self, best_detection, detections, validated):
+        def export(self, event, validated):
             pass
 
     monkeypatch.setattr(
@@ -246,11 +246,12 @@ def test_export_dispatcher_validates_and_exports_event():
         executor=ImmediateExecutor(),
     )
     detection = make_detection(datetime.now())
+    event = DetectionEvent("camera", (detection,), detection)
 
-    dispatcher.submit(DetectionEvent("camera", (detection,), detection))
+    dispatcher.submit(event)
 
     assert len(validator.calls) == 1
-    assert exporter.calls == [(detection, [detection], True)]
+    assert exporter.calls == [(event, True)]
 
 
 def test_export_dispatcher_serializes_cooldown_and_closes_exporters():
