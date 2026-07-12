@@ -147,7 +147,7 @@ class YoloRunner:
         return str(
             YOLO(config.model, task=config.task).export(
                 format="engine" if TYPE == "tensorrt" else "onnx",
-                batch=max(1, source_count),
+                batch=source_count,
                 dynamic=True,
                 half=should_half(),
                 imgsz=config.imgsz,
@@ -181,7 +181,6 @@ class YoloRunner:
             return []
 
         sources, frames, active_frames = prepared
-        self._reset_tracking_if_batch_size_changed(len(frames))
         paths = [f"source-{index}" for index in range(len(sources))]
         results = list(
             self.model.track(
@@ -219,23 +218,19 @@ class YoloRunner:
             return None
 
         placeholder = np.zeros_like(next(iter(active_frames.values()))[-1][1])
-        ordered_sources = list(dict.fromkeys([*self.sources, *active_frames.keys()]))
-        sources: list[str] = []
         images: list[ndarray] = []
-        for source in ordered_sources:
+        for source in self.sources:
             frames = active_frames.get(source)
             if frames is not None:
                 latest = frames[-1]
                 self.tracking_last_frames[source] = latest
-                sources.append(source)
                 images.append(latest[1])
                 continue
 
             previous = self.tracking_last_frames.get(source)
-            sources.append(source)
             images.append(previous[1] if previous is not None else placeholder)
 
-        return sources, images, active_frames
+        return self.sources, images, active_frames
 
     def _predict_kwargs(
         self,
@@ -252,15 +247,6 @@ class YoloRunner:
             "rect": should_rect(),
             "batch": batch,
         }
-
-    def _reset_tracking_if_batch_size_changed(self, batch_size: int) -> None:
-        predictor = getattr(self.model, "predictor", None)
-        trackers = getattr(predictor, "trackers", None)
-        if trackers is None or len(trackers) == batch_size:
-            return
-        delattr(predictor, "trackers")
-        if hasattr(predictor, "vid_path"):
-            delattr(predictor, "vid_path")
 
     def _log_predict_time(self, then: float, frame_count: int, operation: str) -> None:
         elapsed = perf_counter() - then

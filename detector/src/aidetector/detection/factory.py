@@ -1,4 +1,4 @@
-from aidetector.detection.detector import Detector
+from aidetector.detection.detector import Detector, ModelRuntime
 from aidetector.detection.events import EventCollector
 from aidetector.detection.validator import Validator
 from aidetector.detection.yolo import YoloRunner
@@ -14,22 +14,23 @@ def build_detector(
     detector_index: int,
 ) -> Detector:
     source_provider = SourceProvider(config.detection)
-    runner = (
-        YoloRunner(config.yolo, onnx, source_provider.sources)
-        if config.yolo is not None
+    model = (
+        ModelRuntime(
+            config.yolo,
+            YoloRunner(config.yolo, onnx, source_provider.sources),
+            EventCollector(config.yolo),
+        )
+        if config.yolo
         else None
     )
-    collector = EventCollector(config.yolo) if config.yolo is not None else None
     vlms = [config.vlm] if isinstance(config.vlm, VLMConfig) else list(config.vlm or [])
     validator = Validator(vlms)
     targets = build_exporters(config.exporters, detector_index)
     dispatcher = ExportDispatcher(validator, targets.exporters, config.yolo)
     return Detector(
         config.detection,
-        config.yolo,
         source_provider,
-        runner,
-        collector,
+        model,
         dispatcher,
         targets.track_publishers,
         detector_index,

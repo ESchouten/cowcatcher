@@ -14,6 +14,9 @@ export const getDetectorPresets = query(async () => {
 			}
 		}
 	);
+	if (!response.ok) {
+		throw new Error(`Failed to load detector presets: ${response.status}`);
+	}
 	const items: { name: string }[] = await response.json();
 	return items.map((item) => item.name);
 });
@@ -23,9 +26,13 @@ export const getDetectorPreset = query(
 		file: v.string()
 	}),
 	async ({ file }): Promise<DetectorConfig> => {
-		return await fetch(
+		const response = await fetch(
 			`https://raw.githubusercontent.com/ESchouten/ai-detector/main/config/detector/${file}`
-		).then((response) => response.json());
+		);
+		if (!response.ok) {
+			throw new Error(`Failed to load detector preset '${file}': ${response.status}`);
+		}
+		return response.json();
 	}
 );
 

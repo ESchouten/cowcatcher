@@ -1,9 +1,8 @@
 from datetime import datetime, timedelta
 
 import numpy as np
-import pytest
 
-from aidetector.detection.detector import Detector
+from aidetector.detection.detector import Detector, ModelRuntime
 from aidetector.detection.events import DetectionEvent, EventCollector
 from aidetector.detection.models import Detection, ImageSet
 from aidetector.detection.yolo import TrackedSourceResult
@@ -136,10 +135,12 @@ def build_test_detector(
     return (
         Detector(
             DetectionConfig(source=source_provider.sources),
-            config,
             source_provider,
-            runner or RecordingRunner(),
-            EventCollector(config),
+            ModelRuntime(
+                config,
+                runner or RecordingRunner(),
+                EventCollector(config),
+            ),
             dispatcher,
             [publisher] if publisher else [],
         ),
@@ -372,22 +373,6 @@ def test_detector_records_worker_failure_for_manager():
     assert isinstance(detector.error, ValueError)
     assert source.closed is True
     assert dispatcher.closed is True
-
-
-def test_detector_requires_matching_model_dependencies():
-    source = FakeSourceProvider()
-    dispatcher = RecordingDispatcher()
-
-    with pytest.raises(ValueError, match="configured together"):
-        Detector(
-            DetectionConfig(source=source.sources),
-            YoloConfig(model="model.pt"),
-            source,
-            None,
-            None,
-            dispatcher,
-            [],
-        )
 
 
 def test_detector_close_before_start_closes_dispatcher():

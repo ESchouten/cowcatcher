@@ -14,17 +14,13 @@ class Healthcheck:
         self._stop = Event()
         self._thread: Thread | None = None
 
-    def start(self) -> Thread:
-        if self._thread is not None and self._thread.is_alive():
-            raise RuntimeError("Healthcheck is already running")
-        self._stop.clear()
+    def start(self) -> None:
         self._thread = Thread(
             target=self._run,
             name="healthcheck",
             daemon=True,
         )
         self._thread.start()
-        return self._thread
 
     def stop(self) -> None:
         self._stop.set()

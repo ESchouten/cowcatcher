@@ -1,5 +1,4 @@
 import json
-from threading import Lock
 from typing import Any
 
 import requests
@@ -16,7 +15,6 @@ class TelegramExporter(Exporter[ChatConfig]):
     def __init__(self, config: ChatConfig):
         super().__init__(config)
         self._alert_count = 0
-        self._count_lock = Lock()
 
     def _export(
         self,
@@ -116,9 +114,8 @@ class TelegramExporter(Exporter[ChatConfig]):
         response.raise_for_status()
 
     def _next_alert_is_silent(self) -> bool:
-        with self._count_lock:
-            self._alert_count += 1
-            return self._alert_count % max(1, self.config.alert_every) != 0
+        self._alert_count += 1
+        return self._alert_count % self.config.alert_every != 0
 
     @staticmethod
     def _caption(

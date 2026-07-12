@@ -1,4 +1,5 @@
 import logging
+from dataclasses import dataclass
 from datetime import datetime
 from threading import Event, Thread
 from time import monotonic
@@ -28,32 +29,28 @@ class ModelRunner(Protocol):
     ) -> list[Detection] | None: ...
 
 
+@dataclass(frozen=True)
+class ModelRuntime:
+    config: YoloConfig
+    runner: ModelRunner
+    events: EventCollector
+
+
 class Detector:
     logger = logging.getLogger(__name__)
 
     def __init__(
         self,
         detection: DetectionConfig,
-        model_config: YoloConfig | None,
         source_provider: SourceProvider,
-        model_runner: ModelRunner | None,
-        event_collector: EventCollector | None,
+        model: ModelRuntime | None,
         dispatcher: ExportDispatcher,
         track_publishers: list[TrackPublisher],
         detector_index: int = 0,
     ):
-        if (model_config is None) != (model_runner is None):
-            raise ValueError(
-                "Model config and model runner must be configured together"
-            )
-        if model_config is not None and event_collector is None:
-            raise ValueError("A model-backed detector requires an event collector")
-
         self.detection = detection
-        self.model_config = model_config
         self.source_provider = source_provider
-        self.model_runner = model_runner
-        self.event_collector = event_collector
+        self.model = model
         self.dispatcher = dispatcher
         self.track_publishers = list(track_publishers)
         self._source_ids = {
@@ -65,15 +62,8 @@ class Detector:
         self._producer: Thread | None = None
         self._monitor: Thread | None = None
         self._next_detection_at = 0.0
-        self._started = False
 
-    def start(self) -> Thread:
-        if self._started:
-            raise RuntimeError("Detector instances cannot be restarted")
-
-        self._started = True
-        self._stop.clear()
-        self.error = None
+    def start(self) -> None:
         self._monitor = Thread(
             target=self._monitor_timeouts,
             name="detection-timeouts",
@@ -85,7 +75,6 @@ class Detector:
         )
         self._monitor.start()
         self._producer.start()
-        return self._producer
 
     def stop(self) -> None:
         self._stop.set()
@@ -93,7 +82,7 @@ class Detector:
 
     def close(self) -> None:
         self.stop()
-        if self._started:
+        if self._producer is not None:
             self.join()
         else:
             self.dispatcher.close()
@@ -120,20 +109,20 @@ class Detector:
         finally:
             self._stop.set()
             self.source_provider.close()
-            if self.event_collector is not None:
-                self._submit(self.event_collector.flush_all())
+            if self.model is not None:
+                self._submit(self.model.events.flush_all())
             self.dispatcher.close()
 
     def _monitor_timeouts(self) -> None:
         while not self._stop.wait(1):
-            if self.event_collector is not None:
-                self._submit(self.event_collector.flush_expired())
+            if self.model is not None:
+                self._submit(self.model.events.flush_expired())
 
     def _handle_frame_batch(self, batch: FrameBatch) -> None:
         if not batch or not self._detection_is_due():
             return
 
-        if self.model_runner is None:
+        if self.model is None:
             for source, frames in batch.items():
                 detections = [
                     Detection(date, ImageSet(frame), {}) for date, frame in frames
@@ -148,8 +137,8 @@ class Detector:
                     )
             return
 
-        if self.model_config and self.model_config.tracking:
-            for tracked in self.model_runner.track_sources(batch):
+        if self.model.config.tracking:
+            for tracked in self.model.runner.track_sources(batch):
                 self._handle_model_result(
                     tracked.source,
                     tracked.result,
@@ -158,12 +147,11 @@ class Detector:
             return
 
         sources = list(batch)
-        results = self.model_runner.detect([batch[source][-1][1] for source in sources])
+        results = self.model.runner.detect([batch[source][-1][1] for source in sources])
         for source, result in zip(sources, results, strict=True):
             self._handle_model_result(source, result, batch[source])
 
     def _detection_is_due(self) -> bool:
-        interval = max(0, self.detection.interval)
         now = monotonic()
         remaining = self._next_detection_at - now
         if remaining > 0:
@@ -172,7 +160,7 @@ class Detector:
             if self._stop.wait(remaining):
                 return False
             now = monotonic()
-        self._next_detection_at = now + interval
+        self._next_detection_at = now + self.detection.interval
         return True
 
     def _handle_model_result(
@@ -181,15 +169,13 @@ class Detector:
         result: Any,
         frames: list[Frame],
     ) -> None:
-        assert self.model_runner is not None
-        assert self.model_config is not None
-        assert self.event_collector is not None
+        assert self.model is not None
 
-        detections = self.model_runner.detections_from_result(result, frames)
+        detections = self.model.runner.detections_from_result(result, frames)
         source_id = self._source_ids[source]
         if detections:
             self._publish_tracks(source_id, detections[-1])
-            self._submit(self.event_collector.add(source_id, detections))
+            self._submit(self.model.events.add(source_id, detections))
             return
 
         latest_date, latest_frame = frames[-1]
@@ -198,7 +184,7 @@ class Detector:
             Detection(latest_date, ImageSet(latest_frame), {}),
         )
         trailing = [Detection(date, ImageSet(frame), {}) for date, frame in frames]
-        self._submit(self.event_collector.add_trailing(source_id, trailing))
+        self._submit(self.model.events.add_trailing(source_id, trailing))
 
     def _publish_tracks(self, source: str, detection: Detection) -> None:
         for publisher in self.track_publishers:

@@ -1,5 +1,4 @@
 from time import sleep
-from threading import Thread
 
 from aidetector.detection.detector import Detector
 from aidetector.detection.factory import build_detector
@@ -25,34 +24,27 @@ class Manager:
         health = Healthcheck(config.health) if config.health else None
         return cls(detectors, health)
 
-    def start(self) -> list[Thread]:
-        threads: list[Thread] = []
+    def start(self) -> None:
         try:
             for detector in self.detectors:
-                threads.append(detector.start())
+                detector.start()
             if self.health:
                 self.health.start()
-            return threads
         except Exception:
             self.stop()
             raise
 
     def wait(self) -> None:
-        while any(detector.is_alive for detector in self.detectors):
+        while True:
             failed = next(
                 (detector for detector in self.detectors if detector.error is not None),
                 None,
             )
             if failed is not None:
                 raise RuntimeError("Detector stopped unexpectedly") from failed.error
+            if not any(detector.is_alive for detector in self.detectors):
+                return
             sleep(0.1)
-
-        failed = next(
-            (detector for detector in self.detectors if detector.error is not None),
-            None,
-        )
-        if failed is not None:
-            raise RuntimeError("Detector stopped unexpectedly") from failed.error
 
     def stop(self) -> None:
         for detector in self.detectors:

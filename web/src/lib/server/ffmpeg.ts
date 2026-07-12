@@ -5,8 +5,7 @@ import path from 'node:path';
 import { tmpdir } from 'node:os';
 import ffmpegStatic from 'ffmpeg-static';
 
-let cachedPath: string | null | undefined;
-let pendingPath: Promise<string | null> | null = null;
+let ffmpegPath: Promise<string | null> | undefined;
 
 export const getExecutableName = () => (process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
 
@@ -26,10 +25,6 @@ export function sanitizeSourceForLogs(source: string): string {
 	} catch {
 		return sanitized;
 	}
-}
-
-export function sanitizeTextForLogs(text: string): string {
-	return text.replace(/rtsps?:\/\/[^\s\r\n]+/gi, (source) => sanitizeSourceForLogs(source));
 }
 
 export function getRtspInputArgs(source: string): string[] {
@@ -113,14 +108,6 @@ async function resolveFfmpegPath(requestUrl: URL): Promise<string | null> {
 	return (await extractFfmpeg(requestUrl)) ?? (canRun('ffmpeg') ? 'ffmpeg' : null);
 }
 
-export async function getFfmpegPathWithFallback(requestUrl: URL): Promise<string | null> {
-	if (cachedPath !== undefined) {
-		return cachedPath;
-	}
-
-	pendingPath ??= resolveFfmpegPath(requestUrl).finally(() => {
-		pendingPath = null;
-	});
-	cachedPath = await pendingPath;
-	return cachedPath;
+export function getFfmpegPathWithFallback(requestUrl: URL): Promise<string | null> {
+	return (ffmpegPath ??= resolveFfmpegPath(requestUrl));
 }

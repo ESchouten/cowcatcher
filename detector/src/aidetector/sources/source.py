@@ -17,8 +17,6 @@ class SourceProvider:
         self.sources = (
             [config.source] if isinstance(config.source, str) else list(config.source)
         )
-        if not self.sources:
-            raise ValueError("At least one detection source is required")
         self.width = config.frames_width
         self.retention = config.frame_retention
         self._stop = Event()

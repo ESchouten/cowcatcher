@@ -12,7 +12,7 @@ class FrameCollector:
     def __init__(self, width: int = 1280, retention: int = 1):
         self.frames: dict[str, list[tuple[datetime, ndarray]]] = {}
         self.width = width
-        self.retention = max(1, retention)
+        self.retention = retention
 
     def add(self, source: str, frame: ndarray):
         frames = self.frames.setdefault(source, [])

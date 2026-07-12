@@ -68,8 +68,8 @@ class ExportDispatcher:
         try:
             validated = self.validator.validate(event.best, detections)
         except Exception:
-            logger.exception("Detection validation failed; exporting as unvalidated")
-            validated = None
+            logger.exception("Detection validation failed")
+            return
 
         if validated is not False:
             self._record_detection(event.source, matching, event.best.date)

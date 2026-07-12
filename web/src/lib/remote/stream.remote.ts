@@ -11,16 +11,14 @@ function getRedirectTarget(next: string | undefined, fallback: string) {
 
 export const getStreams = query(async () => {
 	const { config, app } = await getConfig();
-	const detectorSources = config.detectors.flatMap((detector) => detector.detection.source);
-	const detectorStreams = detectorSources.filter((source) => source.trim().match(/rtsps?:\/\//i));
-	const allStreams = [
-		...new Set([...app.streams, ...detectorStreams.map((source) => ({ source }) as StreamMeta)])
-	];
-	const uniqueStreams = allStreams.filter(
-		(stream, index) => allStreams.findIndex((s) => s.source === stream.source) === index
-	);
+	const streams = new Map<string, StreamMeta>(app.streams.map((stream) => [stream.source, stream]));
+	for (const source of config.detectors.flatMap((detector) => detector.detection.source)) {
+		if (/^rtsps?:\/\//i.test(source.trim()) && !streams.has(source)) {
+			streams.set(source, { source });
+		}
+	}
 
-	return uniqueStreams.map((stream, index) => ({
+	return [...streams.values()].map((stream, index) => ({
 		source: stream.source,
 		label: stream.label ?? 'Stream ' + (index + 1)
 	}));
@@ -29,10 +27,7 @@ export const getStreams = query(async () => {
 export const getStreamSettings = query(async () => {
 	const { config } = await getConfig();
 	const tracksBySource: Record<string, { tracksUrl: string; tracksSource: string }> = {};
-	let fallback = {
-		tracksUrl: '/api/tracks/0',
-		tracksSource: '0:0'
-	};
+	let fallback: { tracksUrl: string; tracksSource: string } | undefined;
 
 	config.detectors.forEach((detector, detectorIndex) => {
 		const sse = detector.exporters?.sse?.[0];
@@ -41,9 +36,7 @@ export const getStreamSettings = query(async () => {
 		}
 
 		const tracksUrl = `/api/tracks/${detectorIndex}`;
-		if (!Object.keys(tracksBySource).length) {
-			fallback = { tracksUrl, tracksSource: `${detectorIndex}:0` };
-		}
+		fallback ??= { tracksUrl, tracksSource: `${detectorIndex}:0` };
 
 		detector.detection.source.forEach((source, sourceIndex) => {
 			tracksBySource[source] = {
@@ -54,7 +47,7 @@ export const getStreamSettings = query(async () => {
 	});
 
 	return {
-		...fallback,
+		...(fallback ?? { tracksUrl: '/api/tracks/0', tracksSource: '0:0' }),
 		tracksBySource
 	};
 });

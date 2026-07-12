@@ -34,11 +34,12 @@ class EventCollector:
     ) -> list[DetectionEvent]:
         now = now or datetime.now()
         with self._lock:
-            completed = self._pop_expired(source, now)
+            expired = self._pop_expired(source, now)
+            completed = [expired] if expired else []
             self._detections[source].extend(detections)
-            if self._time_exceeded(source, now):
-                completed.append(self._pop(source))
-            return [event for event in completed if event is not None]
+            if self._time_exceeded(source, now) and (event := self._pop(source)):
+                completed.append(event)
+            return completed
 
     def add_trailing(
         self,
@@ -51,16 +52,17 @@ class EventCollector:
             return []
         now = now or datetime.now()
         with self._lock:
-            completed = self._pop_expired(source, now)
+            expired = self._pop_expired(source, now)
+            completed = [expired] if expired else []
             latest = self._latest_detection(source)
             if latest is None:
-                return [event for event in completed if event is not None]
+                return completed
             elapsed = (detections[-1].date - latest.date).total_seconds()
             if elapsed <= self.config.include_trailing_time:
                 self._detections[source].extend(detections)
-            if self._time_exceeded(source, now):
-                completed.append(self._pop(source))
-            return [event for event in completed if event is not None]
+            if self._time_exceeded(source, now) and (event := self._pop(source)):
+                completed.append(event)
+            return completed
 
     def flush_expired(self, *, now: datetime | None = None) -> list[DetectionEvent]:
         now = now or datetime.now()
@@ -68,8 +70,7 @@ class EventCollector:
             events = [
                 event
                 for source in list(self._detections)
-                for event in self._pop_expired(source, now)
-                if event is not None
+                if (event := self._pop_expired(source, now)) is not None
             ]
         return events
 
@@ -86,10 +87,10 @@ class EventCollector:
         self,
         source: str,
         now: datetime,
-    ) -> list[DetectionEvent | None]:
+    ) -> DetectionEvent | None:
         if not self._timeout_exceeded(source, now):
-            return []
-        return [self._pop(source)]
+            return None
+        return self._pop(source)
 
     def _pop(self, source: str) -> DetectionEvent | None:
         detections = self._detections.pop(source, [])
