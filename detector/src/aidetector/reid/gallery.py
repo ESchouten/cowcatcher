@@ -11,8 +11,8 @@ class IdentityGallery:
         keys: list[str] | ndarray,
         labels: list[str] | ndarray,
         *,
-        match_threshold: float = 0.68,
-        match_margin: float = 0.05,
+        match_threshold: float,
+        match_margin: float,
     ):
         self.embeddings = normalize_rows(embeddings)
         self.keys = np.asarray(keys, dtype=str)

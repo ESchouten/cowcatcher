@@ -190,6 +190,11 @@ def build_identity_provider(
     if reuse_primary:
         identity_runner = primary_runner
     else:
+        if config.segment_model is None:
+            raise ValueError(
+                "Identity enrichment requires a segmentation-capable YOLO model "
+                "or identity.segment_model"
+            )
         identity_config = YoloConfig(
             model=config.segment_model,
             task="segment",
@@ -197,7 +202,6 @@ def build_identity_provider(
             confidence={config.label: config.confidence},
             imgsz=config.imgsz,
             iou=config.nms_iou,
-            tracker="bytetrack.yaml",
         )
         identity_runner = YoloRunner(
             identity_config,

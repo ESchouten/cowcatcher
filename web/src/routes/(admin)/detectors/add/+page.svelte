@@ -10,11 +10,10 @@
 	import {
 		deleteDetector,
 		getDetector,
-		getDetectorPreset,
-		getDetectorPresets,
 		getDetectorSchema,
 		saveDetector
 	} from '$lib/remote/detector.remote';
+	import { getPreset, getPresets } from '$lib/remote/preset.remote';
 	import { toast } from 'svelte-sonner';
 	import * as Select from '$lib/components/ui/select';
 	import { getStreams } from '$lib/remote/stream.remote';
@@ -31,8 +30,9 @@
 		};
 		exporters: NonNullable<DetectorConfig['exporters']>;
 	};
+	type IdentityConfig = NonNullable<DetectorConfig['identity']>;
 
-	const EMPTY_DETECTOR = {
+	const DETECTOR_FORM_VALUES = {
 		detection: {
 			source: []
 		},
@@ -42,68 +42,60 @@
 		},
 		exporters: { sse: [{}] } as { telegram?: TelegramConfig[]; sse?: SSEConfig[] }
 	};
-	const EMPTY_IDENTITY = {
-		label: 'cow',
+	const IDENTITY_FORM_VALUES = {
+		label: '',
 		database: 'identities/identities.sqlite',
-		segment_model: 'yolo26m-seg.pt',
-		enrollment: { identity_count: undefined as number | undefined },
-		imgsz: 640,
-		confidence: 0.1,
-		match_threshold: 0.68,
-		match_margin: 0.05,
-		min_area_ratio: 0.005,
-		max_area_ratio: 0.3,
-		margin: 0.2,
-		nms_iou: 0.5,
-		track_samples: 5,
-		track_max_age: 10
+		segment_model: '',
+		enrollment: { identity_count: undefined as number | undefined }
 	};
 	const INLINE_STREAM_PREVIEW_LIMIT = 5;
 
 	function mergeWithEmptyDetector(detector?: Partial<DetectorConfig>) {
 		return {
-			...EMPTY_DETECTOR,
+			...DETECTOR_FORM_VALUES,
 			...detector,
 			detection: {
-				...EMPTY_DETECTOR.detection,
+				...DETECTOR_FORM_VALUES.detection,
 				...detector?.detection
 			},
 			yolo: {
-				...EMPTY_DETECTOR.yolo,
+				...DETECTOR_FORM_VALUES.yolo,
 				...detector?.yolo
 			},
 			identity: detector?.identity
 				? {
-						...EMPTY_IDENTITY,
+						...IDENTITY_FORM_VALUES,
 						...detector.identity,
+						segment_model: detector.identity.segment_model ?? IDENTITY_FORM_VALUES.segment_model,
 						enrollment: detector.identity.enrollment
-							? { ...EMPTY_IDENTITY.enrollment, ...detector.identity.enrollment }
+							? { ...IDENTITY_FORM_VALUES.enrollment, ...detector.identity.enrollment }
 							: undefined
 					}
 				: undefined,
 			exporters: {
-				...EMPTY_DETECTOR.exporters,
+				...DETECTOR_FORM_VALUES.exporters,
 				...detector?.exporters
 			}
 		} as EditableDetector;
 	}
 
-	const originalLabel = $state(page.url.searchParams.get('label') ?? '');
-	const isEditing = $derived(!!originalLabel);
-	const setupMode = $derived(page.url.searchParams.get('setup') === '1');
-	const detectorPresets = $state(await getDetectorPresets());
-	const detectorSchema = $state(await getDetectorSchema());
-	const initialDetector = $derived(
-		mergeWithEmptyDetector(
-			isEditing ? (await getDetector({ label: originalLabel }))?.detector : undefined
-		)
-	);
+	const originalLabel = page.url.searchParams.get('label') ?? '';
+	const isEditing = !!originalLabel;
+	const setupMode = page.url.searchParams.get('setup') === '1';
+	const [detectorPresets, identityPresets, detectorSchema, existingDetector] = await Promise.all([
+		getPresets({ category: 'detector' }),
+		getPresets({ category: 'identity' }),
+		getDetectorSchema(),
+		isEditing ? getDetector({ label: originalLabel }) : Promise.resolve(undefined)
+	]);
+	const initialDetector = mergeWithEmptyDetector(existingDetector?.detector);
 
 	let label = $state(originalLabel);
 	let detector = $state(untrack(() => initialDetector));
 	let visiblePreviewSources = new SvelteSet<string>();
 	let editorHasErrors = $state(false);
 	let preset = $state<string>('Custom');
+	let identityPreset = $state<string>('Custom');
 	let advanced = $state(false);
 	const streams = $derived(await getStreams());
 	const telegrams = $derived(await getTelegrams());
@@ -150,25 +142,43 @@
 	}
 
 	async function handlePresetChange(file: string) {
-		const preset = await getDetectorPreset({ file });
-		detector = mergeWithEmptyDetector(preset);
+		if (file === 'Custom') return;
+		const selectedPreset = (await getPreset({ category: 'detector', file })) as DetectorConfig;
+		detector = mergeWithEmptyDetector(selectedPreset);
+		identityPreset = 'Custom';
+	}
+
+	async function handleIdentityPresetChange(file: string) {
+		if (!detector.identity) return;
+		const { database, enrollment } = detector.identity;
+		const selectedPreset =
+			file === 'Custom'
+				? {}
+				: ((await getPreset({ category: 'identity', file })) as Partial<IdentityConfig>);
+		detector.identity = {
+			...IDENTITY_FORM_VALUES,
+			...selectedPreset,
+			database,
+			enrollment
+		};
 	}
 
 	function setIdentityEnabled(enabled: boolean) {
 		if (enabled) {
 			detector.identity ??= {
-				...EMPTY_IDENTITY,
-				enrollment: { ...EMPTY_IDENTITY.enrollment }
+				...IDENTITY_FORM_VALUES,
+				enrollment: { ...IDENTITY_FORM_VALUES.enrollment }
 			};
 		} else {
 			delete detector.identity;
 		}
+		identityPreset = 'Custom';
 	}
 
 	function setIdentityMode(value: string) {
 		if (!detector.identity) return;
 		if (value === 'enrollment') {
-			detector.identity.enrollment ??= { ...EMPTY_IDENTITY.enrollment };
+			detector.identity.enrollment ??= { ...IDENTITY_FORM_VALUES.enrollment };
 		} else {
 			delete detector.identity.enrollment;
 		}
@@ -186,6 +196,9 @@
 		});
 		if (detector.identity?.enrollment && !detector.identity.enrollment.identity_count) {
 			delete detector.identity.enrollment.identity_count;
+		}
+		if (detector.identity && !detector.identity.segment_model) {
+			delete detector.identity.segment_model;
 		}
 
 		await saveDetector({
@@ -452,6 +465,28 @@
 		{#if detector.identity}
 			<div class="mt-2 grid grid-cols-1 gap-4 sm:grid-cols-2">
 				<div class="flex flex-col gap-2">
+					<Label for="identity-preset">Identity preset</Label>
+					<Select.Root
+						type="single"
+						bind:value={identityPreset}
+						onValueChange={handleIdentityPresetChange}
+						items={['Custom', ...identityPresets].map((preset) => ({
+							value: preset,
+							label: getPresetLabel(preset)
+						}))}
+					>
+						<Select.Trigger id="identity-preset" class="w-full">
+							{getPresetLabel(identityPreset)}
+						</Select.Trigger>
+						<Select.Content>
+							<Select.Item value="Custom" label="Custom" />
+							{#each identityPresets as presetFile (presetFile)}
+								<Select.Item value={presetFile} label={getPresetLabel(presetFile)} />
+							{/each}
+						</Select.Content>
+					</Select.Root>
+				</div>
+				<div class="flex flex-col gap-2">
 					<Label for="identity-mode">Identity setup</Label>
 					<Select.Root
 						type="single"
@@ -501,11 +536,7 @@
 				</div>
 				<div class="flex flex-col gap-2 sm:col-span-2">
 					<Label for="identity-segment-model">Fallback segmentation model</Label>
-					<Input
-						id="identity-segment-model"
-						required
-						bind:value={detector.identity.segment_model}
-					/>
+					<Input id="identity-segment-model" bind:value={detector.identity.segment_model} />
 				</div>
 				<div class="flex flex-col gap-2">
 					<Label for="identity-margin">Frame margin</Label>

@@ -1,10 +1,11 @@
+import json
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
 from aidetector.domain.detections import confidence_matches, matching_confidences
-from aidetector.utils.config import Config, YoloConfig, load_config
+from aidetector.utils.config import Config, IdentityConfig, YoloConfig, load_config
 
 
 def test_example_config_validates():
@@ -17,7 +18,34 @@ def test_example_config_validates():
 
 
 def test_yolo_defaults_are_deterministic():
-    assert YoloConfig(model="model.pt").frames_min == 3
+    config = YoloConfig(model="model.pt")
+
+    assert config.frames_min == 3
+    assert config.tracker == "bytetrack.yaml"
+
+
+def test_identity_defaults_are_model_neutral():
+    config = IdentityConfig(database=Path("identities.sqlite"), label="object")
+
+    assert config.segment_model is None
+    assert config.confidence == 0.25
+    assert config.min_area_ratio == 0
+    assert config.max_area_ratio == 1
+    assert config.margin == 0
+    assert config.nms_iou == 0.7
+
+
+def test_cow_identity_preset_contains_domain_tuning():
+    repo_root = Path(__file__).resolve().parents[2]
+    preset = json.loads((repo_root / "config/identity/cow.json").read_text())
+
+    config = IdentityConfig(database=Path("identities.sqlite"), **preset)
+
+    assert config.label == "cow"
+    assert config.segment_model == "yolo26m-seg.pt"
+    assert config.min_area_ratio == 0.005
+    assert config.max_area_ratio == 0.3
+    assert config.margin == 0.2
 
 
 def test_confidence_helpers_support_global_and_per_class_thresholds():

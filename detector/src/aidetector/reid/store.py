@@ -81,8 +81,8 @@ class TrackletStore:
         self,
         snapshot: TrackletSnapshot,
         *,
-        max_samples: int = 20,
-        duplicate_similarity: float = 0.995,
+        max_samples: int,
+        duplicate_similarity: float,
     ) -> bool:
         if snapshot.identity_key is None:
             raise ValueError("Cannot update an identity without an identity key")
@@ -123,8 +123,8 @@ class TrackletStore:
         self,
         snapshot: TrackletSnapshot,
         *,
-        max_samples: int = 500,
-        duplicate_similarity: float = 0.995,
+        max_samples: int,
+        duplicate_similarity: float,
     ) -> bool:
         if max_samples < 1:
             raise ValueError("Maximum pending samples must be positive")
@@ -256,7 +256,7 @@ class TrackletStore:
         self,
         assignments: dict[str, str],
         *,
-        max_learned_samples: int = 20,
+        max_learned_samples: int,
     ) -> None:
         pending = {
             row["id"]

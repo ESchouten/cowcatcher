@@ -175,7 +175,9 @@ This is the fast first-pass AI that scans every frame. Without a YOLO model, the
 
 Identity is an optional enrichment of a normal YOLO detector. MiewID converts segmented animals into normalized embeddings. Five observations from the same YOLO track are averaged, then compared with the best stored view of each identity. By default, an identity is returned only when cosine similarity is at least `0.68` and the lead over the second-best identity is at least `0.05`; ambiguous tracks remain unknown. The pinned 195 MB ONNX model is downloaded from Hugging Face on first use.
 
-When the primary detector already tracks the configured identity `label` with segmentation masks, those results are reused. For detection-only models such as CowCatcher, the identity pipeline runs `yolo26m-seg.pt` on the same frame and attaches identified objects inside the event box to detections such as `mounting`.
+When the primary detector already tracks the configured identity `label` with segmentation masks, those results are reused. Otherwise, configure `segment_model` as a fallback. The generic identity configuration deliberately does not choose a domain model for you. The [cow identity preset](../config/identity/cow.json) configures YOLO26m segmentation and the filters used for Holstein cattle; the web app exposes it as the **Cow** identity preset.
+
+For detection-only models such as CowCatcher, the fallback segmentation model runs on the same frame and attaches identified objects inside the event box to detections such as `mounting`.
 
 ```json
 {
@@ -201,7 +203,6 @@ Every animal starts without an identity. `identity_count` is therefore not a lis
     "model": "yolo26m-seg.pt",
     "task": "segment",
     "tracking": true,
-    "tracker": "bytetrack.yaml",
     "confidence": { "cow": 0.1 },
     "imgsz": 640
   },

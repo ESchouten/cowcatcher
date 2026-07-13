@@ -9,6 +9,8 @@ from aidetector.domain.identity import IdentityResult
 from aidetector.pipeline.identity_provider import IdentityProvider
 from aidetector.pipeline.ports import EnrichmentBatch
 
+IDENTITY_REGISTRY_TTL_SECONDS = 5
+
 
 @dataclass(frozen=True, slots=True)
 class _IdentityObservation:
@@ -24,7 +26,7 @@ class IdentityRegistry:
     def __init__(
         self,
         *,
-        ttl: float = 5,
+        ttl: float = IDENTITY_REGISTRY_TTL_SECONDS,
         clock: Callable[[], float] = monotonic,
     ):
         if ttl <= 0:

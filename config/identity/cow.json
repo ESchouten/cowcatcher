@@ -1,0 +1,14 @@
+{
+    "label": "cow",
+    "segment_model": "yolo26m-seg.pt",
+    "imgsz": 640,
+    "confidence": 0.1,
+    "match_threshold": 0.68,
+    "match_margin": 0.05,
+    "min_area_ratio": 0.005,
+    "max_area_ratio": 0.3,
+    "margin": 0.2,
+    "nms_iou": 0.5,
+    "track_samples": 5,
+    "track_max_age": 10
+}

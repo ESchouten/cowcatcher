@@ -3,11 +3,10 @@ import json
 from pathlib import Path
 
 from aidetector.reid.enrollment import (
-    DEFAULT_ENROLLMENT_MARGIN,
-    DEFAULT_ENROLLMENT_SIMILARITY,
     finalize_enrollment,
     finalize_pending_enrollment,
 )
+from aidetector.reid.policy import DEFAULT_REID_POLICY
 from aidetector.reid.store import TrackletStore
 
 
@@ -20,12 +19,12 @@ def main() -> None:
     finalize.add_argument(
         "--similarity-threshold",
         type=float,
-        default=DEFAULT_ENROLLMENT_SIMILARITY,
+        default=DEFAULT_REID_POLICY.enrollment_similarity,
     )
     finalize.add_argument(
         "--margin-threshold",
         type=float,
-        default=DEFAULT_ENROLLMENT_MARGIN,
+        default=DEFAULT_REID_POLICY.enrollment_margin,
     )
     finalize.add_argument("--identity-count", type=int)
 

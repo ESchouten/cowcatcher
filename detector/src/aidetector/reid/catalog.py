@@ -6,15 +6,12 @@ from aidetector.reid.enrollment import (
     finalize_pending_enrollment,
 )
 from aidetector.reid.gallery import IdentityGallery
+from aidetector.reid.policy import DEFAULT_REID_POLICY, ReidPolicy
 from aidetector.reid.store import TrackletStore
 from aidetector.domain.identity import IdentityMatch, TrackletSnapshot
 from aidetector.pipeline.identity_provider import SamplingDecision
 
 logger = logging.getLogger(__name__)
-
-MAX_LEARNED_SAMPLES_PER_IDENTITY = 20
-MIN_LEARNING_SIMILARITY = 0.75
-MIN_LEARNING_MARGIN = 0.1
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,6 +20,7 @@ class CatalogPolicy:
     match_margin: float
     track_samples: int
     enrollment_identity_count: int | None = None
+    reid: ReidPolicy = DEFAULT_REID_POLICY
 
 
 class SqliteIdentityCatalog:
@@ -62,7 +60,8 @@ class SqliteIdentityCatalog:
             try:
                 self.store.update_identity(
                     snapshot,
-                    max_samples=MAX_LEARNED_SAMPLES_PER_IDENTITY,
+                    max_samples=self.policy.reid.max_identity_samples,
+                    duplicate_similarity=self.policy.reid.duplicate_similarity,
                 )
             except ValueError as error:
                 logger.warning("Could not update identity: %s", error)
@@ -70,7 +69,11 @@ class SqliteIdentityCatalog:
             return SamplingDecision.STOP
 
         if snapshot.identity_key is None:
-            self.store.update_pending(snapshot)
+            self.store.update_pending(
+                snapshot,
+                max_samples=self.policy.reid.max_pending_samples,
+                duplicate_similarity=self.policy.reid.duplicate_similarity,
+            )
         return SamplingDecision.CONTINUE
 
     def close(self) -> None:
@@ -87,8 +90,9 @@ class SqliteIdentityCatalog:
         if (
             match.key != snapshot.identity_key
             or match.similarity
-            < max(self.policy.match_threshold, MIN_LEARNING_SIMILARITY)
-            or match.margin < max(self.policy.match_margin, MIN_LEARNING_MARGIN)
+            < max(self.policy.match_threshold, self.policy.reid.learning_similarity)
+            or match.margin
+            < max(self.policy.match_margin, self.policy.reid.learning_margin)
         ):
             return None
         return match
@@ -101,18 +105,24 @@ class SqliteIdentityCatalog:
                 finalize_pending_enrollment(
                     self.store,
                     gallery=self.gallery,
+                    similarity_threshold=self.policy.reid.enrollment_similarity,
+                    margin_threshold=self.policy.reid.enrollment_margin,
+                    create_after=self.policy.reid.pending_create_after,
                     existing_match_threshold=max(
                         self.policy.match_threshold,
-                        MIN_LEARNING_SIMILARITY,
+                        self.policy.reid.learning_similarity,
                     ),
                     existing_match_margin=max(
                         self.policy.match_margin,
-                        MIN_LEARNING_MARGIN,
+                        self.policy.reid.learning_margin,
                     ),
+                    max_learned_samples=self.policy.reid.max_identity_samples,
                 )
             else:
                 finalize_enrollment(
                     self.store,
+                    similarity_threshold=self.policy.reid.enrollment_similarity,
+                    margin_threshold=self.policy.reid.enrollment_margin,
                     identity_count=self.policy.enrollment_identity_count,
                 )
             logger.info("Finalized identity enrollment: %s", self.store.path)

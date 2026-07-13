@@ -3,13 +3,12 @@ from dataclasses import dataclass, field
 
 import numpy as np
 from aidetector.reid.gallery import IdentityGallery
+from aidetector.reid.policy import DEFAULT_REID_POLICY
 from aidetector.reid.store import StoredTracklet, TrackletStore
 from aidetector.domain.vectors import normalize_rows, normalize_vector
 from numpy import ndarray
 from scipy.optimize import linear_sum_assignment
 
-DEFAULT_ENROLLMENT_SIMILARITY = 0.76
-DEFAULT_ENROLLMENT_MARGIN = 0.0
 IDENTITY_PREFIX = "identity"
 
 
@@ -397,8 +396,8 @@ def match_camera_tracks(
 def finalize_enrollment(
     store: TrackletStore,
     *,
-    similarity_threshold: float = DEFAULT_ENROLLMENT_SIMILARITY,
-    margin_threshold: float = DEFAULT_ENROLLMENT_MARGIN,
+    similarity_threshold: float = DEFAULT_REID_POLICY.enrollment_similarity,
+    margin_threshold: float = DEFAULT_REID_POLICY.enrollment_margin,
     identity_count: int | None = None,
 ) -> dict[str, str]:
     stored = store.tracklets()
@@ -436,18 +435,25 @@ def finalize_enrollment(
 def finalize_pending_enrollment(
     store: TrackletStore,
     *,
-    similarity_threshold: float = DEFAULT_ENROLLMENT_SIMILARITY,
-    margin_threshold: float = DEFAULT_ENROLLMENT_MARGIN,
-    create_after: int = 3,
+    similarity_threshold: float = DEFAULT_REID_POLICY.enrollment_similarity,
+    margin_threshold: float = DEFAULT_REID_POLICY.enrollment_margin,
+    create_after: int = DEFAULT_REID_POLICY.pending_create_after,
     gallery: IdentityGallery | None = None,
-    existing_match_threshold: float = 0.9,
-    existing_match_margin: float = 0.2,
+    existing_match_threshold: float = DEFAULT_REID_POLICY.learning_similarity,
+    existing_match_margin: float = DEFAULT_REID_POLICY.learning_margin,
+    max_learned_samples: int = DEFAULT_REID_POLICY.max_identity_samples,
 ) -> dict[str, str]:
     if create_after < 1:
         raise ValueError("Pending identity maturity must be positive")
     if gallery is None:
         embeddings, keys, labels = store.gallery_data()
-        gallery = IdentityGallery(embeddings, keys, labels)
+        gallery = IdentityGallery(
+            embeddings,
+            keys,
+            labels,
+            match_threshold=existing_match_threshold,
+            match_margin=existing_match_margin,
+        )
     stored = store.pending_tracklets()
     if not stored:
         raise ValueError("Identity database has no pending tracklets")
@@ -493,7 +499,7 @@ def finalize_pending_enrollment(
         for tracklet, group in assignments.items()
         if group in group_identities
     }
-    store.assign_pending(assignments)
+    store.assign_pending(assignments, max_learned_samples=max_learned_samples)
     return assignments
 
 

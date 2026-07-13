@@ -448,10 +448,17 @@
           "default": null
         },
         "segment_model": {
-          "default": "yolo26m-seg.pt",
-          "minLength": 1,
-          "title": "Segment Model",
-          "type": "string"
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Segment Model"
         },
         "imgsz": {
           "default": 640,
@@ -460,7 +467,7 @@
           "type": "integer"
         },
         "confidence": {
-          "default": 0.1,
+          "default": 0.25,
           "maximum": 1,
           "minimum": 0,
           "title": "Confidence",
@@ -481,14 +488,14 @@
           "type": "number"
         },
         "min_area_ratio": {
-          "default": 0.005,
+          "default": 0,
           "maximum": 1,
           "minimum": 0,
           "title": "Min Area Ratio",
           "type": "number"
         },
         "max_area_ratio": {
-          "default": 0.3,
+          "default": 1,
           "maximum": 1,
           "minimum": 0,
           "title": "Max Area Ratio",
@@ -502,7 +509,7 @@
           "type": "number"
         },
         "nms_iou": {
-          "default": 0.5,
+          "default": 0.7,
           "maximum": 1,
           "minimum": 0,
           "title": "Nms Iou",
@@ -987,7 +994,7 @@
           "type": "number"
         },
         "tracker": {
-          "default": "botsort.yaml",
+          "default": "bytetrack.yaml",
           "minLength": 1,
           "title": "Tracker",
           "type": "string"

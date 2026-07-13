@@ -26,6 +26,7 @@ from aidetector.reid.enrollment import (
 )
 from aidetector.reid.gallery import IdentityGallery
 from aidetector.reid.miewid import MiewIdEncoder, _preprocess
+from aidetector.reid.policy import DEFAULT_REID_POLICY
 from aidetector.reid.segmentation import (
     LocalizerSettings,
     box_allowed,
@@ -196,6 +197,7 @@ def test_gallery_matches_best_sample_per_identity():
         ["001", "001", "002"],
         ["NL-123", "NL-123", "NL-456"],
         match_threshold=0.8,
+        match_margin=0.05,
     )
 
     result = gallery.match(np.array([1, 0], dtype=np.float32))
@@ -429,6 +431,7 @@ def test_catalog_learns_only_when_full_track_still_matches_same_identity():
         ["identity-1", "identity-2"],
         ["001", "002"],
         match_threshold=0.75,
+        match_margin=0.05,
     )
     updated = []
     store = type(
@@ -481,6 +484,7 @@ def test_catalog_does_not_learn_from_the_first_sample_window():
         ["identity-1"],
         ["001"],
         match_threshold=0.75,
+        match_margin=0.05,
     )
     updated = []
     store = type(
@@ -776,6 +780,7 @@ def test_tracklet_store_updates_existing_identity_and_caps_learned_samples(tmp_p
                     identity,
                 ),
                 max_samples=2,
+                duplicate_similarity=DEFAULT_REID_POLICY.duplicate_similarity,
             )
 
         learned = store.connection.execute(
@@ -806,7 +811,9 @@ def test_tracklet_store_skips_duplicate_identity_sample(tmp_path):
                 np.asarray([0.999, 0.001]),
                 preview,
                 identity,
-            )
+            ),
+            max_samples=DEFAULT_REID_POLICY.max_identity_samples,
+            duplicate_similarity=DEFAULT_REID_POLICY.duplicate_similarity,
         )
 
     assert not added
@@ -846,7 +853,9 @@ def test_pending_enrollment_adds_identity_without_changing_existing_ones(tmp_pat
                     5,
                     np.asarray(embedding),
                     preview,
-                )
+                ),
+                max_samples=DEFAULT_REID_POLICY.max_pending_samples,
+                duplicate_similarity=DEFAULT_REID_POLICY.duplicate_similarity,
             )
 
         added = finalize_pending_enrollment(
@@ -882,7 +891,13 @@ def test_pending_enrollment_reuses_a_confident_existing_identity(tmp_path):
         initial = finalize_enrollment(store, identity_count=2)
         first_identity = initial[next(iter(initial))]
         embeddings, keys, labels = store.gallery_data()
-        gallery = IdentityGallery(embeddings, keys, labels)
+        gallery = IdentityGallery(
+            embeddings,
+            keys,
+            labels,
+            match_threshold=0.68,
+            match_margin=0.05,
+        )
 
         for source, track_id, angle in zip(
             ("camera-2", "camera-3", "camera-4"),
@@ -900,7 +915,9 @@ def test_pending_enrollment_reuses_a_confident_existing_identity(tmp_path):
                     5,
                     np.asarray([np.cos(radians), np.sin(radians)]),
                     preview,
-                )
+                ),
+                max_samples=DEFAULT_REID_POLICY.max_pending_samples,
+                duplicate_similarity=DEFAULT_REID_POLICY.duplicate_similarity,
             )
 
         assignments = finalize_pending_enrollment(
@@ -935,7 +952,9 @@ def test_pending_enrollment_keeps_immature_candidates_pending(tmp_path):
         )
         finalize_enrollment(store)
         store.update_pending(
-            TrackletSnapshot("camera", 2, 1, 5, 5, np.asarray([0, 1]), preview)
+            TrackletSnapshot("camera", 2, 1, 5, 5, np.asarray([0, 1]), preview),
+            max_samples=DEFAULT_REID_POLICY.max_pending_samples,
+            duplicate_similarity=DEFAULT_REID_POLICY.duplicate_similarity,
         )
 
         with pytest.raises(ValueError, match="at least 3 tracklets"):
@@ -966,9 +985,21 @@ def test_pending_tracklets_deduplicate_different_tracks_but_update_same_track(tm
             preview,
         )
 
-        assert store.update_pending(first)
-        assert store.update_pending(first)
-        assert not store.update_pending(duplicate)
+        assert store.update_pending(
+            first,
+            max_samples=DEFAULT_REID_POLICY.max_pending_samples,
+            duplicate_similarity=DEFAULT_REID_POLICY.duplicate_similarity,
+        )
+        assert store.update_pending(
+            first,
+            max_samples=DEFAULT_REID_POLICY.max_pending_samples,
+            duplicate_similarity=DEFAULT_REID_POLICY.duplicate_similarity,
+        )
+        assert not store.update_pending(
+            duplicate,
+            max_samples=DEFAULT_REID_POLICY.max_pending_samples,
+            duplicate_similarity=DEFAULT_REID_POLICY.duplicate_similarity,
+        )
         pending = store.pending_tracklets()
 
     assert len(pending) == 1
@@ -998,6 +1029,7 @@ def test_video_benchmark_measures_identity_delay_per_track():
         ["001"],
         ["001"],
         match_threshold=0,
+        match_margin=0.05,
     )
     observations = [
         VideoObservation(

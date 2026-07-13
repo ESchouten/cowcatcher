@@ -7,8 +7,6 @@ from pathlib import Path
 import cv2
 import numpy as np
 from aidetector.reid.enrollment import (
-    DEFAULT_ENROLLMENT_MARGIN,
-    DEFAULT_ENROLLMENT_SIMILARITY,
     EnrollmentTrack,
     cluster_known_count,
     cluster_tracklets,
@@ -18,6 +16,7 @@ from aidetector.reid.enrollment import (
 from aidetector.benchmarks.reid.datasets import discover_public_dataset
 from aidetector.reid.gallery import IdentityGallery
 from aidetector.reid.miewid import MIEWID_MODEL, MiewIdEncoder
+from aidetector.reid.policy import DEFAULT_REID_POLICY
 from aidetector.domain.vectors import normalize_vector
 from sklearn.cluster import KMeans
 from sklearn.metrics import roc_auc_score
@@ -180,8 +179,8 @@ def production_open_enrollment_metrics(
 ) -> dict[str, float | int]:
     assignments = cluster_tracklets(
         [track.track for track in tracks],
-        similarity_threshold=DEFAULT_ENROLLMENT_SIMILARITY,
-        margin_threshold=DEFAULT_ENROLLMENT_MARGIN,
+        similarity_threshold=DEFAULT_REID_POLICY.enrollment_similarity,
+        margin_threshold=DEFAULT_REID_POLICY.enrollment_margin,
     )
     return enrollment_metrics(tracks, assignments)
 

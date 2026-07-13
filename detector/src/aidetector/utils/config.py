@@ -52,7 +52,7 @@ class YoloConfig:
     frames_min: PositiveInt = 3
     imgsz: PositiveInt = 640
     iou: Probability = 0.7
-    tracker: NonEmptyString = "botsort.yaml"
+    tracker: NonEmptyString = "bytetrack.yaml"
 
 
 @dataclass(config=STRICT_CONFIG, kw_only=True)
@@ -65,15 +65,15 @@ class IdentityConfig:
     database: Path
     label: NonEmptyString
     enrollment: IdentityEnrollmentConfig | None = None
-    segment_model: NonEmptyString = "yolo26m-seg.pt"
+    segment_model: NonEmptyString | None = None
     imgsz: PositiveInt = 640
-    confidence: Probability = 0.1
+    confidence: Probability = 0.25
     match_threshold: Probability = 0.68
     match_margin: Probability = 0.05
-    min_area_ratio: Probability = 0.005
-    max_area_ratio: Probability = 0.3
+    min_area_ratio: Probability = 0
+    max_area_ratio: Probability = 1
     margin: FrameMargin = 0
-    nms_iou: Probability = 0.5
+    nms_iou: Probability = 0.7
     track_samples: PositiveInt = 5
     track_max_age: PositiveInt = 10
 
