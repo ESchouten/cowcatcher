@@ -1,6 +1,10 @@
 from time import sleep
 
-from aidetector.adapters.models.yolo import YoloRunner, build_yolo_model
+from aidetector.adapters.models.yolo import (
+    YoloRunner,
+    build_yolo_model,
+    uses_pytorch_backend,
+)
 from aidetector.adapters.sinks.factory import build_sinks
 from aidetector.adapters.sources.source import SourceProvider
 from aidetector.adapters.validation.vlm import VLMValidator
@@ -163,7 +167,7 @@ def build_identity_provider(
     primary_runner: YoloRunner,
 ) -> IdentityProvider:
     from aidetector.reid.catalog import CatalogPolicy, SqliteIdentityCatalog
-    from aidetector.reid.miewid import MIEWID_MODEL, MiewIdEncoder
+    from aidetector.reid.miewid import MIEWID_MODEL, build_miewid_encoder
     from aidetector.reid.segmentation import (
         LocalizerSettings,
         SegmentationLocalizer,
@@ -209,7 +213,9 @@ def build_identity_provider(
             build_yolo_model(identity_config, onnx, len(sources)),
         )
 
-    encoder = MiewIdEncoder()
+    encoder = build_miewid_encoder(
+        pytorch=uses_pytorch_backend(primary_config),
+    )
     store = TrackletStore(config.database)
     catalog = SqliteIdentityCatalog(
         store,

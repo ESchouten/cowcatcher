@@ -15,7 +15,7 @@ from aidetector.reid.enrollment import (
 )
 from aidetector.benchmarks.reid.datasets import discover_public_dataset
 from aidetector.reid.gallery import IdentityGallery
-from aidetector.reid.miewid import MIEWID_MODEL, MiewIdEncoder
+from aidetector.reid.miewid import MIEWID_MODEL, OnnxMiewIdEncoder
 from aidetector.reid.policy import DEFAULT_REID_POLICY
 from aidetector.domain.vectors import normalize_vector
 from sklearn.cluster import KMeans
@@ -61,7 +61,7 @@ def build_track_embeddings(
         indices = np.linspace(0, len(paths) - 1, count, dtype=int)
         selected.extend((group, paths[index]) for index in indices)
 
-    encoder = MiewIdEncoder()
+    encoder = OnnxMiewIdEncoder()
     embeddings = defaultdict(list)
     for offset in range(0, len(selected), batch_size):
         batch = selected[offset : offset + batch_size]

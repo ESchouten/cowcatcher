@@ -25,7 +25,11 @@ from aidetector.reid.enrollment import (
     finalize_pending_enrollment,
 )
 from aidetector.reid.gallery import IdentityGallery
-from aidetector.reid.miewid import MiewIdEncoder, _preprocess
+from aidetector.reid.miewid import (
+    OnnxMiewIdEncoder,
+    TorchMiewIdEncoder,
+    _preprocess,
+)
 from aidetector.reid.policy import DEFAULT_REID_POLICY
 from aidetector.reid.segmentation import (
     LocalizerSettings,
@@ -127,13 +131,41 @@ def test_miewid_encoder_normalizes_onnx_embeddings():
             inputs.append((outputs, values))
             return [np.asarray([[3, 4]], dtype=np.float32)]
 
-    encoder = MiewIdEncoder(Session())
+    encoder = OnnxMiewIdEncoder(Session())
 
     result = encoder.embed([np.zeros((10, 20, 3), dtype=np.uint8)])
 
     assert result[0] == pytest.approx([0.6, 0.8])
     assert inputs[0][0] == ["output"]
     assert inputs[0][1]["input"].shape == (1, 3, 440, 440)
+    assert encoder.embed([]).shape == (0, 2)
+
+
+def test_miewid_encoder_normalizes_torch_embeddings():
+    import torch
+
+    class Model:
+        def to(self, device):
+            return self
+
+        def eval(self):
+            return self
+
+        def __call__(self, values):
+            assert values.shape == (2, 3, 440, 440)
+            return torch.tensor([[3, 4], [0, 5]], dtype=torch.float32)
+
+    encoder = TorchMiewIdEncoder(Model(), torch.device("cpu"))
+    encoder.feature_dim = 2
+
+    result = encoder.embed(
+        [
+            np.zeros((10, 20, 3), dtype=np.uint8),
+            np.zeros((20, 10, 3), dtype=np.uint8),
+        ]
+    )
+
+    np.testing.assert_allclose(result, [[0.6, 0.8], [0, 1]])
     assert encoder.embed([]).shape == (0, 2)
 
 

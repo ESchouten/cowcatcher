@@ -3,10 +3,12 @@ from datetime import datetime, timedelta
 import numpy as np
 import pytest
 
+from aidetector.adapters.models import yolo as yolo_module
 from aidetector.adapters.models.yolo import (
     UltralyticsStreamBatch,
     YoloResultMapper,
     YoloRunner,
+    uses_pytorch_backend,
 )
 from aidetector.domain.frames import Frame
 from aidetector.utils.config import YoloConfig
@@ -93,6 +95,22 @@ def make_runner() -> YoloRunner:
         ["camera-1", "camera-2"],
         FakeModel("base"),
     )
+
+
+@pytest.mark.parametrize(
+    ("runtime", "model", "expected"),
+    [
+        ("cuda", "model.pt", True),
+        ("cuda", "model.onnx", False),
+        ("cuda", "model.engine", False),
+        ("default", "model.pt", False),
+        ("tensorrt", "model.pt", False),
+    ],
+)
+def test_pytorch_backend_selection(monkeypatch, runtime, model, expected):
+    monkeypatch.setattr(yolo_module, "TYPE", runtime)
+
+    assert uses_pytorch_backend(YoloConfig(model=model)) is expected
 
 
 def test_ultralytics_stream_batch_behaves_like_stream_loader():

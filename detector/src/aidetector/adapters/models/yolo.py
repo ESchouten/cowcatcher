@@ -23,6 +23,10 @@ from ultralytics.data.loaders import LoadStreams, SourceTypes
 logger = logging.getLogger(__name__)
 
 
+def uses_pytorch_backend(config: YoloConfig) -> bool:
+    return TYPE == "cuda" and not config.model.endswith((".onnx", ".engine"))
+
+
 class UltralyticsStreamBatch(LoadStreams):
     """Single in-memory batch that Ultralytics treats as a stream."""
 
@@ -105,7 +109,7 @@ def build_yolo_model(
     source_count: int,
 ) -> YOLO:
     model_path = config.model
-    if not config.model.endswith(".onnx") and TYPE != "cuda":
+    if not config.model.endswith(".onnx") and not uses_pytorch_backend(config):
         model_path = str(
             YOLO(config.model, task=config.task).export(
                 format="engine" if TYPE == "tensorrt" else "onnx",

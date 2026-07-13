@@ -12,7 +12,7 @@ import numpy as np
 from aidetector.adapters.models.yolo import YoloRunner, build_yolo_model
 from aidetector.benchmarks.reid.geometry import box_iou
 from aidetector.reid.gallery import IdentityGallery
-from aidetector.reid.miewid import MIEWID_MODEL, MiewIdEncoder
+from aidetector.reid.miewid import MIEWID_MODEL, OnnxMiewIdEncoder
 from aidetector.reid.segmentation import (
     LocalizerSettings,
     SegmentationLocalizer,
@@ -205,7 +205,7 @@ def video_observations(
     video: Path,
     annotations: Path,
     localize,
-    encoder: MiewIdEncoder,
+    encoder: OnnxMiewIdEncoder,
     *,
     start_frame: int,
     end_frame: int | None,
@@ -406,7 +406,7 @@ def main() -> None:
             ]
             return candidates
 
-    encoder = MiewIdEncoder()
+    encoder = OnnxMiewIdEncoder()
     with TrackletStore(arguments.database) as store:
         embeddings, keys, labels = store.gallery_data()
     gallery = IdentityGallery(

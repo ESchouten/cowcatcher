@@ -28,9 +28,9 @@ RUN pip freeze | grep -E "^(torch|torchvision|torchaudio)" > constraints.txt
 # --break-system-packages is needed because Debian marks system Python as externally managed
 RUN --mount=type=cache,target=/root/.cache/uv \
     if [ "$TARGETARCH" = "amd64" ]; then \
-        uv pip install --system --break-system-packages --constraint constraints.txt ".[default,identity]"; \
+        uv pip install --system --break-system-packages --constraint constraints.txt ".[default]"; \
     else \
-        uv pip install --system --break-system-packages --constraint constraints.txt ".[identity]"; \
+        uv pip install --system --break-system-packages --constraint constraints.txt .; \
     fi
 
 # Setup a non-root user

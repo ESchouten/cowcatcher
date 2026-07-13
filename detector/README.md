@@ -22,9 +22,9 @@ Pick the right file for your hardware:
 
 | File | GPU |
 | :--- | :-- |
-| `aidetector-winml-<version>.exe` | Windows 11 with any GPU |
-| `aidetector-cuda130-<version>.exe` | Windows 10 with NVIDIA RTX 3000 series or newer |
-| `aidetector-cuda126-<version>.exe` | Windows 10 with NVIDIA RTX 2000 series or older |
+| `aidetector-winml-<version>.exe` | Windows 11 with any GPU but NVIDIA |
+| `aidetector-cuda130-<version>.exe` | Windows 10/11 with NVIDIA RTX 3000 series or newer |
+| `aidetector-cuda126-<version>.exe` | Windows 10/11 with NVIDIA RTX 2000 series or older |
 | `aidetector-osx-<version>` | macOS (CPU / Apple Silicon) |
 
 > **Not sure which to pick?** Start with `winml` on Windows. Use a `cuda` build only if you know your NVIDIA setup matches that CUDA version.
@@ -173,7 +173,7 @@ This is the fast first-pass AI that scans every frame. Without a YOLO model, the
 
 ### `identity` — Individual recognition
 
-Identity is an optional enrichment of a normal YOLO detector. MiewID converts segmented animals into normalized embeddings. Five observations from the same YOLO track are averaged, then compared with the best stored view of each identity. By default, an identity is returned only when cosine similarity is at least `0.68` and the lead over the second-best identity is at least `0.05`; ambiguous tracks remain unknown. The pinned 195 MB ONNX model is downloaded from Hugging Face on first use.
+Identity is an optional enrichment of a normal YOLO detector. MiewID converts segmented animals into normalized embeddings. Five observations from the same YOLO track are averaged, then compared with the best stored view of each identity. By default, an identity is returned only when cosine similarity is at least `0.68` and the lead over the second-best identity is at least `0.05`; ambiguous tracks remain unknown. The pinned model is downloaded from Hugging Face on first use. CUDA builds use its PyTorch checkpoint; ONNX-based builds use the equivalent ONNX export.
 
 When the primary detector already tracks the configured identity `label` with segmentation masks, those results are reused. Otherwise, configure `segment_model` as a fallback. The generic identity configuration deliberately does not choose a domain model for you. The [cow identity preset](../config/identity/cow.json) configures YOLO26m segmentation and the filters used for Holstein cattle; the web app exposes it as the **Cow** identity preset.
 
@@ -228,9 +228,9 @@ Unknown tracks collected after finalization appear as pending evidence in the we
 
 All detector pipelines in the same application share a short-lived in-memory identity register. An identity-enabled detector publishes normalized object locations keyed by source, detector, and YOLO track id. Other detectors reading the same source automatically attach those identities by location, so an event detector such as CowCatcher does not need to run a second identity pipeline. Entries expire after five seconds and are never persisted as identity evidence.
 
-Install the optional identity dependencies with `uv sync --extra default --extra identity`.
+Identity support, including both ONNX and PyTorch model loading, is included in every detector installation.
 
-For benchmark commands, also install `--extra identity-benchmark`. Use `benchmark-reid-video` for annotated end-to-end localization, tracking, and identity regression tests. `benchmark-reid-enrollment` evaluates clustering against prepared public identity crops. Both use the same pinned MiewID ONNX model as the application. Manage enrollment databases with `identity-enrollment`.
+For benchmark commands, also install `--extra identity-benchmark`. Use `benchmark-reid-video` for annotated end-to-end localization, tracking, and identity regression tests. `benchmark-reid-enrollment` evaluates clustering against prepared public identity crops. Benchmarks deliberately use the pinned ONNX export for stable reference results; it is numerically equivalent to the PyTorch checkpoint used by CUDA builds. Manage enrollment databases with `identity-enrollment`.
 
 ---
 
