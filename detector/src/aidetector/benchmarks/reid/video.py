@@ -10,15 +10,15 @@ from typing import Iterable
 import cv2
 import numpy as np
 from aidetector.adapters.models.yolo import YoloRunner, build_yolo_model
-from aidetector.dazzlecow.gallery import CowIdentityGallery
-from aidetector.dazzlecow.geometry import box_iou
-from aidetector.dazzlecow.localizer import (
-    DazzleCowLocalizer,
+from aidetector.benchmarks.reid.geometry import box_iou
+from aidetector.reid.gallery import IdentityGallery
+from aidetector.reid.miewid import MIEWID_MODEL, MiewIdEncoder
+from aidetector.reid.segmentation import (
     LocalizerSettings,
+    SegmentationLocalizer,
     masked_candidate,
 )
-from aidetector.dazzlecow.model import CowIdentityEncoder, IDENTITY_MODEL
-from aidetector.dazzlecow.tracklet_store import TrackletStore
+from aidetector.reid.store import TrackletStore
 from aidetector.domain.frames import Frame
 from aidetector.domain.identity import IdentityCandidate
 from aidetector.pipeline.identity_provider import ModelIdentityCandidateSource
@@ -132,7 +132,7 @@ class _Metrics:
 
 def evaluate_observations(
     observations: Iterable[VideoObservation],
-    gallery: CowIdentityGallery,
+    gallery: IdentityGallery,
     *,
     sample_counts: list[int],
     track_max_age: int,
@@ -205,7 +205,7 @@ def video_observations(
     video: Path,
     annotations: Path,
     localize,
-    encoder: CowIdentityEncoder,
+    encoder: MiewIdEncoder,
     *,
     start_frame: int,
     end_frame: int | None,
@@ -279,6 +279,7 @@ def segment_candidates(
     boxes: list[list[int]],
     scores: list[float],
     *,
+    label: str,
     device: str = "auto",
 ) -> list[IdentityCandidate]:
     if not boxes:
@@ -307,7 +308,7 @@ def segment_candidates(
                 (frame.shape[1], frame.shape[0]),
                 interpolation=cv2.INTER_NEAREST,
             ).astype(bool)
-        candidate = masked_candidate(frame, mask, score, background)
+        candidate = masked_candidate(frame, mask, label, score, background)
         if candidate is not None:
             candidates.append(candidate)
     return candidates
@@ -315,7 +316,7 @@ def segment_candidates(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Benchmark the complete DazzleCow video identity pipeline"
+        description="Benchmark the complete video identity pipeline"
     )
     parser.add_argument("--video", type=Path, required=True)
     parser.add_argument("--annotations", type=Path, required=True)
@@ -327,6 +328,7 @@ def main() -> None:
         default="yolo",
     )
     parser.add_argument("--segment-model", default="yolo26m-seg.pt")
+    parser.add_argument("--label", required=True)
     parser.add_argument("--sam-model", default="sam2.1_l.pt")
     parser.add_argument("--confidence", type=float, default=0.1)
     parser.add_argument("--min-area-ratio", type=float, default=0.005)
@@ -348,24 +350,25 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO)
 
     settings = LocalizerSettings(
-        arguments.confidence,
-        arguments.min_area_ratio,
-        arguments.max_area_ratio,
-        arguments.margin,
+        label=arguments.label,
+        confidence=arguments.confidence,
+        min_area_ratio=arguments.min_area_ratio,
+        max_area_ratio=arguments.max_area_ratio,
+        margin=arguments.margin,
     )
     if arguments.localizer == "yolo":
         yolo = YoloConfig(
             model=arguments.segment_model,
             task="segment",
             tracking=True,
-            confidence={"cow": arguments.confidence},
+            confidence={arguments.label: arguments.confidence},
             imgsz=arguments.imgsz,
             iou=arguments.nms_iou,
             tracker="bytetrack.yaml",
         )
         candidate_source = ModelIdentityCandidateSource(
             YoloRunner(yolo, ["video"], build_yolo_model(yolo, OnnxConfig(), 1)),
-            DazzleCowLocalizer(settings),
+            SegmentationLocalizer(settings),
             reuse_for_detection=False,
         )
 
@@ -385,6 +388,7 @@ def main() -> None:
                 frame,
                 [list(item.box) for item in truth],
                 [1.0] * len(truth),
+                label=arguments.label,
                 device=arguments.device,
             )
             candidates = [
@@ -402,10 +406,10 @@ def main() -> None:
             ]
             return candidates
 
-    encoder = CowIdentityEncoder()
+    encoder = MiewIdEncoder()
     with TrackletStore(arguments.database) as store:
         embeddings, keys, labels = store.gallery_data()
-    gallery = CowIdentityGallery(
+    gallery = IdentityGallery(
         embeddings,
         keys,
         labels,
@@ -436,7 +440,7 @@ def main() -> None:
             ground_truth_iou=arguments.ground_truth_iou,
         ),
     }
-    report["settings"]["model"] = IDENTITY_MODEL
+    report["settings"]["model"] = MIEWID_MODEL
     arguments.output.parent.mkdir(parents=True, exist_ok=True)
     arguments.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     print(json.dumps(report["metrics"], indent=2, sort_keys=True))

@@ -11,7 +11,7 @@ import {
 } from '../src/lib/server/identity-store.ts';
 
 function databaseFixture() {
-	const directory = mkdtempSync(path.join(tmpdir(), 'cow-id-store-'));
+	const directory = mkdtempSync(path.join(tmpdir(), 'identity-store-'));
 	const database = new DatabaseSync(path.join(directory, 'identities.sqlite'));
 	database.exec(`
 		PRAGMA foreign_keys = ON;
@@ -23,10 +23,10 @@ function databaseFixture() {
 		);
 		CREATE TABLE control (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 		INSERT INTO control VALUES ('revision', '0');
-		INSERT INTO identities VALUES ('cow-0001', NULL), ('cow-0002', NULL);
+		INSERT INTO identities VALUES ('identity-0001', NULL), ('identity-0002', NULL);
 		INSERT INTO tracklets VALUES ('track-1'), ('track-2'), ('track-3');
 		INSERT INTO identity_tracklets VALUES
-			('track-1', 'cow-0001'), ('track-2', 'cow-0001'), ('track-3', 'cow-0002');
+			('track-1', 'identity-0001'), ('track-2', 'identity-0001'), ('track-3', 'identity-0002');
 	`);
 	return {
 		database,
@@ -40,21 +40,21 @@ function databaseFixture() {
 test('splits a tracklet and merges it into another identity', () => {
 	const fixture = databaseFixture();
 	try {
-		const created = splitTracklet(fixture.database, 'cow-0001', 'track-2');
-		assert.equal(created, 'cow-0003');
+		const created = splitTracklet(fixture.database, 'identity-0001', 'track-2');
+		assert.equal(created, 'identity-0003');
 		assert.equal(
 			fixture.database
 				.prepare('SELECT identity FROM identity_tracklets WHERE tracklet_id = ?')
 				.get('track-2').identity,
-			'cow-0003'
+			'identity-0003'
 		);
 
-		mergeIdentities(fixture.database, 'cow-0003', 'cow-0002');
+		mergeIdentities(fixture.database, 'identity-0003', 'identity-0002');
 		assert.equal(
 			fixture.database
 				.prepare('SELECT identity FROM identity_tracklets WHERE tracklet_id = ?')
 				.get('track-2').identity,
-			'cow-0002'
+			'identity-0002'
 		);
 		assert.equal(
 			fixture.database.prepare("SELECT value FROM control WHERE key = 'revision'").get().value,
@@ -69,11 +69,11 @@ test('keeps both identities when conflicting animal numbers prevent a merge', ()
 	const fixture = databaseFixture();
 	try {
 		fixture.database.exec(
-			"UPDATE identities SET animal_number = 'NL-1' WHERE identity = 'cow-0001';" +
-				"UPDATE identities SET animal_number = 'NL-2' WHERE identity = 'cow-0002';"
+			"UPDATE identities SET animal_number = 'NL-1' WHERE identity = 'identity-0001';" +
+				"UPDATE identities SET animal_number = 'NL-2' WHERE identity = 'identity-0002';"
 		);
 		assert.throws(
-			() => mergeIdentities(fixture.database, 'cow-0001', 'cow-0002'),
+			() => mergeIdentities(fixture.database, 'identity-0001', 'identity-0002'),
 			/Remove one of the animal numbers/
 		);
 		assert.equal(

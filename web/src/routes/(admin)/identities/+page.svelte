@@ -5,27 +5,27 @@
 	import * as Select from '$lib/components/ui/select';
 	import * as Table from '$lib/components/ui/table';
 	import {
-		finalizeCowIdentities,
-		getCowIdentities,
-		getCowIdentityTracklets,
-		mergeCowIdentities,
-		splitCowTracklet,
-		setCowAnimalNumber
+		finalizeIdentities,
+		getIdentities,
+		getIdentityTracklets,
+		mergeIdentity as mergeIdentityCommand,
+		setAnimalNumber,
+		splitIdentityTracklet
 	} from '$lib/remote/identity.remote';
-	import type { CowTracklet } from '$lib/remote/identity.remote';
+	import type { IdentityTracklet } from '$lib/remote/identity.remote';
 	import CheckCheckIcon from '@lucide/svelte/icons/check-check';
 	import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
 	import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
 	import MergeIcon from '@lucide/svelte/icons/merge';
 	import ScissorsIcon from '@lucide/svelte/icons/scissors';
 
-	const identitiesQuery = getCowIdentities();
+	const identitiesQuery = getIdentities();
 	const databases = $derived(await identitiesQuery);
 	let pending = $state<string | null>(null);
 	let errorMessage = $state<string | null>(null);
 	let expanded = $state<string | null>(null);
 	let loadingTracklets = $state<string | null>(null);
-	let tracklets = $state<Record<string, CowTracklet[]>>({});
+	let tracklets = $state<Record<string, IdentityTracklet[]>>({});
 	let mergeTargets = $state<Record<string, string>>({});
 
 	function identityKey(database: string, identity: string) {
@@ -36,7 +36,7 @@
 		const key = identityKey(database, identity);
 		loadingTracklets = key;
 		try {
-			const query = getCowIdentityTracklets({ database, identity });
+			const query = getIdentityTracklets({ database, identity });
 			if (refresh) await query.refresh();
 			tracklets[key] = await query;
 		} finally {
@@ -58,7 +58,7 @@
 		pending = `finalize:${database}`;
 		errorMessage = null;
 		try {
-			await finalizeCowIdentities({ database }).updates(identitiesQuery);
+			await finalizeIdentities({ database }).updates(identitiesQuery);
 		} catch (error) {
 			errorMessage = error instanceof Error ? error.message : 'Could not finalize enrollment.';
 		} finally {
@@ -71,7 +71,7 @@
 		pending = key;
 		errorMessage = null;
 		try {
-			await setCowAnimalNumber({ database, identity, animalNumber }).updates(identitiesQuery);
+			await setAnimalNumber({ database, identity, animalNumber }).updates(identitiesQuery);
 		} catch (error) {
 			errorMessage = error instanceof Error ? error.message : 'Could not save animal number.';
 		} finally {
@@ -87,7 +87,7 @@
 		pending = `merge:${database}:${source}`;
 		errorMessage = null;
 		try {
-			await mergeCowIdentities({ database, source, target }).updates(identitiesQuery);
+			await mergeIdentityCommand({ database, source, target }).updates(identitiesQuery);
 			expanded = null;
 			delete tracklets[identityKey(database, source)];
 			delete mergeTargets[identity];
@@ -104,7 +104,7 @@
 		pending = key;
 		errorMessage = null;
 		try {
-			await splitCowTracklet({ database, identity, tracklet }).updates(identitiesQuery);
+			await splitIdentityTracklet({ database, identity, tracklet }).updates(identitiesQuery);
 			await loadTracklets(database, identity, true);
 		} catch (error) {
 			errorMessage = error instanceof Error ? error.message : 'Could not split tracklet.';
@@ -122,8 +122,8 @@
 
 <section class="space-y-6">
 	<header class="space-y-1">
-		<h1 class="text-2xl font-semibold tracking-tight">Cattle identities</h1>
-		<p class="text-sm text-muted-foreground">Review scanned cattle and assign animal numbers.</p>
+		<h1 class="text-2xl font-semibold tracking-tight">Identities</h1>
+		<p class="text-sm text-muted-foreground">Review scanned animals and assign animal numbers.</p>
 	</header>
 
 	{#if errorMessage}
@@ -131,7 +131,7 @@
 	{/if}
 
 	{#if databases.length === 0}
-		<p class="text-sm text-muted-foreground">No cow identity enrollment database is configured.</p>
+		<p class="text-sm text-muted-foreground">No identity enrollment database is configured.</p>
 	{:else}
 		{#each databases as database (database.database)}
 			<section class="space-y-3">
@@ -323,7 +323,7 @@
 						</Table.Root>
 					</div>
 				{:else if database.tracklets === 0}
-					<p class="text-sm text-muted-foreground">Waiting for cattle tracklets.</p>
+					<p class="text-sm text-muted-foreground">Waiting for identity tracklets.</p>
 				{/if}
 			</section>
 		{/each}

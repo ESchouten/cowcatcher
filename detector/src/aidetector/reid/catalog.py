@@ -1,12 +1,12 @@
 import logging
 from dataclasses import dataclass
 
-from aidetector.dazzlecow.enrollment import (
+from aidetector.reid.enrollment import (
     finalize_enrollment,
     finalize_pending_enrollment,
 )
-from aidetector.dazzlecow.gallery import CowIdentityGallery
-from aidetector.dazzlecow.tracklet_store import TrackletStore
+from aidetector.reid.gallery import IdentityGallery
+from aidetector.reid.store import TrackletStore
 from aidetector.domain.identity import IdentityMatch, TrackletSnapshot
 from aidetector.pipeline.identity_provider import SamplingDecision
 
@@ -25,25 +25,25 @@ class CatalogPolicy:
     enrollment_identity_count: int | None = None
 
 
-class CowIdentityCatalog:
+class SqliteIdentityCatalog:
     def __init__(self, store: TrackletStore, policy: CatalogPolicy):
         self.store = store
         self.policy = policy
-        self.gallery: CowIdentityGallery | None = None
+        self.gallery: IdentityGallery | None = None
         self._revision = -1
 
-    def initialize(self, model: str, dimension: int) -> CowIdentityGallery | None:
+    def initialize(self, model: str, dimension: int) -> IdentityGallery | None:
         self.store.ensure_embedding_model(model, dimension)
         return self.sync()
 
-    def sync(self) -> CowIdentityGallery | None:
+    def sync(self) -> IdentityGallery | None:
         self._finalize_if_requested()
         revision = self.store.revision()
         if revision == self._revision or not self.store.is_finalized():
             return self.gallery
 
         embeddings, keys, labels = self.store.gallery_data()
-        self.gallery = CowIdentityGallery(
+        self.gallery = IdentityGallery(
             embeddings,
             keys,
             labels,
@@ -65,7 +65,7 @@ class CowIdentityCatalog:
                     max_samples=MAX_LEARNED_SAMPLES_PER_IDENTITY,
                 )
             except ValueError as error:
-                logger.warning("Could not update cow identity: %s", error)
+                logger.warning("Could not update identity: %s", error)
                 return SamplingDecision.CONTINUE
             return SamplingDecision.STOP
 
@@ -115,7 +115,7 @@ class CowIdentityCatalog:
                     self.store,
                     identity_count=self.policy.enrollment_identity_count,
                 )
-            logger.info("Finalized cow identity enrollment: %s", self.store.path)
+            logger.info("Finalized identity enrollment: %s", self.store.path)
         except ValueError as error:
             self.store.fail_finalize(str(error))
-            logger.error("Could not finalize cow identity enrollment: %s", error)
+            logger.error("Could not finalize identity enrollment: %s", error)

@@ -5,19 +5,19 @@ IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
 
 @dataclass(frozen=True)
-class CowImage:
+class DatasetImage:
     path: Path
     identity: str
     timestamp: str | None = None
     group: str | None = None
 
 
-def discover_public_dataset(specification: str) -> list[CowImage]:
+def discover_public_dataset(specification: str) -> list[DatasetImage]:
     try:
         dataset_type, raw_root = specification.split("=", 1)
     except ValueError as error:
         raise ValueError(
-            "Dataset must be TYPE=PATH, for example multicamcows2024=/data/cows"
+            "Dataset must be TYPE=PATH, for example multicamcows2024=/data/images"
         ) from error
 
     root = Path(raw_root).expanduser().resolve()
@@ -32,7 +32,7 @@ def discover_public_dataset(specification: str) -> list[CowImage]:
         identity = _identity_from_path(dataset_type, relative)
         if identity is not None:
             samples.append(
-                CowImage(
+                DatasetImage(
                     path,
                     f"{dataset_type}:{identity}",
                     _timestamp_from_path(dataset_type, relative),
@@ -50,7 +50,7 @@ def _identity_from_path(dataset_type: str, relative: Path) -> str | None:
         return next((part for part in parts[:-1] if part.isdigit()), None)
     if dataset_type == "identity":
         return parts[0] if len(parts) >= 2 else None
-    raise ValueError(f"Unknown public cow dataset type: {dataset_type}")
+    raise ValueError(f"Unknown identity dataset type: {dataset_type}")
 
 
 def _timestamp_from_path(dataset_type: str, relative: Path) -> str:

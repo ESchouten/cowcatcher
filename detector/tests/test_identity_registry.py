@@ -126,7 +126,7 @@ def test_registry_accepts_concurrent_detector_updates():
                         30,
                         30,
                         track_id=1,
-                        identities=(IdentityResult(f"cow-{index}", 0.9),),
+                        identities=(IdentityResult(f"identity-{index}", 0.9),),
                     )
                 ],
             ),
@@ -140,7 +140,7 @@ def test_registry_accepts_concurrent_detector_updates():
         observation(100, 100, [DetectedObject(0, 0, 50, 50)]),
     )
     assert {identity.identity for identity in unique_identities(event.objects)} == {
-        f"cow-{index}" for index in range(10)
+        f"identity-{index}" for index in range(10)
     }
 
 
@@ -162,7 +162,7 @@ def test_identity_enricher_reuses_primary_tracking_result():
                 30,
                 30,
                 track_id=7,
-                identities=(IdentityResult("cow-0001", 0.93),),
+                identities=(IdentityResult("identity-0001", 0.93),),
             )
             return [
                 IdentityBatch(
@@ -190,7 +190,7 @@ def test_identity_enricher_reuses_primary_tracking_result():
 
     assert result.model_results == (tracked,)
     assert result.observations[0][1].objects[0].identities == (
-        IdentityResult("cow-0001", 0.93),
+        IdentityResult("identity-0001", 0.93),
     )
 
 

@@ -16,6 +16,7 @@
         "imgsz": 640
     },
     "identity": {
+        "label": "cow",
         "database": "identities/cows.sqlite",
         "track_samples": 5
     },

@@ -4,7 +4,7 @@ from aidetector.domain.vectors import normalize_rows, normalize_vector
 from numpy import ndarray
 
 
-class CowIdentityGallery:
+class IdentityGallery:
     def __init__(
         self,
         embeddings: ndarray,
@@ -18,13 +18,11 @@ class CowIdentityGallery:
         self.keys = np.asarray(keys, dtype=str)
         self.labels = np.asarray(labels, dtype=str)
         if self.keys.ndim != 1 or self.labels.ndim != 1:
-            raise ValueError("Cow identity keys and labels must be 1D arrays")
+            raise ValueError("Identity keys and labels must be 1D arrays")
         if len(self.embeddings) != len(self.keys) or len(self.keys) != len(self.labels):
-            raise ValueError(
-                "Cow identity embeddings, keys, and labels differ in length"
-            )
+            raise ValueError("Identity embeddings, keys, and labels differ in length")
         if len(self.keys) == 0:
-            raise ValueError("Cow identity database has no assigned tracklets")
+            raise ValueError("Identity database has no assigned tracklets")
         self.identity_keys = np.unique(self.keys)
         self.identity_labels = {
             str(key): str(self.labels[np.flatnonzero(self.keys == key)[0]])
@@ -43,7 +41,7 @@ class CowIdentityGallery:
         embedding = np.asarray(embedding, dtype=np.float32)
         if embedding.ndim != 1 or embedding.shape[0] != self.embeddings.shape[1]:
             raise ValueError(
-                "Cow identity embedding dimension does not match the database "
+                "Identity embedding dimension does not match the database "
                 f"({embedding.shape} != ({self.embeddings.shape[1]},))"
             )
         similarities = self.embeddings @ normalize_vector(embedding)

@@ -10,13 +10,13 @@ from numpy import ndarray
 MIEWID_REPOSITORY = "james-burgess/miewid"
 MIEWID_REVISION = "8ef0f5c426dd089bccc396b7cf07bf9a8fed5140"
 MIEWID_FILENAME = "miewid.onnx"
-IDENTITY_MODEL = f"{MIEWID_REPOSITORY}@{MIEWID_REVISION}"
+MIEWID_MODEL = f"{MIEWID_REPOSITORY}@{MIEWID_REVISION}"
 IMAGE_SIZE = 440
 MEAN = np.asarray([0.485, 0.456, 0.406], dtype=np.float32)
 STD = np.asarray([0.229, 0.224, 0.225], dtype=np.float32)
 
 
-class CowIdentityEncoder:
+class MiewIdEncoder:
     def __init__(self, session: Any | None = None):
         if session is None:
             import onnxruntime as ort

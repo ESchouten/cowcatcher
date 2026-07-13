@@ -6,7 +6,7 @@ Detection works in two stages:
 1. **YOLO** — a fast AI model that scans every frame looking for objects.
 2. **VLM** *(optional)* — a smarter AI (like Gemini or GPT-5) that double-checks the detection by looking at the footage and answering a question you define, e.g. *"Is there really a cow mounting another cow?"*. This dramatically reduces false alerts.
 
-For individual Holstein-Friesian recognition, a normal YOLO detector can optionally be enriched with cow identities. Segmented cows are encoded with the MIT-licensed MiewID model and matched against identities stored in SQLite.
+For individual animal recognition, a normal YOLO detector can optionally be enriched with identities. A configured YOLO segmentation label is encoded with the MIT-licensed MiewID model and matched against identities stored in SQLite. The current model has been evaluated for Holstein-Friesian cattle; the pipeline itself is not tied to the `cow` label.
 
 Confirmed detections can be sent to **Telegram**, saved to **disk**, or posted to a **webhook**.
 
@@ -83,7 +83,7 @@ domain <- pipeline <- adapters <- application
 - `adapters/` contains Ultralytics, video sources, VLM validation, HTTP/SSE, Telegram, webhook, and disk implementations.
 - `application.py` is the composition root. It is the only module that translates configuration objects into runtime policies and concrete adapters.
 - `media/` renders and caches event artifacts. Equal artifact requests within one event are encoded only once.
-- Generic identity candidates, track aggregation, registry sharing, and enrichment live in `domain/` and `pipeline/`. `dazzlecow/` supplies the cow-specific MiewID, enrollment, and SQLite implementations.
+- Generic identity candidates, track aggregation, registry sharing, and enrichment live in `domain/` and `pipeline/`. `reid/` supplies segmentation, MiewID, enrollment, and SQLite implementations. Executable evaluation tooling lives separately in `benchmarks/reid/`.
 
 Live observations and completed events are sent through the same generic `Sink.send()` contract. Validation and every event sink have small bounded queues. When an external service falls behind, only its oldest pending event is replaced so inference continues. `tests/test_architecture.py` enforces the dependency direction.
 
@@ -171,11 +171,11 @@ This is the fast first-pass AI that scans every frame. Without a YOLO model, the
 
 ---
 
-### `identity` — Individual cow recognition
+### `identity` — Individual recognition
 
-Cow identity is an optional enrichment of a normal YOLO detector. MiewID converts segmented cows into normalized embeddings. Five observations from the same YOLO track are averaged, then compared with the best stored view of each identity. By default, an identity is returned only when cosine similarity is at least `0.68` and the lead over the second-best identity is at least `0.05`; ambiguous tracks remain unknown. The pinned 195 MB ONNX model is downloaded from Hugging Face on first use.
+Identity is an optional enrichment of a normal YOLO detector. MiewID converts segmented animals into normalized embeddings. Five observations from the same YOLO track are averaged, then compared with the best stored view of each identity. By default, an identity is returned only when cosine similarity is at least `0.68` and the lead over the second-best identity is at least `0.05`; ambiguous tracks remain unknown. The pinned 195 MB ONNX model is downloaded from Hugging Face on first use.
 
-When the primary detector already tracks a `cow` class with segmentation masks, those results are reused. For detection-only models such as CowCatcher, the identity pipeline runs `yolo26m-seg.pt` on the same frame and attaches every identified cow inside the event box to detections such as `mounting`.
+When the primary detector already tracks the configured identity `label` with segmentation masks, those results are reused. For detection-only models such as CowCatcher, the identity pipeline runs `yolo26m-seg.pt` on the same frame and attaches identified objects inside the event box to detections such as `mounting`.
 
 ```json
 {
@@ -184,6 +184,7 @@ When the primary detector already tracks a `cow` class with segmentation masks, 
     "confidence": 0.8
   },
   "identity": {
+    "label": "cow",
     "segment_model": "yolo26m-seg.pt",
     "database": "identities/cows.sqlite"
   }
@@ -205,6 +206,7 @@ Every animal starts without an identity. `identity_count` is therefore not a lis
     "imgsz": 640
   },
   "identity": {
+    "label": "cow",
     "database": "identities/cows.sqlite",
     "enrollment": {
       "identity_count": 46
@@ -223,11 +225,11 @@ After enrollment is finalized, reliable matches keep improving existing identiti
 
 Unknown tracks collected after finalization appear as pending evidence in the web app. Finishing another scan clusters only this pending evidence. A mature cluster is first compared conservatively with the existing gallery: confident matches add evidence to that identity, while unmatched clusters become new identities without changing existing assignments or animal numbers. A cluster needs evidence from at least three tracks; immature clusters remain pending.
 
-All detector pipelines in the same application share a short-lived in-memory identity register. An identity-enabled detector publishes normalized cow locations keyed by source, detector, and YOLO track id. Other detectors reading the same source automatically attach those identities by location, so an event detector such as CowCatcher does not need to run a second identity pipeline. Entries expire after five seconds and are never persisted as identity evidence.
+All detector pipelines in the same application share a short-lived in-memory identity register. An identity-enabled detector publishes normalized object locations keyed by source, detector, and YOLO track id. Other detectors reading the same source automatically attach those identities by location, so an event detector such as CowCatcher does not need to run a second identity pipeline. Entries expire after five seconds and are never persisted as identity evidence.
 
 Install the optional identity dependencies with `uv sync --extra default --extra identity`.
 
-For benchmark commands, also install `--extra identity-benchmark`. Use `benchmark-cow-identity-video` for annotated end-to-end localization, tracking, and identity regression tests. `benchmark-cow-enrollment` evaluates clustering against prepared public identity crops. Both use the same pinned MiewID ONNX model as the application.
+For benchmark commands, also install `--extra identity-benchmark`. Use `benchmark-reid-video` for annotated end-to-end localization, tracking, and identity regression tests. `benchmark-reid-enrollment` evaluates clustering against prepared public identity crops. Both use the same pinned MiewID ONNX model as the application. Manage enrollment databases with `identity-enrollment`.
 
 ---
 

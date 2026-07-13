@@ -4,8 +4,19 @@ from datetime import datetime
 import numpy as np
 import pytest
 
-from aidetector.dazzlecow.datasets import discover_public_dataset
-from aidetector.dazzlecow.enrollment import (
+from aidetector.benchmarks.reid.datasets import discover_public_dataset
+from aidetector.benchmarks.reid.enrollment import (
+    LabeledTrack,
+    camera_disjoint_identity_metrics,
+    production_open_enrollment_metrics,
+)
+from aidetector.benchmarks.reid.video import (
+    GroundTruth,
+    VideoObservation,
+    evaluate_observations,
+)
+from aidetector.reid.catalog import CatalogPolicy, SqliteIdentityCatalog
+from aidetector.reid.enrollment import (
     EnrollmentTrack,
     cluster_known_count,
     cluster_tracklets,
@@ -13,26 +24,15 @@ from aidetector.dazzlecow.enrollment import (
     finalize_enrollment,
     finalize_pending_enrollment,
 )
-from aidetector.dazzlecow.catalog import CatalogPolicy, CowIdentityCatalog
-from aidetector.dazzlecow.gallery import CowIdentityGallery
-from aidetector.dazzlecow.localizer import (
+from aidetector.reid.gallery import IdentityGallery
+from aidetector.reid.miewid import MiewIdEncoder, _preprocess
+from aidetector.reid.segmentation import (
     LocalizerSettings,
     box_allowed,
     candidates_from_result,
     masked_candidate,
 )
-from aidetector.dazzlecow.model import CowIdentityEncoder, _preprocess
-from aidetector.dazzlecow.enrollment_benchmark import (
-    LabeledTrack,
-    camera_disjoint_identity_metrics,
-    production_open_enrollment_metrics,
-)
-from aidetector.dazzlecow.tracklet_store import TrackletStore
-from aidetector.dazzlecow.video_benchmark import (
-    GroundTruth,
-    VideoObservation,
-    evaluate_observations,
-)
+from aidetector.reid.store import TrackletStore
 from aidetector.domain.detections import DetectedObject as Crop
 from aidetector.domain.frames import Frame
 from aidetector.domain.identity import (
@@ -126,7 +126,7 @@ def test_miewid_encoder_normalizes_onnx_embeddings():
             inputs.append((outputs, values))
             return [np.asarray([[3, 4]], dtype=np.float32)]
 
-    encoder = CowIdentityEncoder(Session())
+    encoder = MiewIdEncoder(Session())
 
     result = encoder.embed([np.zeros((10, 20, 3), dtype=np.uint8)])
 
@@ -149,7 +149,7 @@ def test_masked_candidate_replaces_background_and_crops_mask():
     mask = np.zeros((4, 4), dtype=bool)
     mask[1:3, 1:3] = True
 
-    candidate = masked_candidate(frame, mask, 0.9)
+    candidate = masked_candidate(frame, mask, "cow", 0.9)
 
     assert candidate is not None
     assert candidate.detection == Crop(1, 1, 3, 3, label="cow", confidence=0.9)
@@ -167,7 +167,7 @@ def test_candidates_from_result_keeps_cows_and_track_ids_only():
         [cow_mask, horse_mask],
         {19: "cow", 17: "horse"},
     )
-    settings = LocalizerSettings(0.1, 0, 1, 0)
+    settings = LocalizerSettings("cow", 0.1, 0, 1, 0)
 
     candidates = candidates_from_result(result, frame, settings)
 
@@ -184,14 +184,14 @@ def test_candidates_from_result_applies_identity_confidence():
     candidates = candidates_from_result(
         result,
         frame,
-        LocalizerSettings(0.5, 0, 1, 0),
+        LocalizerSettings("cow", 0.5, 0, 1, 0),
     )
 
     assert candidates == []
 
 
 def test_gallery_matches_best_sample_per_identity():
-    gallery = CowIdentityGallery(
+    gallery = IdentityGallery(
         np.array([[1, 0], [0.9, 0.1], [0, 1]], dtype=np.float32),
         ["001", "001", "002"],
         ["NL-123", "NL-123", "NL-456"],
@@ -206,7 +206,7 @@ def test_gallery_matches_best_sample_per_identity():
 
 
 def test_gallery_is_not_biased_toward_identities_with_more_samples():
-    gallery = CowIdentityGallery(
+    gallery = IdentityGallery(
         np.array(
             [[0.8, 0.6], [0.8, -0.6], [0.9, np.sqrt(0.19)]],
             dtype=np.float32,
@@ -226,7 +226,7 @@ def test_gallery_is_not_biased_toward_identities_with_more_samples():
 
 
 def test_gallery_rejects_low_or_ambiguous_matches():
-    gallery = CowIdentityGallery(
+    gallery = IdentityGallery(
         np.array([[1, 0], [0.99, 0.01]], dtype=np.float32),
         ["001", "002"],
         ["001", "002"],
@@ -283,7 +283,7 @@ def test_track_identity_aggregates_and_caches_embeddings():
     class Gallery:
         def match(self, embedding):
             calls.append(embedding)
-            return IdentityMatch("cow-001", "NL-123", 0.9, 0.2)
+            return IdentityMatch("identity-001", "NL-123", 0.9, 0.2)
 
     tracks = TrackIdentityAggregator(Gallery(), samples=3, max_age=10)
     candidates = []
@@ -309,7 +309,7 @@ def test_track_identity_aggregates_and_caches_embeddings():
 def test_track_identity_rechecks_each_complete_sample_window():
     matches = iter(
         (
-            IdentityMatch("cow-001", "NL-123", 0.9, 0.2),
+            IdentityMatch("identity-001", "NL-123", 0.9, 0.2),
             None,
         )
     )
@@ -337,12 +337,16 @@ def test_track_identity_rechecks_active_tracks_after_gallery_change():
     first = type(
         "Gallery",
         (),
-        {"match": lambda _self, _embedding: IdentityMatch("cow-1", "001", 0.9, 1)},
+        {"match": lambda _self, _embedding: IdentityMatch("identity-1", "001", 0.9, 1)},
     )()
     second = type(
         "Gallery",
         (),
-        {"match": lambda _self, _embedding: IdentityMatch("cow-1", "NL-123", 0.9, 1)},
+        {
+            "match": lambda _self, _embedding: IdentityMatch(
+                "identity-1", "NL-123", 0.9, 1
+            )
+        },
     )()
     tracks = TrackIdentityAggregator(first, samples=1, max_age=10)
     candidate = IdentityCandidate(Crop(0, 0, 10, 10, track_id=1), np.zeros((10, 10, 3)))
@@ -358,12 +362,16 @@ def test_track_identity_keeps_cached_match_until_the_next_sample_window():
     first = type(
         "Gallery",
         (),
-        {"match": lambda _self, _embedding: IdentityMatch("cow-1", "001", 0.9, 1)},
+        {"match": lambda _self, _embedding: IdentityMatch("identity-1", "001", 0.9, 1)},
     )()
     second = type(
         "Gallery",
         (),
-        {"match": lambda _self, _embedding: IdentityMatch("cow-1", "NL-123", 0.9, 1)},
+        {
+            "match": lambda _self, _embedding: IdentityMatch(
+                "identity-1", "NL-123", 0.9, 1
+            )
+        },
     )()
     tracks = TrackIdentityAggregator(first, samples=2, max_age=10)
     candidate = IdentityCandidate(Crop(0, 0, 10, 10, track_id=1), np.zeros((10, 10, 3)))
@@ -398,7 +406,11 @@ def test_track_identity_stores_at_most_one_online_sample_per_track():
     gallery = type(
         "Gallery",
         (),
-        {"match": lambda _self, _embedding: IdentityMatch("cow-1", "001", 0.95, 1)},
+        {
+            "match": lambda _self, _embedding: IdentityMatch(
+                "identity-1", "001", 0.95, 1
+            )
+        },
     )()
     tracks = TrackIdentityAggregator(gallery, samples=1, max_age=10)
     candidate = IdentityCandidate(Crop(0, 0, 10, 10, track_id=1), np.zeros((10, 10, 3)))
@@ -412,9 +424,9 @@ def test_track_identity_stores_at_most_one_online_sample_per_track():
 
 
 def test_catalog_learns_only_when_full_track_still_matches_same_identity():
-    gallery = CowIdentityGallery(
+    gallery = IdentityGallery(
         np.asarray([[1, 0], [0, 1]], dtype=np.float32),
-        ["cow-1", "cow-2"],
+        ["identity-1", "identity-2"],
         ["001", "002"],
         match_threshold=0.75,
     )
@@ -430,7 +442,7 @@ def test_catalog_learns_only_when_full_track_still_matches_same_identity():
             "update_pending": lambda _self, _snapshot: None,
         },
     )()
-    catalog = CowIdentityCatalog(
+    catalog = SqliteIdentityCatalog(
         store,
         CatalogPolicy(match_threshold=0.75, match_margin=0, track_samples=5),
     )
@@ -443,7 +455,7 @@ def test_catalog_learns_only_when_full_track_still_matches_same_identity():
         10,
         np.asarray([1, 0]),
         np.zeros((10, 10, 3)),
-        "cow-1",
+        "identity-1",
     )
 
     assert catalog.record(snapshot) is SamplingDecision.STOP
@@ -457,16 +469,16 @@ def test_catalog_learns_only_when_full_track_still_matches_same_identity():
         10,
         np.asarray([0, 1]),
         np.zeros((10, 10, 3)),
-        "cow-1",
+        "identity-1",
     )
     assert catalog.record(conflicting) is SamplingDecision.CONTINUE
     assert updated == [snapshot]
 
 
 def test_catalog_does_not_learn_from_the_first_sample_window():
-    gallery = CowIdentityGallery(
+    gallery = IdentityGallery(
         np.asarray([[1, 0]], dtype=np.float32),
-        ["cow-1"],
+        ["identity-1"],
         ["001"],
         match_threshold=0.75,
     )
@@ -482,7 +494,7 @@ def test_catalog_does_not_learn_from_the_first_sample_window():
             "update_pending": lambda _self, _snapshot: None,
         },
     )()
-    catalog = CowIdentityCatalog(
+    catalog = SqliteIdentityCatalog(
         store,
         CatalogPolicy(match_threshold=0.75, match_margin=0, track_samples=5),
     )
@@ -495,7 +507,7 @@ def test_catalog_does_not_learn_from_the_first_sample_window():
         5,
         np.asarray([1, 0]),
         np.zeros((10, 10, 3)),
-        "cow-1",
+        "identity-1",
     )
 
     assert catalog.record(snapshot) is SamplingDecision.CONTINUE
@@ -527,7 +539,7 @@ def test_pipeline_tracks_fallback_candidates_and_attaches_identity():
         (),
         {
             "match": lambda _self, _embedding: IdentityMatch(
-                "cow-001", "cow-001", 0.95, 1
+                "identity-001", "identity-001", 0.95, 1
             )
         },
     )()
@@ -550,7 +562,7 @@ def test_pipeline_tracks_fallback_candidates_and_attaches_identity():
     result = pipeline.process({"camera": [Frame(datetime(2026, 1, 1), frame)]})
 
     assert result[0].candidates[0].detection.identities == (
-        IdentityResult("cow-001", 0.95),
+        IdentityResult("identity-001", 0.95),
     )
 
 
@@ -639,7 +651,7 @@ def test_enrollment_known_count_and_ambiguous_clustering():
 
 def test_catalog_finalizes_enrollment_and_loads_gallery(tmp_path):
     store = TrackletStore(tmp_path / "cows.sqlite", session="scan")
-    catalog = CowIdentityCatalog(
+    catalog = SqliteIdentityCatalog(
         store,
         CatalogPolicy(
             match_threshold=0.75,
@@ -665,7 +677,7 @@ def test_catalog_finalizes_enrollment_and_loads_gallery(tmp_path):
     gallery = catalog.sync()
 
     assert gallery is not None
-    assert gallery.match(np.asarray([1, 0])).key == "cow-0001"
+    assert gallery.match(np.asarray([1, 0])).key == "identity-0001"
     assert catalog.sync() is gallery
     catalog.close()
 
@@ -842,7 +854,7 @@ def test_pending_enrollment_adds_identity_without_changing_existing_ones(tmp_pat
         )
         identities = store.identities()
 
-    assert set(added.values()) == {"cow-0003"}
+    assert set(added.values()) == {"identity-0003"}
     assert len(identities) == 3
     assert (
         next(item for item in identities if item["identity"] == first_identity)[
@@ -870,7 +882,7 @@ def test_pending_enrollment_reuses_a_confident_existing_identity(tmp_path):
         initial = finalize_enrollment(store, identity_count=2)
         first_identity = initial[next(iter(initial))]
         embeddings, keys, labels = store.gallery_data()
-        gallery = CowIdentityGallery(embeddings, keys, labels)
+        gallery = IdentityGallery(embeddings, keys, labels)
 
         for source, track_id, angle in zip(
             ("camera-2", "camera-3", "camera-4"),
@@ -981,7 +993,7 @@ def test_public_dataset_adapters(tmp_path):
 
 
 def test_video_benchmark_measures_identity_delay_per_track():
-    gallery = CowIdentityGallery(
+    gallery = IdentityGallery(
         np.asarray([[1, 0]], dtype=np.float32),
         ["001"],
         ["001"],

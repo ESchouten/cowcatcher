@@ -6,7 +6,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from aidetector.dazzlecow.enrollment import (
+from aidetector.reid.enrollment import (
     DEFAULT_ENROLLMENT_MARGIN,
     DEFAULT_ENROLLMENT_SIMILARITY,
     EnrollmentTrack,
@@ -15,9 +15,9 @@ from aidetector.dazzlecow.enrollment import (
     cluster_tracks,
     match_camera_tracks,
 )
-from aidetector.dazzlecow.gallery import CowIdentityGallery
-from aidetector.dazzlecow.datasets import discover_public_dataset
-from aidetector.dazzlecow.model import CowIdentityEncoder, IDENTITY_MODEL
+from aidetector.benchmarks.reid.datasets import discover_public_dataset
+from aidetector.reid.gallery import IdentityGallery
+from aidetector.reid.miewid import MIEWID_MODEL, MiewIdEncoder
 from aidetector.domain.vectors import normalize_vector
 from sklearn.cluster import KMeans
 from sklearn.metrics import roc_auc_score
@@ -62,7 +62,7 @@ def build_track_embeddings(
         indices = np.linspace(0, len(paths) - 1, count, dtype=int)
         selected.extend((group, paths[index]) for index in indices)
 
-    encoder = CowIdentityEncoder()
+    encoder = MiewIdEncoder()
     embeddings = defaultdict(list)
     for offset in range(0, len(selected), batch_size):
         batch = selected[offset : offset + batch_size]
@@ -254,7 +254,7 @@ def camera_disjoint_identity_metrics(
         if not gallery_tracks or not queries:
             continue
 
-        gallery = CowIdentityGallery(
+        gallery = IdentityGallery(
             np.asarray([track.track.embedding for track in gallery_tracks]),
             [track.identity for track in gallery_tracks],
             [track.identity for track in gallery_tracks],
@@ -427,7 +427,7 @@ def run_enrollment_benchmark(
     )
     output.mkdir(parents=True, exist_ok=True)
     report = {
-        "model": IDENTITY_MODEL,
+        "model": MIEWID_MODEL,
         "samples_per_track": samples_per_track,
         "fragments_per_sequence": fragments_per_sequence,
         "synchronized_frames": synchronized_frames,
@@ -514,7 +514,7 @@ def _calibration_grid(strategy: str) -> tuple[np.ndarray, np.ndarray]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Calibrate and evaluate automatic cow enrollment"
+        description="Calibrate and evaluate automatic identity enrollment"
     )
     parser.add_argument("--calibration", type=Path)
     parser.add_argument("--test", type=Path, required=True)

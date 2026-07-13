@@ -2,14 +2,15 @@ import re
 from dataclasses import dataclass, field
 
 import numpy as np
-from aidetector.dazzlecow.gallery import CowIdentityGallery
-from aidetector.dazzlecow.tracklet_store import StoredTracklet, TrackletStore
+from aidetector.reid.gallery import IdentityGallery
+from aidetector.reid.store import StoredTracklet, TrackletStore
 from aidetector.domain.vectors import normalize_rows, normalize_vector
 from numpy import ndarray
 from scipy.optimize import linear_sum_assignment
 
 DEFAULT_ENROLLMENT_SIMILARITY = 0.76
 DEFAULT_ENROLLMENT_MARGIN = 0.0
+IDENTITY_PREFIX = "identity"
 
 
 @dataclass(frozen=True)
@@ -24,7 +25,7 @@ def cluster_tracks(
     *,
     similarity_threshold: float,
     neighbors: int = 5,
-    identity_prefix: str = "cow",
+    identity_prefix: str = IDENTITY_PREFIX,
 ) -> dict[str, str]:
     if not tracks:
         return {}
@@ -102,7 +103,7 @@ def cluster_tracklets(
     *,
     similarity_threshold: float,
     margin_threshold: float = 0.0,
-    identity_prefix: str = "cow",
+    identity_prefix: str = IDENTITY_PREFIX,
 ) -> dict[str, str]:
     """Cluster fragmented tracks while preserving known cannot-link constraints."""
     if not tracks:
@@ -202,7 +203,7 @@ def cluster_known_count(
     attempts: int = 5000,
     max_iterations: int = 100,
     seed: int = 84000,
-    identity_prefix: str = "cow",
+    identity_prefix: str = IDENTITY_PREFIX,
 ) -> dict[str, str]:
     if not 1 <= identity_count <= len(tracks):
         raise ValueError("Identity count must be between one and the track count")
@@ -325,7 +326,7 @@ def match_camera_tracks(
     *,
     similarity_threshold: float | None = None,
     margin_threshold: float = 0.0,
-    identity_prefix: str = "cow",
+    identity_prefix: str = IDENTITY_PREFIX,
 ) -> dict[str, str]:
     if set(cameras) != {track.key for track in tracks}:
         raise ValueError("Every enrollment track must have exactly one camera")
@@ -438,7 +439,7 @@ def finalize_pending_enrollment(
     similarity_threshold: float = DEFAULT_ENROLLMENT_SIMILARITY,
     margin_threshold: float = DEFAULT_ENROLLMENT_MARGIN,
     create_after: int = 3,
-    gallery: CowIdentityGallery | None = None,
+    gallery: IdentityGallery | None = None,
     existing_match_threshold: float = 0.9,
     existing_match_margin: float = 0.2,
 ) -> dict[str, str]:
@@ -446,7 +447,7 @@ def finalize_pending_enrollment(
         raise ValueError("Pending identity maturity must be positive")
     if gallery is None:
         embeddings, keys, labels = store.gallery_data()
-        gallery = CowIdentityGallery(embeddings, keys, labels)
+        gallery = IdentityGallery(embeddings, keys, labels)
     stored = store.pending_tracklets()
     if not stored:
         raise ValueError("Identity database has no pending tracklets")
@@ -498,7 +499,7 @@ def finalize_pending_enrollment(
 
 def _match_existing_identity(
     tracklets: list[StoredTracklet],
-    gallery: CowIdentityGallery,
+    gallery: IdentityGallery,
     similarity_threshold: float,
     margin_threshold: float,
 ) -> str | None:
@@ -536,14 +537,14 @@ def _next_identity_ids(existing: list[str], count: int) -> list[str]:
         (
             int(match.group(1))
             for identity in existing
-            if (match := re.fullmatch(r"cow-(\d+)", identity))
+            if (match := re.fullmatch(rf"{IDENTITY_PREFIX}-(\d+)", identity))
         ),
         default=0,
     )
     identities = []
     while len(identities) < count:
         number += 1
-        identity = f"cow-{number:04d}"
+        identity = f"{IDENTITY_PREFIX}-{number:04d}"
         if identity not in used:
             identities.append(identity)
     return identities

@@ -56,14 +56,15 @@ class YoloConfig:
 
 
 @dataclass(config=STRICT_CONFIG, kw_only=True)
-class CowIdentityEnrollmentConfig:
+class IdentityEnrollmentConfig:
     identity_count: PositiveInt | None = None
 
 
 @dataclass(config=STRICT_CONFIG, kw_only=True)
-class CowIdentityConfig:
+class IdentityConfig:
     database: Path
-    enrollment: CowIdentityEnrollmentConfig | None = None
+    label: NonEmptyString
+    enrollment: IdentityEnrollmentConfig | None = None
     segment_model: NonEmptyString = "yolo26m-seg.pt"
     imgsz: PositiveInt = 640
     confidence: Probability = 0.1
@@ -78,7 +79,7 @@ class CowIdentityConfig:
 
     def __post_init__(self) -> None:
         if self.min_area_ratio > self.max_area_ratio:
-            raise ValueError("Cow identity minimum area exceeds maximum area")
+            raise ValueError("Identity minimum area exceeds maximum area")
 
 
 @dataclass(config=STRICT_CONFIG, kw_only=True)
@@ -175,13 +176,13 @@ class HealthcheckConfig(HttpConfig):
 class DetectorConfig:
     detection: DetectionConfig
     yolo: YoloConfig | None = None
-    identity: CowIdentityConfig | None = None
+    identity: IdentityConfig | None = None
     vlm: VLMConfig | list[VLMConfig] | None = None
     exporters: ExportersConfig | None = None
 
     def __post_init__(self) -> None:
         if self.identity is not None and self.yolo is None:
-            raise ValueError("Cow identity requires a YOLO detector")
+            raise ValueError("Identity enrichment requires a YOLO detector")
 
 
 @dataclass(config=STRICT_CONFIG, kw_only=True)

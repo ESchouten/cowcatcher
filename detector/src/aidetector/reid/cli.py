@@ -2,17 +2,17 @@ import argparse
 import json
 from pathlib import Path
 
-from aidetector.dazzlecow.enrollment import (
+from aidetector.reid.enrollment import (
     DEFAULT_ENROLLMENT_MARGIN,
     DEFAULT_ENROLLMENT_SIMILARITY,
     finalize_enrollment,
     finalize_pending_enrollment,
 )
-from aidetector.dazzlecow.tracklet_store import TrackletStore
+from aidetector.reid.store import TrackletStore
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Manage cow identity enrollment")
+    parser = argparse.ArgumentParser(description="Manage identity enrollment")
     parser.add_argument("--database", type=Path, required=True)
     commands = parser.add_subparsers(dest="command", required=True)
 

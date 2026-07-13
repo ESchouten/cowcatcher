@@ -22,7 +22,7 @@ function bumpRevision(database: DatabaseSync): void {
 }
 
 function nextIdentity(database: DatabaseSync, sourceIdentity: string): string {
-	const prefix = /^(.*)-(\d+)$/.exec(sourceIdentity)?.[1] ?? 'cow';
+	const prefix = /^(.*)-(\d+)$/.exec(sourceIdentity)?.[1] ?? 'identity';
 	const pattern = new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-(\\d+)$`);
 	const identities = database.prepare('SELECT identity FROM identities').all() as Array<{
 		identity: string;

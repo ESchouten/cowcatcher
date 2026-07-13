@@ -29,6 +29,7 @@ export type Imgsz = number;
 export type Iou = number;
 export type Tracker = string;
 export type Database = string;
+export type Label = string;
 export type IdentityCount = number | null;
 export type SegmentModel = string;
 export type Imgsz1 = number;
@@ -135,7 +136,7 @@ export interface Config {
 export interface DetectorConfig {
 	detection: DetectionConfig;
 	yolo?: YoloConfig | null;
-	identity?: CowIdentityConfig | null;
+	identity?: IdentityConfig | null;
 	vlm?: Vlm;
 	exporters?: ExportersConfig | null;
 }
@@ -159,9 +160,10 @@ export interface YoloConfig {
 	iou?: Iou;
 	tracker?: Tracker;
 }
-export interface CowIdentityConfig {
+export interface IdentityConfig {
 	database: Database;
-	enrollment?: CowIdentityEnrollmentConfig | null;
+	label: Label;
+	enrollment?: IdentityEnrollmentConfig | null;
 	segment_model?: SegmentModel;
 	imgsz?: Imgsz1;
 	confidence?: Confidence1;
@@ -174,7 +176,7 @@ export interface CowIdentityConfig {
 	track_samples?: TrackSamples;
 	track_max_age?: TrackMaxAge;
 }
-export interface CowIdentityEnrollmentConfig {
+export interface IdentityEnrollmentConfig {
 	identity_count?: IdentityCount;
 }
 export interface VLMConfig {

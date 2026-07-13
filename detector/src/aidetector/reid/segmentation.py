@@ -10,13 +10,14 @@ from numpy import ndarray
 
 @dataclass(frozen=True)
 class LocalizerSettings:
+    label: str
     confidence: float
     min_area_ratio: float
     max_area_ratio: float
     margin: float
 
 
-class DazzleCowLocalizer:
+class SegmentationLocalizer:
     def __init__(self, settings: LocalizerSettings):
         self.settings = settings
 
@@ -38,7 +39,7 @@ def candidates_from_result(
     candidates = []
     for box, raw_mask in zip(boxes, masks.data, strict=True):
         class_id = int(box.cls.item())
-        if result.names[class_id] != "cow":
+        if result.names[class_id] != settings.label:
             continue
         confidence = float(box.conf.item())
         if confidence < settings.confidence:
@@ -64,7 +65,13 @@ def candidates_from_result(
             background = (
                 frame.reshape(-1, frame.shape[2]).mean(axis=0).astype(frame.dtype)
             )
-        candidate = masked_candidate(frame, mask, confidence, background)
+        candidate = masked_candidate(
+            frame,
+            mask,
+            settings.label,
+            confidence,
+            background,
+        )
         if candidate is not None:
             candidates.append(
                 replace(
@@ -100,6 +107,7 @@ def box_allowed(
 def masked_candidate(
     frame: ndarray,
     mask: ndarray,
+    label: str,
     confidence: float,
     background: ndarray | None = None,
 ) -> IdentityCandidate | None:
@@ -119,7 +127,7 @@ def masked_candidate(
     masked[:] = background
     masked[crop_mask] = source[crop_mask]
     return IdentityCandidate(
-        DetectedObject(x1, y1, x2, y2, label="cow", confidence=confidence),
+        DetectedObject(x1, y1, x2, y2, label=label, confidence=confidence),
         masked,
     )
 

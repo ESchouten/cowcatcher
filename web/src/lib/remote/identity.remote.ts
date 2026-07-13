@@ -3,35 +3,35 @@ import * as v from 'valibot';
 import type { DatabaseSync } from 'node:sqlite';
 import { getIdentityDatabases, openIdentityDatabase } from '$lib/server/identity-databases';
 import {
-	mergeIdentities,
+	mergeIdentities as mergeStoredIdentities,
 	requestIdentityFinalization,
 	setIdentityAnimalNumber,
 	splitTracklet
 } from '$lib/server/identity-store';
 
-export interface CowIdentity {
+export interface IdentitySummary {
 	identity: string;
 	animalNumber: string | null;
 	tracklets: number;
 	preview: string | null;
 }
 
-export interface CowTracklet {
+export interface IdentityTracklet {
 	id: string;
 	source: string;
 	observations: number;
 	preview: string;
 }
 
-export interface CowIdentityDatabase {
+export interface IdentityDatabaseSummary {
 	database: string;
 	label: string;
 	tracklets: number;
 	pendingTracklets: number;
-	pending: CowTracklet[];
+	pending: IdentityTracklet[];
 	finalizeRequested: boolean;
 	finalizeError: string | null;
-	identities: CowIdentity[];
+	identities: IdentitySummary[];
 }
 
 function control(database: DatabaseSync, key: string): string | null {
@@ -41,7 +41,7 @@ function control(database: DatabaseSync, key: string): string | null {
 	return row?.value ?? null;
 }
 
-export const getCowIdentities = query(async (): Promise<CowIdentityDatabase[]> => {
+export const getIdentities = query(async (): Promise<IdentityDatabaseSummary[]> => {
 	const configured = await getIdentityDatabases();
 	return Promise.all(
 		configured.map(async ({ database, label }) => {
@@ -140,9 +140,9 @@ export const getCowIdentities = query(async (): Promise<CowIdentityDatabase[]> =
 	);
 });
 
-export const getCowIdentityTracklets = query(
+export const getIdentityTracklets = query(
 	v.object({ database: v.string(), identity: v.string() }),
-	async ({ database, identity }): Promise<CowTracklet[]> => {
+	async ({ database, identity }): Promise<IdentityTracklet[]> => {
 		const connection = await openIdentityDatabase(database);
 		try {
 			const rows = connection
@@ -173,7 +173,7 @@ export const getCowIdentityTracklets = query(
 
 const databaseInput = v.object({ database: v.string() });
 
-export const finalizeCowIdentities = command(databaseInput, async ({ database }) => {
+export const finalizeIdentities = command(databaseInput, async ({ database }) => {
 	const connection = await openIdentityDatabase(database);
 	try {
 		requestIdentityFinalization(connection);
@@ -182,7 +182,7 @@ export const finalizeCowIdentities = command(databaseInput, async ({ database })
 	}
 });
 
-export const setCowAnimalNumber = command(
+export const setAnimalNumber = command(
 	v.object({
 		database: v.string(),
 		identity: v.string(),
@@ -198,20 +198,20 @@ export const setCowAnimalNumber = command(
 	}
 );
 
-export const mergeCowIdentities = command(
+export const mergeIdentity = command(
 	v.object({ database: v.string(), source: v.string(), target: v.string() }),
 	async ({ database, source, target }) => {
 		if (source === target) throw new Error('Choose a different target identity');
 		const connection = await openIdentityDatabase(database);
 		try {
-			mergeIdentities(connection, source, target);
+			mergeStoredIdentities(connection, source, target);
 		} finally {
 			connection.close();
 		}
 	}
 );
 
-export const splitCowTracklet = command(
+export const splitIdentityTracklet = command(
 	v.object({ database: v.string(), identity: v.string(), tracklet: v.string() }),
 	async ({ database, identity, tracklet }) => {
 		const connection = await openIdentityDatabase(database);

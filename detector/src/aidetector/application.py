@@ -25,8 +25,8 @@ from aidetector.pipeline.processor import DetectionPipeline
 from aidetector.services.healthcheck import Healthcheck
 from aidetector.utils.config import (
     Config,
-    CowIdentityConfig,
     DetectorConfig,
+    IdentityConfig,
     OnnxConfig,
     YoloConfig,
     config_list,
@@ -122,7 +122,7 @@ def build_pipeline(
     identity_pipeline = None
     if config.identity is not None:
         assert config.yolo is not None and runner is not None
-        identity_pipeline = build_cow_identity(
+        identity_pipeline = build_identity_provider(
             config.identity,
             onnx,
             source.sources,
@@ -155,30 +155,37 @@ def build_pipeline(
     )
 
 
-def build_cow_identity(
-    config: CowIdentityConfig,
+def build_identity_provider(
+    config: IdentityConfig,
     onnx: OnnxConfig,
     sources: list[str],
     primary_config: YoloConfig,
     primary_runner: YoloRunner,
 ) -> IdentityProvider:
-    from aidetector.dazzlecow.catalog import CatalogPolicy, CowIdentityCatalog
-    from aidetector.dazzlecow.localizer import DazzleCowLocalizer, LocalizerSettings
-    from aidetector.dazzlecow.model import CowIdentityEncoder, IDENTITY_MODEL
-    from aidetector.dazzlecow.tracklet_store import TrackletStore
+    from aidetector.reid.catalog import CatalogPolicy, SqliteIdentityCatalog
+    from aidetector.reid.miewid import MIEWID_MODEL, MiewIdEncoder
+    from aidetector.reid.segmentation import (
+        LocalizerSettings,
+        SegmentationLocalizer,
+    )
+    from aidetector.reid.store import TrackletStore
 
     settings = LocalizerSettings(
+        label=config.label,
         confidence=config.confidence,
         min_area_ratio=config.min_area_ratio,
         max_area_ratio=config.max_area_ratio,
         margin=config.margin,
     )
     if config.enrollment is None and not config.database.is_file():
-        raise FileNotFoundError(f"Cow identity database not found: {config.database}")
+        raise FileNotFoundError(f"Identity database not found: {config.database}")
     reuse_primary = (
         primary_config.task == "segment"
         and primary_config.tracking
-        and any(name == "cow" for name, _ in primary_runner.class_confidences.values())
+        and any(
+            name == config.label
+            for name, _ in primary_runner.class_confidences.values()
+        )
     )
     if reuse_primary:
         identity_runner = primary_runner
@@ -187,7 +194,7 @@ def build_cow_identity(
             model=config.segment_model,
             task="segment",
             tracking=True,
-            confidence={"cow": config.confidence},
+            confidence={config.label: config.confidence},
             imgsz=config.imgsz,
             iou=config.nms_iou,
             tracker="bytetrack.yaml",
@@ -198,9 +205,9 @@ def build_cow_identity(
             build_yolo_model(identity_config, onnx, len(sources)),
         )
 
-    encoder = CowIdentityEncoder()
+    encoder = MiewIdEncoder()
     store = TrackletStore(config.database)
-    catalog = CowIdentityCatalog(
+    catalog = SqliteIdentityCatalog(
         store,
         CatalogPolicy(
             match_threshold=config.match_threshold,
@@ -214,11 +221,9 @@ def build_cow_identity(
         ),
     )
     try:
-        gallery = catalog.initialize(IDENTITY_MODEL, encoder.feature_dim)
+        gallery = catalog.initialize(MIEWID_MODEL, encoder.feature_dim)
         if config.enrollment is None and gallery is None:
-            raise ValueError(
-                f"Cow identity database is not finalized: {config.database}"
-            )
+            raise ValueError(f"Identity database is not finalized: {config.database}")
     except Exception:
         catalog.close()
         raise
@@ -226,7 +231,7 @@ def build_cow_identity(
     return TrackedIdentityProvider(
         candidates=ModelIdentityCandidateSource(
             identity_runner,
-            DazzleCowLocalizer(settings),
+            SegmentationLocalizer(settings),
             reuse_for_detection=reuse_primary,
         ),
         encoder=encoder,

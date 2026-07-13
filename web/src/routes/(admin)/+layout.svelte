@@ -30,7 +30,7 @@
 					icon: TVIcon
 				},
 				{
-					title: 'Cattle identities',
+					title: 'Identities',
 					url: '/identities',
 					icon: FingerprintIcon
 				}

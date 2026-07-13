@@ -43,7 +43,8 @@
 		exporters: { sse: [{}] } as { telegram?: TelegramConfig[]; sse?: SSEConfig[] }
 	};
 	const EMPTY_IDENTITY = {
-		database: 'identities/cows.sqlite',
+		label: 'cow',
+		database: 'identities/identities.sqlite',
 		segment_model: 'yolo26m-seg.pt',
 		enrollment: { identity_count: undefined as number | undefined },
 		imgsz: 640,
@@ -92,8 +93,6 @@
 	const setupMode = $derived(page.url.searchParams.get('setup') === '1');
 	const detectorPresets = $state(await getDetectorPresets());
 	const detectorSchema = $state(await getDetectorSchema());
-	const streams = $derived(await getStreams());
-	const telegrams = $derived(await getTelegrams());
 	const initialDetector = $derived(
 		mergeWithEmptyDetector(
 			isEditing ? (await getDetector({ label: originalLabel }))?.detector : undefined
@@ -106,6 +105,8 @@
 	let editorHasErrors = $state(false);
 	let preset = $state<string>('Custom');
 	let advanced = $state(false);
+	const streams = $derived(await getStreams());
+	const telegrams = $derived(await getTelegrams());
 	const activePreviewSources = $derived(
 		new Set(
 			streams
@@ -444,7 +445,7 @@
 		{/if}
 
 		<div class="mt-4 flex items-center justify-between">
-			<Label for="identity">Cow identity</Label>
+			<Label for="identity">Identity</Label>
 			<Switch id="identity" checked={!!detector.identity} onCheckedChange={setIdentityEnabled} />
 		</div>
 
@@ -458,10 +459,10 @@
 						onValueChange={setIdentityMode}
 					>
 						<Select.Trigger id="identity-mode" class="w-full">
-							{detector.identity.enrollment ? 'Scan cattle' : 'Use existing identities'}
+							{detector.identity.enrollment ? 'Scan animals' : 'Use existing identities'}
 						</Select.Trigger>
 						<Select.Content>
-							<Select.Item value="enrollment" label="Scan cattle" />
+							<Select.Item value="enrollment" label="Scan animals" />
 							<Select.Item value="database" label="Use existing identities" />
 						</Select.Content>
 					</Select.Root>
@@ -470,9 +471,13 @@
 					<Label for="identity-database">Identity database</Label>
 					<Input id="identity-database" required bind:value={detector.identity.database} />
 				</div>
+				<div class="flex flex-col gap-2">
+					<Label for="identity-label">Segmentation label</Label>
+					<Input id="identity-label" required bind:value={detector.identity.label} />
+				</div>
 				{#if detector.identity.enrollment}
 					<div class="flex flex-col gap-2">
-						<Label for="identity-count">Number of cattle</Label>
+						<Label for="identity-count">Number of animals</Label>
 						<Input
 							id="identity-count"
 							type="number"
@@ -484,7 +489,7 @@
 					</div>
 				{/if}
 				<div class="flex flex-col gap-2">
-					<Label for="identity-confidence">Cow confidence</Label>
+					<Label for="identity-confidence">Segmentation confidence</Label>
 					<Input
 						id="identity-confidence"
 						type="number"

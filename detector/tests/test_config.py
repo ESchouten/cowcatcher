@@ -57,12 +57,13 @@ def test_load_config_does_not_rewrite_user_file(tmp_path):
         },
         {
             "detection": {"source": "camera"},
-            "identity": {"database": "identities/cows.sqlite"},
+            "identity": {"label": "cow", "database": "identities/cows.sqlite"},
         },
         {
             "detection": {"source": "camera"},
             "yolo": {"model": "model.pt"},
             "identity": {
+                "label": "cow",
                 "database": "identities/cows.sqlite",
                 "min_area_ratio": 0.5,
                 "max_area_ratio": 0.1,

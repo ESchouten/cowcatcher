@@ -17,6 +17,7 @@
         "imgsz": 640
     },
     "identity": {
+        "label": "cow",
         "database": "identities/cows.sqlite",
         "enrollment": {
             "identity_count": 25
