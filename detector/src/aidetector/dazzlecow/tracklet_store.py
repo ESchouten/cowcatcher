@@ -1,15 +1,17 @@
 import sqlite3
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
 import numpy as np
-from aidetector.dazzlecow.tracks import TrackletSnapshot
+from aidetector.domain.identity import TrackletSnapshot
+from aidetector.domain.vectors import normalize_vector
 from numpy import ndarray
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class StoredTracklet:
     id: str
     session: str
@@ -57,39 +59,23 @@ class TrackletStore:
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+            INSERT OR IGNORE INTO control VALUES ('revision', '0');
+            INSERT OR IGNORE INTO control VALUES ('finalize_requested', '0');
+            INSERT OR IGNORE INTO control VALUES ('finalize_error', '');
             """
         )
-        columns = {
-            row["name"]
-            for row in self.connection.execute("PRAGMA table_info(tracklets)")
-        }
-        if "run" not in columns:
-            self.connection.execute(
-                "ALTER TABLE tracklets ADD COLUMN run TEXT NOT NULL DEFAULT ''"
-            )
-        if "learned" not in columns:
-            self.connection.execute(
-                "ALTER TABLE tracklets ADD COLUMN learned INTEGER NOT NULL DEFAULT 0"
-            )
         active_session = self._control("active_session")
         self.session = session or active_session or uuid.uuid4().hex
         self.run = uuid.uuid4().hex[:8]
         if active_session is None:
             self._set_control("active_session", self.session)
-        if self._control("revision") is None:
-            self._set_control("revision", "0")
-        if self._control("finalize_requested") is None:
-            self._set_control("finalize_requested", "0")
-        if self._control("finalize_error") is None:
-            self._set_control("finalize_error", "")
         self.connection.commit()
 
-    def upsert(self, snapshot: TrackletSnapshot) -> str:
+    def upsert(self, snapshot: TrackletSnapshot) -> None:
         tracklet_id = self._tracklet_id(snapshot)
         preview = _encode_preview(snapshot.preview)
         with self.connection:
             self._upsert_tracklet(tracklet_id, snapshot, preview, learned=False)
-        return tracklet_id
 
     def update_identity(
         self,
@@ -104,7 +90,6 @@ class TrackletStore:
             raise ValueError("Maximum identity samples must be positive")
 
         tracklet_id = self._tracklet_id(snapshot)
-        preview = _encode_preview(snapshot.preview)
         with self.connection:
             identity = self.connection.execute(
                 "SELECT 1 FROM identities WHERE identity = ?",
@@ -116,11 +101,12 @@ class TrackletStore:
                 "SELECT 1 FROM tracklets WHERE id = ?", (tracklet_id,)
             ).fetchone()
             if exists is None and not self._is_novel(
-                snapshot.identity_key,
                 snapshot.embedding,
                 duplicate_similarity,
+                snapshot.identity_key,
             ):
                 return False
+            preview = _encode_preview(snapshot.preview)
             self._upsert_tracklet(tracklet_id, snapshot, preview, learned=True)
             self.connection.execute(
                 """
@@ -143,7 +129,6 @@ class TrackletStore:
         if max_samples < 1:
             raise ValueError("Maximum pending samples must be positive")
         tracklet_id = self._tracklet_id(snapshot)
-        preview = _encode_preview(snapshot.preview)
         with self.connection:
             assigned = self.connection.execute(
                 "SELECT 1 FROM identity_tracklets WHERE tracklet_id = ?",
@@ -154,10 +139,13 @@ class TrackletStore:
             exists = self.connection.execute(
                 "SELECT 1 FROM tracklets WHERE id = ?", (tracklet_id,)
             ).fetchone()
-            if exists is None and not self._is_pending_novel(
-                snapshot.embedding, duplicate_similarity
+            if exists is None and not self._is_novel(
+                snapshot.embedding,
+                duplicate_similarity,
+                None,
             ):
                 return False
+            preview = _encode_preview(snapshot.preview)
             self._upsert_tracklet(tracklet_id, snapshot, preview, learned=False)
             self.connection.execute(
                 """
@@ -207,42 +195,30 @@ class TrackletStore:
             self._set_control("embedding_dimension", str(dimension))
 
     def tracklets(self) -> list[StoredTracklet]:
-        rows = self.connection.execute(
-            """
-            SELECT id, session, run, source, track_id, first_frame, last_frame,
-                   observations, embedding
-            FROM tracklets
-            ORDER BY id
-            """
-        )
-        return [
-            StoredTracklet(
-                row["id"],
-                row["session"],
-                row["run"],
-                row["source"],
-                row["track_id"],
-                row["first_frame"],
-                row["last_frame"],
-                row["observations"],
-                np.frombuffer(row["embedding"], dtype=np.float32).copy(),
+        return _stored_tracklets(
+            self.connection.execute(
+                """
+                SELECT id, session, run, source, track_id, first_frame, last_frame,
+                       observations, embedding
+                FROM tracklets
+                ORDER BY id
+                """
             )
-            for row in rows
-        ]
+        )
 
     def pending_tracklets(self) -> list[StoredTracklet]:
-        pending = {
-            row["id"]
-            for row in self.connection.execute(
+        return _stored_tracklets(
+            self.connection.execute(
                 """
-                SELECT t.id
+                SELECT t.id, t.session, t.run, t.source, t.track_id, t.first_frame,
+                       t.last_frame, t.observations, t.embedding
                 FROM tracklets t
                 LEFT JOIN identity_tracklets it ON it.tracklet_id = t.id
                 WHERE it.tracklet_id IS NULL
+                ORDER BY t.id
                 """
             )
-        }
-        return [tracklet for tracklet in self.tracklets() if tracklet.id in pending]
+        )
 
     def preview(self, tracklet_id: str) -> bytes | None:
         row = self.connection.execute(
@@ -251,7 +227,9 @@ class TrackletStore:
         return bytes(row["preview"]) if row is not None else None
 
     def replace_assignments(self, assignments: dict[str, str]) -> None:
-        tracklet_ids = {tracklet.id for tracklet in self.tracklets()}
+        tracklet_ids = {
+            row["id"] for row in self.connection.execute("SELECT id FROM tracklets")
+        }
         if set(assignments) != tracklet_ids:
             raise ValueError("Every stored tracklet must have exactly one identity")
         named = self.connection.execute(
@@ -280,7 +258,17 @@ class TrackletStore:
         *,
         max_learned_samples: int = 20,
     ) -> None:
-        pending = {tracklet.id for tracklet in self.pending_tracklets()}
+        pending = {
+            row["id"]
+            for row in self.connection.execute(
+                """
+                SELECT t.id
+                FROM tracklets t
+                LEFT JOIN identity_tracklets it ON it.tracklet_id = t.id
+                WHERE it.tracklet_id IS NULL
+                """
+            )
+        }
         if not assignments or not set(assignments) <= pending:
             raise ValueError("Assignments must reference pending tracklets")
         if max_learned_samples < 1:
@@ -394,44 +382,26 @@ class TrackletStore:
 
     def _is_novel(
         self,
-        identity: str,
         embedding: ndarray,
         duplicate_similarity: float,
-    ) -> bool:
-        rows = self.connection.execute(
-            """
-            SELECT t.embedding
-            FROM tracklets t
-            JOIN identity_tracklets it ON it.tracklet_id = t.id
-            WHERE it.identity = ?
-            """,
-            (identity,),
-        )
-        existing = [np.frombuffer(row["embedding"], dtype=np.float32) for row in rows]
-        if not existing:
-            return True
-        candidate = _normalize(np.asarray(embedding, dtype=np.float32))
-        similarities = np.asarray([_normalize(value) for value in existing]) @ candidate
-        return float(np.max(similarities)) < duplicate_similarity
-
-    def _is_pending_novel(
-        self,
-        embedding: ndarray,
-        duplicate_similarity: float,
+        identity: str | None,
     ) -> bool:
         rows = self.connection.execute(
             """
             SELECT t.embedding
             FROM tracklets t
             LEFT JOIN identity_tracklets it ON it.tracklet_id = t.id
-            WHERE it.tracklet_id IS NULL
-            """
+            WHERE (? IS NULL AND it.tracklet_id IS NULL) OR it.identity = ?
+            """,
+            (identity, identity),
         )
         existing = [np.frombuffer(row["embedding"], dtype=np.float32) for row in rows]
         if not existing:
             return True
-        candidate = _normalize(np.asarray(embedding, dtype=np.float32))
-        similarities = np.asarray([_normalize(value) for value in existing]) @ candidate
+        candidate = normalize_vector(embedding)
+        similarities = (
+            np.asarray([normalize_vector(value) for value in existing]) @ candidate
+        )
         return float(np.max(similarities)) < duplicate_similarity
 
     def _upsert_tracklet(
@@ -515,13 +485,25 @@ class TrackletStore:
         self.close()
 
 
+def _stored_tracklets(rows: Iterable[sqlite3.Row]) -> list[StoredTracklet]:
+    return [
+        StoredTracklet(
+            row["id"],
+            row["session"],
+            row["run"],
+            row["source"],
+            row["track_id"],
+            row["first_frame"],
+            row["last_frame"],
+            row["observations"],
+            np.frombuffer(row["embedding"], dtype=np.float32).copy(),
+        )
+        for row in rows
+    ]
+
+
 def _encode_preview(preview: ndarray) -> bytes:
     success, encoded = cv2.imencode(".jpg", preview)
     if not success:
         raise ValueError("Could not encode tracklet preview")
     return encoded.tobytes()
-
-
-def _normalize(embedding: ndarray) -> ndarray:
-    norm = np.linalg.norm(embedding)
-    return embedding / max(float(norm), np.finfo(np.float32).eps)

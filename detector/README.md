@@ -83,6 +83,7 @@ domain <- pipeline <- adapters <- application
 - `adapters/` contains Ultralytics, video sources, VLM validation, HTTP/SSE, Telegram, webhook, and disk implementations.
 - `application.py` is the composition root. It is the only module that translates configuration objects into runtime policies and concrete adapters.
 - `media/` renders and caches event artifacts. Equal artifact requests within one event are encoded only once.
+- Generic identity candidates, track aggregation, registry sharing, and enrichment live in `domain/` and `pipeline/`. `dazzlecow/` supplies the cow-specific MiewID, enrollment, and SQLite implementations.
 
 Live observations and completed events are sent through the same generic `Sink.send()` contract. Validation and every event sink have small bounded queues. When an external service falls behind, only its oldest pending event is replaced so inference continues. `tests/test_architecture.py` enforces the dependency direction.
 
@@ -226,7 +227,7 @@ All detector pipelines in the same application share a short-lived in-memory ide
 
 Install the optional identity dependencies with `uv sync --extra default --extra identity`.
 
-Use `benchmark-cow-identity-video` for annotated end-to-end localization, tracking, and identity regression tests. `benchmark-cow-enrollment` evaluates clustering against prepared public identity crops. Both use the same pinned MiewID ONNX model as the application.
+For benchmark commands, also install `--extra identity-benchmark`. Use `benchmark-cow-identity-video` for annotated end-to-end localization, tracking, and identity regression tests. `benchmark-cow-enrollment` evaluates clustering against prepared public identity crops. Both use the same pinned MiewID ONNX model as the application.
 
 ---
 

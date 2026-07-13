@@ -1,7 +1,6 @@
 from time import sleep
 
 from aidetector.adapters.models.yolo import YoloRunner, build_yolo_model
-from aidetector.adapters.models.identity import IdentityEnricher
 from aidetector.adapters.sinks.factory import build_sinks
 from aidetector.adapters.sources.source import SourceProvider
 from aidetector.adapters.validation.vlm import VLMValidator
@@ -12,13 +11,24 @@ from aidetector.pipeline.aggregation import EventAggregator
 from aidetector.pipeline.cooldown import CooldownTracker
 from aidetector.pipeline.dispatch import EventDispatcher
 from aidetector.pipeline.inference import InferenceStage
-from aidetector.pipeline.identity import IdentityRegistry
+from aidetector.pipeline.identity import (
+    IdentityEnricher,
+    IdentityRegistry,
+)
+from aidetector.pipeline.identity_provider import (
+    IdentityProvider,
+    ModelIdentityCandidateSource,
+    TrackedIdentityProvider,
+)
+from aidetector.pipeline.identity_tracking import TrackIdentityAggregator
 from aidetector.pipeline.processor import DetectionPipeline
 from aidetector.services.healthcheck import Healthcheck
 from aidetector.utils.config import (
     Config,
+    CowIdentityConfig,
     DetectorConfig,
     OnnxConfig,
+    YoloConfig,
     config_list,
 )
 
@@ -112,9 +122,7 @@ def build_pipeline(
     identity_pipeline = None
     if config.identity is not None:
         assert config.yolo is not None and runner is not None
-        from aidetector.dazzlecow.runner import CowIdentityPipeline
-
-        identity_pipeline = CowIdentityPipeline(
+        identity_pipeline = build_cow_identity(
             config.identity,
             onnx,
             source.sources,
@@ -125,7 +133,6 @@ def build_pipeline(
         identity_registry,
         f"detector-{pipeline_index}",
         identity_pipeline,
-        runner,
     )
 
     sinks = build_sinks(config.exporters, pipeline_index)
@@ -145,4 +152,88 @@ def build_pipeline(
         compact=compact_observation,
         resources=[*sinks.resources, enricher],
         pipeline_index=pipeline_index,
+    )
+
+
+def build_cow_identity(
+    config: CowIdentityConfig,
+    onnx: OnnxConfig,
+    sources: list[str],
+    primary_config: YoloConfig,
+    primary_runner: YoloRunner,
+) -> IdentityProvider:
+    from aidetector.dazzlecow.catalog import CatalogPolicy, CowIdentityCatalog
+    from aidetector.dazzlecow.localizer import DazzleCowLocalizer, LocalizerSettings
+    from aidetector.dazzlecow.model import CowIdentityEncoder, IDENTITY_MODEL
+    from aidetector.dazzlecow.tracklet_store import TrackletStore
+
+    settings = LocalizerSettings(
+        confidence=config.confidence,
+        min_area_ratio=config.min_area_ratio,
+        max_area_ratio=config.max_area_ratio,
+        margin=config.margin,
+    )
+    if config.enrollment is None and not config.database.is_file():
+        raise FileNotFoundError(f"Cow identity database not found: {config.database}")
+    reuse_primary = (
+        primary_config.task == "segment"
+        and primary_config.tracking
+        and any(name == "cow" for name, _ in primary_runner.class_confidences.values())
+    )
+    if reuse_primary:
+        identity_runner = primary_runner
+    else:
+        identity_config = YoloConfig(
+            model=config.segment_model,
+            task="segment",
+            tracking=True,
+            confidence={"cow": config.confidence},
+            imgsz=config.imgsz,
+            iou=config.nms_iou,
+            tracker="bytetrack.yaml",
+        )
+        identity_runner = YoloRunner(
+            identity_config,
+            sources,
+            build_yolo_model(identity_config, onnx, len(sources)),
+        )
+
+    encoder = CowIdentityEncoder()
+    store = TrackletStore(config.database)
+    catalog = CowIdentityCatalog(
+        store,
+        CatalogPolicy(
+            match_threshold=config.match_threshold,
+            match_margin=config.match_margin,
+            track_samples=config.track_samples,
+            enrollment_identity_count=(
+                config.enrollment.identity_count
+                if config.enrollment is not None
+                else None
+            ),
+        ),
+    )
+    try:
+        gallery = catalog.initialize(IDENTITY_MODEL, encoder.feature_dim)
+        if config.enrollment is None and gallery is None:
+            raise ValueError(
+                f"Cow identity database is not finalized: {config.database}"
+            )
+    except Exception:
+        catalog.close()
+        raise
+
+    return TrackedIdentityProvider(
+        candidates=ModelIdentityCandidateSource(
+            identity_runner,
+            DazzleCowLocalizer(settings),
+            reuse_for_detection=reuse_primary,
+        ),
+        encoder=encoder,
+        catalog=catalog,
+        tracks=TrackIdentityAggregator(
+            gallery,
+            samples=config.track_samples,
+            max_age=config.track_max_age,
+        ),
     )

@@ -45,3 +45,22 @@ def test_core_dependency_direction():
                     violations.append(f"{path.name} imports third-party {imported}")
 
     assert violations == []
+
+
+def test_identity_runtime_does_not_depend_on_application_wiring():
+    forbidden = (
+        "aidetector.adapters",
+        "aidetector.application",
+        "aidetector.utils.config",
+    )
+    violations = []
+
+    excluded = {"enrollment_cli.py", "enrollment_benchmark.py", "video_benchmark.py"}
+    for path in (PACKAGE / "dazzlecow").glob("*.py"):
+        if path.name in excluded:
+            continue
+        for imported in imported_modules(path):
+            if imported.startswith(forbidden):
+                violations.append(f"{path.name} imports {imported}")
+
+    assert violations == []

@@ -3,6 +3,7 @@ from typing import Any
 
 import cv2
 import numpy as np
+from aidetector.domain.vectors import normalize_rows
 from huggingface_hub import hf_hub_download
 from numpy import ndarray
 
@@ -16,19 +17,22 @@ STD = np.asarray([0.229, 0.224, 0.225], dtype=np.float32)
 
 
 class CowIdentityEncoder:
-    def __init__(self):
-        import onnxruntime as ort
+    def __init__(self, session: Any | None = None):
+        if session is None:
+            import onnxruntime as ort
 
-        model = Path(
-            hf_hub_download(
-                repo_id=MIEWID_REPOSITORY,
-                filename=MIEWID_FILENAME,
-                revision=MIEWID_REVISION,
+            model = Path(
+                hf_hub_download(
+                    repo_id=MIEWID_REPOSITORY,
+                    filename=MIEWID_FILENAME,
+                    revision=MIEWID_REVISION,
+                )
             )
-        )
-        self.session: Any = ort.InferenceSession(
-            str(model), providers=ort.get_available_providers()
-        )
+            session = ort.InferenceSession(
+                str(model),
+                providers=ort.get_available_providers(),
+            )
+        self.session: Any = session
         input_metadata = self.session.get_inputs()[0]
         output_metadata = self.session.get_outputs()[0]
         if list(input_metadata.shape) != [1, 3, IMAGE_SIZE, IMAGE_SIZE]:
@@ -56,8 +60,7 @@ class CowIdentityEncoder:
             for image in images
         ]
         values = np.asarray(embeddings, dtype=np.float32)
-        norms = np.linalg.norm(values, axis=1, keepdims=True)
-        return values / np.maximum(norms, np.finfo(np.float32).eps)
+        return normalize_rows(values)
 
 
 def _preprocess(image: ndarray) -> ndarray:

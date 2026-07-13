@@ -10,8 +10,9 @@ from aidetector.adapters.sinks.sse import SSESink, tracks_payload
 from aidetector.adapters.sinks.sse_transport import SSEHub
 from aidetector.adapters.sinks.telegram import TelegramSink
 from aidetector.adapters.sinks.webhook import WebhookSink
-from aidetector.domain.detections import DetectedObject, IdentityResult, Observation
+from aidetector.domain.detections import DetectedObject, Observation
 from aidetector.domain.events import DetectionEvent, LiveObservation
+from aidetector.domain.identity import IdentityResult
 from aidetector.domain.policies import ExportPolicy
 from aidetector.media.artifacts import EventArtifacts
 from aidetector.pipeline.messages import CompletedEvent

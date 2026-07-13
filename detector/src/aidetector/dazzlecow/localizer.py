@@ -3,104 +3,45 @@ from typing import Any
 
 import cv2
 import numpy as np
-from aidetector.adapters.models.yolo import YoloRunner, build_yolo_model
 from aidetector.domain.detections import DetectedObject
-from aidetector.domain.frames import FrameBatch
-from aidetector.pipeline.ports import ModelBatchResult
-from aidetector.utils.config import CowIdentityConfig, OnnxConfig, YoloConfig
+from aidetector.domain.identity import IdentityCandidate
 from numpy import ndarray
-from PIL import Image
-
-
-@dataclass
-class CowCandidate:
-    crop: DetectedObject
-    image: ndarray
 
 
 @dataclass(frozen=True)
 class LocalizerSettings:
-    model: str
     confidence: float
     min_area_ratio: float
     max_area_ratio: float
     margin: float
-    nms_iou: float
-    imgsz: int
-
-    @classmethod
-    def from_config(cls, config: CowIdentityConfig) -> "LocalizerSettings":
-        return cls(
-            config.segment_model,
-            config.confidence,
-            config.min_area_ratio,
-            config.max_area_ratio,
-            config.margin,
-            config.nms_iou,
-            config.imgsz,
-        )
 
 
 class DazzleCowLocalizer:
-    def __init__(
-        self,
-        settings: LocalizerSettings,
-        onnx_config: OnnxConfig | None = None,
-        sources: list[str] | None = None,
-    ):
+    def __init__(self, settings: LocalizerSettings):
         self.settings = settings
-        config = YoloConfig(
-            model=settings.model,
-            task="segment",
-            tracking=True,
-            confidence={"cow": settings.confidence},
-            imgsz=settings.imgsz,
-            iou=settings.nms_iou,
-            tracker="bytetrack.yaml",
-        )
-        configured_sources = sources or ["source"]
-        model = build_yolo_model(
-            config,
-            onnx_config or OnnxConfig(),
-            len(configured_sources),
-        )
-        self.runner = YoloRunner(config, configured_sources, model)
 
-    def locate(self, frame: ndarray) -> list[CowCandidate]:
-        result = self.runner.detect([frame])[0]
+    def candidates(self, result: Any, frame: ndarray) -> list[IdentityCandidate]:
         return candidates_from_result(result, frame, self.settings)
-
-    def track_sources(
-        self,
-        batch: FrameBatch,
-    ) -> list[ModelBatchResult]:
-        return [
-            ModelBatchResult(
-                tracked.source,
-                candidates_from_result(
-                    tracked.result,
-                    tracked.frames[-1].require_image(),
-                    self.settings,
-                ),
-                tracked.frames,
-            )
-            for tracked in self.runner.track_sources(batch)
-        ]
 
 
 def candidates_from_result(
     result: Any,
     frame: ndarray,
     settings: LocalizerSettings,
-) -> list[CowCandidate]:
-    masks = getattr(result, "masks", None)
-    boxes = getattr(result, "boxes", None)
+) -> list[IdentityCandidate]:
+    masks = result.masks
+    boxes = result.boxes
     if masks is None or boxes is None:
         return []
 
+    background = None
     candidates = []
-    for box, raw_mask in zip(boxes, masks.data, strict=False):
-        if _box_label(result, box) not in (None, "cow"):
+    for box, raw_mask in zip(boxes, masks.data, strict=True):
+        class_id = int(box.cls.item())
+        if result.names[class_id] != "cow":
+            continue
+        confidence = float(box.conf.item())
+        if confidence < settings.confidence:
             continue
         x1, y1, x2, y2 = map(int, box.xyxy[0])
         if not box_allowed(
@@ -119,10 +60,21 @@ def candidates_from_result(
                 (frame.shape[1], frame.shape[0]),
                 interpolation=cv2.INTER_NEAREST,
             ).astype(bool)
-        candidate = masked_candidate(frame, mask, float(box.conf.item()))
+        if background is None:
+            background = (
+                frame.reshape(-1, frame.shape[2]).mean(axis=0).astype(frame.dtype)
+            )
+        candidate = masked_candidate(frame, mask, confidence, background)
         if candidate is not None:
-            candidate.crop = replace(candidate.crop, track_id=_track_id(box))
-            candidates.append(candidate)
+            candidates.append(
+                replace(
+                    candidate,
+                    detection=replace(
+                        candidate.detection,
+                        track_id=_track_id(box),
+                    ),
+                )
+            )
     return candidates
 
 
@@ -135,7 +87,7 @@ def box_allowed(
 ) -> bool:
     height, width = image_shape
     x1, y1, x2, y2 = box
-    area_ratio = max(0, x2 - x1) * max(0, y2 - y1) / max(1, width * height)
+    area_ratio = (x2 - x1) * (y2 - y1) / (width * height)
     center_x = (x1 + x2) / 2
     center_y = (y1 + y2) / 2
     return (
@@ -149,7 +101,8 @@ def masked_candidate(
     frame: ndarray,
     mask: ndarray,
     confidence: float,
-) -> CowCandidate | None:
+    background: ndarray | None = None,
+) -> IdentityCandidate | None:
     ys, xs = np.nonzero(mask)
     if len(xs) == 0:
         return None
@@ -158,72 +111,19 @@ def masked_candidate(
     y1 = int(ys.min())
     x2 = int(xs.max()) + 1
     y2 = int(ys.max()) + 1
-    background = frame.reshape(-1, frame.shape[2]).mean(axis=0).astype(frame.dtype)
-    masked = np.empty_like(frame)
+    source = frame[y1:y2, x1:x2]
+    crop_mask = mask[y1:y2, x1:x2]
+    if background is None:
+        background = frame.reshape(-1, frame.shape[2]).mean(axis=0).astype(frame.dtype)
+    masked = np.empty_like(source)
     masked[:] = background
-    masked[mask] = frame[mask]
-    return CowCandidate(
+    masked[crop_mask] = source[crop_mask]
+    return IdentityCandidate(
         DetectedObject(x1, y1, x2, y2, label="cow", confidence=confidence),
-        masked[y1:y2, x1:x2],
+        masked,
     )
 
 
-def segment_candidates(
-    sam,
-    frame: ndarray,
-    boxes: list[list[int]],
-    scores: list[float],
-    *,
-    device: str = "auto",
-) -> list[CowCandidate]:
-    """Mask known boxes for dataset preparation and oracle benchmarks."""
-    if not boxes:
-        return []
-
-    image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-    points = [[(box[0] + box[2]) // 2, (box[1] + box[3]) // 2] for box in boxes]
-    result = sam.predict(
-        source=np.asarray(image),
-        bboxes=boxes,
-        points=points,
-        labels=np.ones(len(boxes), dtype=np.int32),
-        device=None if device == "auto" else device,
-        verbose=False,
-    )[0]
-    masks = getattr(result, "masks", None)
-    if masks is None:
-        return []
-
-    candidates = []
-    for index, raw_mask in enumerate(masks.data):
-        mask = raw_mask.detach().cpu().numpy().astype(bool)
-        if mask.shape != frame.shape[:2]:
-            mask = cv2.resize(
-                mask.astype(np.uint8),
-                (frame.shape[1], frame.shape[0]),
-                interpolation=cv2.INTER_NEAREST,
-            ).astype(bool)
-        candidate = masked_candidate(
-            frame,
-            mask,
-            scores[index] if index < len(scores) else 1.0,
-        )
-        if candidate is not None:
-            candidates.append(candidate)
-    return candidates
-
-
 def _track_id(box: Any) -> int | None:
-    value = getattr(box, "id", None)
+    value = box.id
     return int(value.item()) if value is not None else None
-
-
-def _box_label(result: Any, box: Any) -> str | None:
-    names = getattr(result, "names", None)
-    class_value = getattr(box, "cls", None)
-    if names is None or class_value is None:
-        return None
-    class_id = int(class_value.item())
-    if isinstance(names, dict):
-        return str(names.get(class_id)) if class_id in names else None
-    return str(names[class_id]) if 0 <= class_id < len(names) else None

@@ -41,13 +41,15 @@ default = [
 ]
 identity = [
     { name = "huggingface-hub" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+]
+identity-benchmark = [
     { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "pandas", version = "3.0.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "scikit-learn", version = "1.7.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scikit-learn", version = "1.9.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
-    { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
 ]
 nvidia = [
     { name = "onnx" },
@@ -90,17 +92,17 @@ requires-dist = [
     { name = "onnxslim", marker = "extra == 'nvidia'", specifier = ">=0.1.87" },
     { name = "onnxslim", marker = "extra == 'windowsml'", specifier = ">=0.1.87" },
     { name = "opencv-python", specifier = ">=4.6.0" },
-    { name = "pandas", marker = "extra == 'identity'", specifier = ">=2.2.0" },
+    { name = "pandas", marker = "extra == 'identity-benchmark'", specifier = ">=2.2.0" },
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "requests", specifier = ">=2.32.0" },
-    { name = "scikit-learn", marker = "extra == 'identity'", specifier = ">=1.7.0" },
+    { name = "scikit-learn", marker = "extra == 'identity-benchmark'", specifier = ">=1.7.0" },
     { name = "scipy", marker = "extra == 'identity'", specifier = ">=1.11.0" },
     { name = "tiktoken", extras = ["openai"], specifier = ">=0.12.0" },
     { name = "ultralytics", specifier = ">=8.4.10" },
     { name = "wasdk-microsoft-windows-ai-machinelearning", extras = ["all"], marker = "extra == 'windowsml'", specifier = ">=1.8.260209005" },
     { name = "wasdk-microsoft-windows-applicationmodel-dynamicdependency-bootstrap", marker = "extra == 'windowsml'", specifier = ">=1.8.260209005" },
 ]
-provides-extras = ["default", "nvidia", "windowsml", "identity"]
+provides-extras = ["default", "nvidia", "windowsml", "identity", "identity-benchmark"]
 
 [package.metadata.requires-dev]
 dev = [

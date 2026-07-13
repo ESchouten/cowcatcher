@@ -3,15 +3,16 @@ from datetime import datetime
 
 import numpy as np
 
-from aidetector.adapters.models.identity import IdentityEnricher
 from aidetector.domain.detections import (
     DetectedObject,
-    IdentityResult,
     Observation,
     unique_identities,
 )
 from aidetector.domain.frames import Frame
-from aidetector.pipeline.identity import IdentityRegistry
+from aidetector.domain.identity import IdentityCandidate, IdentityResult
+from aidetector.pipeline.identity import IdentityEnricher, IdentityRegistry
+from aidetector.pipeline.identity_provider import IdentityBatch
+from aidetector.pipeline.identity_provider import ModelIdentityCandidateSource
 from aidetector.pipeline.ports import ModelBatchResult
 
 
@@ -150,48 +151,39 @@ def test_identity_enricher_reuses_primary_tracking_result():
     )
     tracked = ModelBatchResult("camera", object(), [frame])
 
-    class Runner:
-        def track_sources(self, _batch):
-            return [tracked]
+    class Provider:
+        def start(self):
+            pass
 
-        def observations_from_result(self, _result, _frames):
+        def process(self, _batch):
+            detection = DetectedObject(
+                10,
+                10,
+                30,
+                30,
+                track_id=7,
+                identities=(IdentityResult("cow-0001", 0.93),),
+            )
             return [
-                Observation(
-                    frame,
-                    (DetectedObject(0, 0, 50, 50, label="mounting"),),
+                IdentityBatch(
+                    "camera",
+                    [frame],
+                    (IdentityCandidate(detection, frame.require_image()),),
+                    tracked,
+                    Observation(
+                        frame,
+                        (DetectedObject(0, 0, 50, 50, label="mounting"),),
+                    ),
                 )
             ]
-
-    class Pipeline:
-        reuses_primary_yolo = True
-
-        def candidates_from_primary(self, _source, _result, _image):
-            return [object()]
-
-        def live_observation(self, _frame, _candidates):
-            return Observation(
-                frame,
-                (
-                    DetectedObject(
-                        10,
-                        10,
-                        30,
-                        30,
-                        track_id=7,
-                        identities=(IdentityResult("cow-0001", 0.93),),
-                    ),
-                ),
-            )
 
         def close(self):
             pass
 
-    runner = Runner()
     enricher = IdentityEnricher(
         IdentityRegistry(),
         "detector-0",
-        Pipeline(),
-        runner,
+        Provider(),
     )
 
     result = enricher.process({"camera": [frame]})
@@ -200,3 +192,48 @@ def test_identity_enricher_reuses_primary_tracking_result():
     assert result.observations[0][1].objects[0].identities == (
         IdentityResult("cow-0001", 0.93),
     )
+
+
+def test_model_identity_candidate_source_can_reuse_detection_result():
+    frame = Frame(
+        datetime(2026, 1, 1),
+        np.zeros((100, 100, 3), dtype=np.uint8),
+    )
+    raw_result = object()
+    tracked = ModelBatchResult("camera", raw_result, [frame])
+    cow = IdentityCandidate(
+        DetectedObject(10, 10, 30, 30, label="cow", track_id=7),
+        frame.require_image()[10:30, 10:30],
+    )
+
+    class Runner:
+        def track_sources(self, _batch):
+            return [tracked]
+
+        def observations_from_result(self, result, frames):
+            assert result is raw_result
+            return [
+                Observation(
+                    frames[-1],
+                    (DetectedObject(0, 0, 50, 50, label="mounting"),),
+                )
+            ]
+
+    class Localizer:
+        def candidates(self, result, image):
+            assert result is raw_result
+            assert image is frame.require_image()
+            return [cow]
+
+    source = ModelIdentityCandidateSource(
+        Runner(),
+        Localizer(),
+        reuse_for_detection=True,
+    )
+
+    result = source.batches({"camera": [frame]})[0]
+
+    assert result.candidates == (cow,)
+    assert result.model_result is tracked
+    assert result.detection_observation is not None
+    assert result.detection_observation.objects[0].label == "mounting"

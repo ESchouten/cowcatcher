@@ -9,19 +9,23 @@ from typing import Iterable
 
 import cv2
 import numpy as np
+from aidetector.adapters.models.yolo import YoloRunner, build_yolo_model
 from aidetector.dazzlecow.gallery import CowIdentityGallery
 from aidetector.dazzlecow.geometry import box_iou
 from aidetector.dazzlecow.localizer import (
-    CowCandidate,
     DazzleCowLocalizer,
     LocalizerSettings,
-    segment_candidates,
+    masked_candidate,
 )
 from aidetector.dazzlecow.model import CowIdentityEncoder, IDENTITY_MODEL
 from aidetector.dazzlecow.tracklet_store import TrackletStore
-from aidetector.dazzlecow.tracks import TrackIdentityAggregator
 from aidetector.domain.frames import Frame
+from aidetector.domain.identity import IdentityCandidate
+from aidetector.pipeline.identity_provider import ModelIdentityCandidateSource
+from aidetector.pipeline.identity_tracking import TrackIdentityAggregator
+from aidetector.utils.config import OnnxConfig, YoloConfig
 from numpy import ndarray
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +40,7 @@ class GroundTruth:
 class VideoObservation:
     frame_id: int
     ground_truth: list[GroundTruth]
-    candidates: list[CowCandidate]
+    candidates: list[IdentityCandidate]
     embeddings: ndarray
 
 
@@ -61,14 +65,14 @@ class _Metrics:
         self,
         observation_index: int,
         observation: VideoObservation,
-        candidates: list[CowCandidate],
+        candidates: list[IdentityCandidate],
         matches: list[tuple[int, GroundTruth]],
     ) -> None:
         self.ground_truth += len(observation.ground_truth)
         self.predictions += len(candidates)
         self.localized += len(matches)
         for candidate_index, truth in matches:
-            crop = candidates[candidate_index].crop
+            crop = candidates[candidate_index].detection
             if crop.track_id is None:
                 continue
             track_id = crop.track_id
@@ -146,13 +150,15 @@ def evaluate_observations(
     for observation_index, observation in enumerate(observations):
         for samples, tracker in trackers.items():
             candidates = [
-                CowCandidate(
-                    replace(candidate.crop, identities=()),
+                IdentityCandidate(
+                    replace(candidate.detection, identities=()),
                     candidate.image,
                 )
                 for candidate in observation.candidates
             ]
-            tracker.apply("video", candidates, observation.embeddings)
+            candidates = list(
+                tracker.apply("video", candidates, observation.embeddings).candidates
+            )
             matches = match_ground_truth(
                 candidates,
                 observation.ground_truth,
@@ -168,7 +174,7 @@ def evaluate_observations(
 
 
 def match_ground_truth(
-    candidates: list[CowCandidate],
+    candidates: list[IdentityCandidate],
     ground_truth: list[GroundTruth],
     threshold: float,
 ) -> list[tuple[int, GroundTruth]]:
@@ -262,9 +268,49 @@ def _ground_truth(rows, width: int, height: int) -> list[GroundTruth]:
     ]
 
 
-def _candidate_box(candidate: CowCandidate) -> tuple[int, int, int, int]:
-    crop = candidate.crop
+def _candidate_box(candidate: IdentityCandidate) -> tuple[int, int, int, int]:
+    crop = candidate.detection
     return crop.x1, crop.y1, crop.x2, crop.y2
+
+
+def segment_candidates(
+    sam,
+    frame: ndarray,
+    boxes: list[list[int]],
+    scores: list[float],
+    *,
+    device: str = "auto",
+) -> list[IdentityCandidate]:
+    if not boxes:
+        return []
+
+    image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+    points = [[(box[0] + box[2]) // 2, (box[1] + box[3]) // 2] for box in boxes]
+    result = sam.predict(
+        source=np.asarray(image),
+        bboxes=boxes,
+        points=points,
+        labels=np.ones(len(boxes), dtype=np.int32),
+        device=None if device == "auto" else device,
+        verbose=False,
+    )[0]
+    if result.masks is None:
+        return []
+
+    background = frame.reshape(-1, frame.shape[2]).mean(axis=0).astype(frame.dtype)
+    candidates = []
+    for raw_mask, score in zip(result.masks.data, scores, strict=True):
+        mask = raw_mask.detach().cpu().numpy().astype(bool)
+        if mask.shape != frame.shape[:2]:
+            mask = cv2.resize(
+                mask.astype(np.uint8),
+                (frame.shape[1], frame.shape[0]),
+                interpolation=cv2.INTER_NEAREST,
+            ).astype(bool)
+        candidate = masked_candidate(frame, mask, score, background)
+        if candidate is not None:
+            candidates.append(candidate)
+    return candidates
 
 
 def main() -> None:
@@ -302,20 +348,30 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO)
 
     settings = LocalizerSettings(
-        arguments.segment_model,
         arguments.confidence,
         arguments.min_area_ratio,
         arguments.max_area_ratio,
         arguments.margin,
-        arguments.nms_iou,
-        arguments.imgsz,
     )
     if arguments.localizer == "yolo":
-        localizer = DazzleCowLocalizer(settings, sources=["video"])
+        yolo = YoloConfig(
+            model=arguments.segment_model,
+            task="segment",
+            tracking=True,
+            confidence={"cow": arguments.confidence},
+            imgsz=arguments.imgsz,
+            iou=arguments.nms_iou,
+            tracker="bytetrack.yaml",
+        )
+        candidate_source = ModelIdentityCandidateSource(
+            YoloRunner(yolo, ["video"], build_yolo_model(yolo, OnnxConfig(), 1)),
+            DazzleCowLocalizer(settings),
+            reuse_for_detection=False,
+        )
 
         def localize(frame, _truth, date):
-            results = localizer.track_sources({"video": [Frame(date, frame)]})
-            return results[0].result if results else []
+            results = candidate_source.batches({"video": [Frame(date, frame)]})
+            return list(results[0].candidates) if results else []
 
     else:
         from ultralytics import SAM
@@ -331,14 +387,19 @@ def main() -> None:
                 [1.0] * len(truth),
                 device=arguments.device,
             )
-            for candidate, item in zip(candidates, truth, strict=False):
-                candidate.crop = replace(
-                    candidate.crop,
-                    track_id=oracle_tracks.setdefault(
-                        item.identity,
-                        len(oracle_tracks) + 1,
+            candidates = [
+                replace(
+                    candidate,
+                    detection=replace(
+                        candidate.detection,
+                        track_id=oracle_tracks.setdefault(
+                            item.identity,
+                            len(oracle_tracks) + 1,
+                        ),
                     ),
                 )
+                for candidate, item in zip(candidates, truth, strict=False)
+            ]
             return candidates
 
     encoder = CowIdentityEncoder()

@@ -1,12 +1,10 @@
-import argparse
-import json
 import re
 from dataclasses import dataclass, field
-from pathlib import Path
 
 import numpy as np
 from aidetector.dazzlecow.gallery import CowIdentityGallery
 from aidetector.dazzlecow.tracklet_store import StoredTracklet, TrackletStore
+from aidetector.domain.vectors import normalize_rows, normalize_vector
 from numpy import ndarray
 from scipy.optimize import linear_sum_assignment
 
@@ -33,7 +31,7 @@ def cluster_tracks(
     if len({track.key for track in tracks}) != len(tracks):
         raise ValueError("Enrollment track keys must be unique")
 
-    embeddings = _normalize(
+    embeddings = normalize_rows(
         np.asarray([track.embedding for track in tracks], dtype=np.float32)
     )
     similarities = embeddings @ embeddings.T
@@ -112,7 +110,7 @@ def cluster_tracklets(
     if len({track.key for track in tracks}) != len(tracks):
         raise ValueError("Enrollment track keys must be unique")
 
-    embeddings = _normalize(
+    embeddings = normalize_rows(
         np.asarray([track.embedding for track in tracks], dtype=np.float32)
     )
     clusters = {index: {index} for index in range(len(tracks))}
@@ -133,7 +131,7 @@ def cluster_tracklets(
         _, left, right = max(candidates)
         clusters[left] |= clusters.pop(right)
         centroid = embeddings[list(clusters[left])].mean(axis=0, keepdims=True)
-        centroids[left] = _normalize(centroid)[0]
+        centroids[left] = normalize_rows(centroid)[0]
         del centroids[right]
 
     ordered = sorted(
@@ -211,7 +209,7 @@ def cluster_known_count(
     if attempts < 1 or max_iterations < 1:
         raise ValueError("Clustering attempts and iterations must be positive")
 
-    embeddings = _normalize(
+    embeddings = normalize_rows(
         np.asarray([track.embedding for track in tracks], dtype=np.float32)
     )
     forbidden = np.asarray(
@@ -310,7 +308,7 @@ def _constrained_kmeans(
         labels = updated
         if converged:
             break
-        centers = _normalize(
+        centers = normalize_rows(
             np.asarray(
                 [
                     embeddings[labels == label].mean(axis=0)
@@ -334,10 +332,7 @@ def match_camera_tracks(
     if not tracks:
         return {}
 
-    embeddings = {
-        track.key: _normalize(np.asarray([track.embedding], dtype=np.float32))[0]
-        for track in tracks
-    }
+    embeddings = {track.key: normalize_vector(track.embedding) for track in tracks}
     by_camera: dict[str, list[str]] = {}
     for key, camera in cameras.items():
         by_camera.setdefault(camera, []).append(key)
@@ -349,7 +344,7 @@ def match_camera_tracks(
     for camera in ordered_cameras[1:]:
         keys = sorted(by_camera[camera])
         centroids = [
-            _normalize(
+            normalize_rows(
                 np.asarray(
                     [np.mean([embeddings[member] for member in cluster], axis=0)],
                     dtype=np.float32,
@@ -507,9 +502,9 @@ def _match_existing_identity(
     similarity_threshold: float,
     margin_threshold: float,
 ) -> str | None:
-    embedding = _normalize(
-        np.mean([tracklet.embedding for tracklet in tracklets], axis=0, keepdims=True)
-    )[0]
+    embedding = normalize_vector(
+        np.mean([tracklet.embedding for tracklet in tracklets], axis=0)
+    )
     match = gallery.score(embedding)
     if match.similarity < similarity_threshold or match.margin < margin_threshold:
         return None
@@ -590,66 +585,3 @@ def _constrained_assign(
     if len(set(labels)) != len(centers):
         return None
     return labels
-
-
-def _normalize(values: ndarray) -> ndarray:
-    if values.ndim != 2:
-        raise ValueError("Enrollment embeddings must have equal dimensions")
-    norms = np.linalg.norm(values, axis=1, keepdims=True)
-    return values / np.maximum(norms, np.finfo(np.float32).eps)
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Manage cow identity enrollment")
-    parser.add_argument("--database", type=Path, required=True)
-    commands = parser.add_subparsers(dest="command", required=True)
-
-    finalize = commands.add_parser("finalize")
-    finalize.add_argument(
-        "--similarity-threshold",
-        type=float,
-        default=DEFAULT_ENROLLMENT_SIMILARITY,
-    )
-    finalize.add_argument(
-        "--margin-threshold",
-        type=float,
-        default=DEFAULT_ENROLLMENT_MARGIN,
-    )
-    finalize.add_argument("--identity-count", type=int)
-
-    commands.add_parser("list")
-
-    name = commands.add_parser("name")
-    name.add_argument("identity")
-    name.add_argument("animal_number")
-
-    arguments = parser.parse_args()
-    with TrackletStore(arguments.database) as store:
-        if arguments.command == "finalize":
-            assignments = (
-                finalize_pending_enrollment(
-                    store,
-                    similarity_threshold=arguments.similarity_threshold,
-                    margin_threshold=arguments.margin_threshold,
-                )
-                if store.is_finalized()
-                else finalize_enrollment(
-                    store,
-                    similarity_threshold=arguments.similarity_threshold,
-                    margin_threshold=arguments.margin_threshold,
-                    identity_count=arguments.identity_count,
-                )
-            )
-            print(
-                json.dumps(
-                    {
-                        "tracklets": len(assignments),
-                        "identities": len(set(assignments.values())),
-                    },
-                    indent=2,
-                )
-            )
-        elif arguments.command == "name":
-            store.set_animal_number(arguments.identity, arguments.animal_number)
-        else:
-            print(json.dumps(store.identities(), indent=2))

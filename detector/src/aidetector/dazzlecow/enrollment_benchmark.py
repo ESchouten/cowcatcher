@@ -18,6 +18,7 @@ from aidetector.dazzlecow.enrollment import (
 from aidetector.dazzlecow.gallery import CowIdentityGallery
 from aidetector.dazzlecow.datasets import discover_public_dataset
 from aidetector.dazzlecow.model import CowIdentityEncoder, IDENTITY_MODEL
+from aidetector.domain.vectors import normalize_vector
 from sklearn.cluster import KMeans
 from sklearn.metrics import roc_auc_score
 
@@ -90,7 +91,7 @@ def build_track_embeddings(
     tracks = []
     for group, values in sorted(embeddings.items()):
         identity, camera, _ = group
-        embedding = _normalize(np.mean(values, axis=0))
+        embedding = normalize_vector(np.mean(values, axis=0))
         cannot_link = frozenset(
             keys[other]
             for other in embeddings
@@ -487,10 +488,6 @@ def select_enrollment_threshold(
             -result["margin"],
         ),
     )
-
-
-def _normalize(value: np.ndarray) -> np.ndarray:
-    return value / max(float(np.linalg.norm(value)), np.finfo(np.float32).eps)
 
 
 def _camera_from_path(path: Path) -> str:

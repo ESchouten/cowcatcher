@@ -2,10 +2,10 @@ from dataclasses import asdict, field
 
 from aidetector.domain.detections import (
     DetectedObject,
-    IdentityResult,
     unique_identities,
 )
 from aidetector.domain.events import DetectionEvent
+from aidetector.domain.identity import IdentityResult
 from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass
 

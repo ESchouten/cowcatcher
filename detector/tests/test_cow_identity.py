@@ -13,32 +13,40 @@ from aidetector.dazzlecow.enrollment import (
     finalize_enrollment,
     finalize_pending_enrollment,
 )
-from aidetector.dazzlecow.gallery import CowIdentityGallery, IdentityMatch
+from aidetector.dazzlecow.catalog import CatalogPolicy, CowIdentityCatalog
+from aidetector.dazzlecow.gallery import CowIdentityGallery
 from aidetector.dazzlecow.localizer import (
-    CowCandidate,
     LocalizerSettings,
     box_allowed,
     candidates_from_result,
     masked_candidate,
 )
 from aidetector.dazzlecow.model import CowIdentityEncoder, _preprocess
-from aidetector.dazzlecow.runner import CowIdentityPipeline
 from aidetector.dazzlecow.enrollment_benchmark import (
     LabeledTrack,
     camera_disjoint_identity_metrics,
     production_open_enrollment_metrics,
 )
 from aidetector.dazzlecow.tracklet_store import TrackletStore
-from aidetector.dazzlecow.tracks import TrackIdentityAggregator, TrackletSnapshot
 from aidetector.dazzlecow.video_benchmark import (
     GroundTruth,
     VideoObservation,
     evaluate_observations,
 )
 from aidetector.domain.detections import DetectedObject as Crop
-from aidetector.domain.detections import IdentityResult
 from aidetector.domain.frames import Frame
-from aidetector.pipeline.ports import ModelBatchResult as TrackedSourceResult
+from aidetector.domain.identity import (
+    IdentityCandidate,
+    IdentityMatch,
+    IdentityResult,
+    TrackletSnapshot,
+)
+from aidetector.pipeline.identity_provider import (
+    IdentityBatch,
+    SamplingDecision,
+    TrackedIdentityProvider,
+)
+from aidetector.pipeline.identity_tracking import TrackIdentityAggregator
 
 
 class Scalar:
@@ -108,15 +116,17 @@ def test_miewid_encoder_normalizes_onnx_embeddings():
     inputs = []
 
     class Session:
+        def get_inputs(self):
+            return [type("Input", (), {"name": "input", "shape": [1, 3, 440, 440]})()]
+
+        def get_outputs(self):
+            return [type("Output", (), {"name": "output", "shape": [1, 2]})()]
+
         def run(self, outputs, values):
             inputs.append((outputs, values))
             return [np.asarray([[3, 4]], dtype=np.float32)]
 
-    encoder = CowIdentityEncoder.__new__(CowIdentityEncoder)
-    encoder.session = Session()
-    encoder.input_name = "input"
-    encoder.output_name = "output"
-    encoder.feature_dim = 2
+    encoder = CowIdentityEncoder(Session())
 
     result = encoder.embed([np.zeros((10, 20, 3), dtype=np.uint8)])
 
@@ -142,7 +152,7 @@ def test_masked_candidate_replaces_background_and_crops_mask():
     candidate = masked_candidate(frame, mask, 0.9)
 
     assert candidate is not None
-    assert candidate.crop == Crop(1, 1, 3, 3, label="cow", confidence=0.9)
+    assert candidate.detection == Crop(1, 1, 3, 3, label="cow", confidence=0.9)
     assert np.all(candidate.image == [100, 110, 120])
 
 
@@ -157,13 +167,27 @@ def test_candidates_from_result_keeps_cows_and_track_ids_only():
         [cow_mask, horse_mask],
         {19: "cow", 17: "horse"},
     )
-    settings = LocalizerSettings("model.pt", 0.1, 0, 1, 0, 0.5, 640)
+    settings = LocalizerSettings(0.1, 0, 1, 0)
 
     candidates = candidates_from_result(result, frame, settings)
 
     assert len(candidates) == 1
-    assert candidates[0].crop.track_id == 7
-    assert candidates[0].crop.label == "cow"
+    assert candidates[0].detection.track_id == 7
+    assert candidates[0].detection.label == "cow"
+
+
+def test_candidates_from_result_applies_identity_confidence():
+    frame = np.zeros((20, 20, 3), dtype=np.uint8)
+    mask = np.ones((20, 20), dtype=bool)
+    result = Result([Box([0, 0, 20, 20], confidence=0.4)], [mask])
+
+    candidates = candidates_from_result(
+        result,
+        frame,
+        LocalizerSettings(0.5, 0, 1, 0),
+    )
+
+    assert candidates == []
 
 
 def test_gallery_matches_best_sample_per_identity():
@@ -264,17 +288,21 @@ def test_track_identity_aggregates_and_caches_embeddings():
     tracks = TrackIdentityAggregator(Gallery(), samples=3, max_age=10)
     candidates = []
     for embedding in ([1, 0], [0.8, 0.2], [1, 0], [0, 1]):
-        candidate = CowCandidate(
+        candidate = IdentityCandidate(
             Crop(0, 0, 10, 10, label="cow", track_id=1),
             np.zeros((10, 10, 3), dtype=np.uint8),
         )
-        tracks.apply("camera", [candidate], np.asarray([embedding], dtype=np.float32))
-        candidates.append(candidate)
+        update = tracks.apply(
+            "camera",
+            [candidate],
+            np.asarray([embedding], dtype=np.float32),
+        )
+        candidates.append(update.candidates[0])
 
-    assert candidates[0].crop.identities == ()
-    assert candidates[1].crop.identities == ()
-    assert candidates[2].crop.identities == (IdentityResult("NL-123", 0.9),)
-    assert candidates[3].crop.identities == (IdentityResult("NL-123", 0.9),)
+    assert candidates[0].detection.identities == ()
+    assert candidates[1].detection.identities == ()
+    assert candidates[2].detection.identities == (IdentityResult("NL-123", 0.9),)
+    assert candidates[3].detection.identities == (IdentityResult("NL-123", 0.9),)
     assert len(calls) == 1
 
 
@@ -289,16 +317,20 @@ def test_track_identity_rechecks_each_complete_sample_window():
     tracks = TrackIdentityAggregator(gallery, samples=2, max_age=10)
     candidates = []
     for _ in range(4):
-        candidate = CowCandidate(
+        candidate = IdentityCandidate(
             Crop(0, 0, 10, 10, label="cow", track_id=1),
             np.zeros((10, 10, 3), dtype=np.uint8),
         )
-        tracks.apply("camera", [candidate], np.asarray([[1, 0]], dtype=np.float32))
-        candidates.append(candidate)
+        update = tracks.apply(
+            "camera",
+            [candidate],
+            np.asarray([[1, 0]], dtype=np.float32),
+        )
+        candidates.append(update.candidates[0])
 
-    assert candidates[1].crop.identities == (IdentityResult("NL-123", 0.9),)
-    assert candidates[2].crop.identities == (IdentityResult("NL-123", 0.9),)
-    assert candidates[3].crop.identities == ()
+    assert candidates[1].detection.identities == (IdentityResult("NL-123", 0.9),)
+    assert candidates[2].detection.identities == (IdentityResult("NL-123", 0.9),)
+    assert candidates[3].detection.identities == ()
 
 
 def test_track_identity_rechecks_active_tracks_after_gallery_change():
@@ -313,24 +345,50 @@ def test_track_identity_rechecks_active_tracks_after_gallery_change():
         {"match": lambda _self, _embedding: IdentityMatch("cow-1", "NL-123", 0.9, 1)},
     )()
     tracks = TrackIdentityAggregator(first, samples=1, max_age=10)
-    candidate = CowCandidate(Crop(0, 0, 10, 10, track_id=1), np.zeros((10, 10, 3)))
+    candidate = IdentityCandidate(Crop(0, 0, 10, 10, track_id=1), np.zeros((10, 10, 3)))
 
-    tracks.apply("camera", [candidate], np.asarray([[1, 0]]))
+    candidate = tracks.apply("camera", [candidate], np.asarray([[1, 0]])).candidates[0]
     tracks.set_gallery(second)
-    tracks.apply("camera", [candidate], np.asarray([[1, 0]]))
+    candidate = tracks.apply("camera", [candidate], np.asarray([[1, 0]])).candidates[0]
 
-    assert candidate.crop.identities == (IdentityResult("NL-123", 0.9),)
+    assert candidate.detection.identities == (IdentityResult("NL-123", 0.9),)
+
+
+def test_track_identity_keeps_cached_match_until_the_next_sample_window():
+    first = type(
+        "Gallery",
+        (),
+        {"match": lambda _self, _embedding: IdentityMatch("cow-1", "001", 0.9, 1)},
+    )()
+    second = type(
+        "Gallery",
+        (),
+        {"match": lambda _self, _embedding: IdentityMatch("cow-1", "NL-123", 0.9, 1)},
+    )()
+    tracks = TrackIdentityAggregator(first, samples=2, max_age=10)
+    candidate = IdentityCandidate(Crop(0, 0, 10, 10, track_id=1), np.zeros((10, 10, 3)))
+
+    for _ in range(2):
+        candidate = tracks.apply(
+            "camera", [candidate], np.asarray([[1, 0]])
+        ).candidates[0]
+    tracks.set_gallery(second)
+    candidate = tracks.apply("camera", [candidate], np.asarray([[1, 0]])).candidates[0]
+
+    assert candidate.detection.identities == (IdentityResult("001", 0.9),)
 
 
 def test_track_identity_returns_cumulative_enrollment_snapshots():
     tracks = TrackIdentityAggregator(None, samples=2, max_age=10)
     snapshots = []
     for embedding in ([1, 0], [1, 0], [0, 1], [0, 1]):
-        candidate = CowCandidate(
+        candidate = IdentityCandidate(
             Crop(0, 0, 10, 10, track_id=1),
             np.zeros((10, 10, 3), dtype=np.uint8),
         )
-        snapshots.extend(tracks.apply("camera", [candidate], np.asarray([embedding])))
+        snapshots.extend(
+            tracks.apply("camera", [candidate], np.asarray([embedding])).snapshots
+        )
 
     assert [snapshot.observations for snapshot in snapshots] == [2, 4]
     assert snapshots[-1].embedding == pytest.approx(np.asarray([1, 1]) / np.sqrt(2))
@@ -343,29 +401,40 @@ def test_track_identity_stores_at_most_one_online_sample_per_track():
         {"match": lambda _self, _embedding: IdentityMatch("cow-1", "001", 0.95, 1)},
     )()
     tracks = TrackIdentityAggregator(gallery, samples=1, max_age=10)
-    candidate = CowCandidate(Crop(0, 0, 10, 10, track_id=1), np.zeros((10, 10, 3)))
+    candidate = IdentityCandidate(Crop(0, 0, 10, 10, track_id=1), np.zeros((10, 10, 3)))
 
     first = tracks.apply("camera", [candidate], np.asarray([[1, 0]]))
-    tracks.mark_stored("camera", 1)
+    tracks.stop_sampling("camera", 1)
     second = tracks.apply("camera", [candidate], np.asarray([[1, 0]]))
 
-    assert len(first) == 1
-    assert second == []
+    assert len(first.snapshots) == 1
+    assert second.snapshots == ()
 
 
-def test_pipeline_learns_only_when_full_track_still_matches_same_identity():
-    pipeline = CowIdentityPipeline.__new__(CowIdentityPipeline)
-    pipeline.config = type(
-        "Config",
-        (),
-        {"match_threshold": 0.75, "match_margin": 0, "track_samples": 5},
-    )()
-    pipeline.gallery = CowIdentityGallery(
+def test_catalog_learns_only_when_full_track_still_matches_same_identity():
+    gallery = CowIdentityGallery(
         np.asarray([[1, 0], [0, 1]], dtype=np.float32),
         ["cow-1", "cow-2"],
         ["001", "002"],
         match_threshold=0.75,
     )
+    updated = []
+    store = type(
+        "Store",
+        (),
+        {
+            "is_finalized": lambda _self: True,
+            "update_identity": lambda _self, snapshot, **_kwargs: updated.append(
+                snapshot
+            ),
+            "update_pending": lambda _self, _snapshot: None,
+        },
+    )()
+    catalog = CowIdentityCatalog(
+        store,
+        CatalogPolicy(match_threshold=0.75, match_margin=0, track_samples=5),
+    )
+    catalog.gallery = gallery
     snapshot = TrackletSnapshot(
         "camera",
         1,
@@ -377,37 +446,47 @@ def test_pipeline_learns_only_when_full_track_still_matches_same_identity():
         "cow-1",
     )
 
-    assert pipeline._learning_match(snapshot).key == "cow-1"
-    assert (
-        pipeline._learning_match(
-            TrackletSnapshot(
-                "camera",
-                1,
-                1,
-                10,
-                10,
-                np.asarray([0, 1]),
-                np.zeros((10, 10, 3)),
-                "cow-1",
-            )
-        )
-        is None
+    assert catalog.record(snapshot) is SamplingDecision.STOP
+    assert updated == [snapshot]
+
+    conflicting = TrackletSnapshot(
+        "camera",
+        1,
+        1,
+        10,
+        10,
+        np.asarray([0, 1]),
+        np.zeros((10, 10, 3)),
+        "cow-1",
     )
+    assert catalog.record(conflicting) is SamplingDecision.CONTINUE
+    assert updated == [snapshot]
 
 
-def test_pipeline_does_not_learn_from_the_first_sample_window():
-    pipeline = CowIdentityPipeline.__new__(CowIdentityPipeline)
-    pipeline.config = type(
-        "Config",
-        (),
-        {"match_threshold": 0.75, "match_margin": 0, "track_samples": 5},
-    )()
-    pipeline.gallery = CowIdentityGallery(
+def test_catalog_does_not_learn_from_the_first_sample_window():
+    gallery = CowIdentityGallery(
         np.asarray([[1, 0]], dtype=np.float32),
         ["cow-1"],
         ["001"],
         match_threshold=0.75,
     )
+    updated = []
+    store = type(
+        "Store",
+        (),
+        {
+            "is_finalized": lambda _self: True,
+            "update_identity": lambda _self, snapshot, **_kwargs: updated.append(
+                snapshot
+            ),
+            "update_pending": lambda _self, _snapshot: None,
+        },
+    )()
+    catalog = CowIdentityCatalog(
+        store,
+        CatalogPolicy(match_threshold=0.75, match_margin=0, track_samples=5),
+    )
+    catalog.gallery = gallery
     snapshot = TrackletSnapshot(
         "camera",
         1,
@@ -419,26 +498,26 @@ def test_pipeline_does_not_learn_from_the_first_sample_window():
         "cow-1",
     )
 
-    assert pipeline._learning_match(snapshot) is None
+    assert catalog.record(snapshot) is SamplingDecision.CONTINUE
+    assert updated == []
 
 
 def test_pipeline_tracks_fallback_candidates_and_attaches_identity():
-    candidate = CowCandidate(
+    candidate = IdentityCandidate(
         Crop(1, 2, 8, 9, label="cow", confidence=0.8, track_id=1),
         np.zeros((7, 7, 3), dtype=np.uint8),
     )
     frame = np.zeros((10, 10, 3), dtype=np.uint8)
-    pipeline = CowIdentityPipeline.__new__(CowIdentityPipeline)
-    pipeline.localizer = type(
-        "Localizer",
+    candidate_source = type(
+        "CandidateSource",
         (),
         {
-            "track_sources": lambda _self, batch: [
-                TrackedSourceResult("camera", [candidate], batch["camera"])
+            "batches": lambda _self, batch: [
+                IdentityBatch("camera", batch["camera"], (candidate,))
             ]
         },
     )()
-    pipeline.encoder = type(
+    encoder = type(
         "Encoder",
         (),
         {"embed": lambda _self, _images: np.array([[1, 0]], dtype=np.float32)},
@@ -452,60 +531,71 @@ def test_pipeline_tracks_fallback_candidates_and_attaches_identity():
             )
         },
     )()
-    pipeline.gallery = gallery
-    pipeline.identity_tracks = TrackIdentityAggregator(gallery, samples=1, max_age=10)
-    pipeline.config = type(
-        "Config",
+    catalog = type(
+        "Catalog",
         (),
         {
-            "enrollment": None,
-            "match_threshold": 0.75,
-            "match_margin": 0,
-            "track_samples": 1,
+            "sync": lambda _self: gallery,
+            "record": lambda _self, _snapshot: SamplingDecision.STOP,
+            "close": lambda _self: None,
         },
     )()
-    pipeline.tracklet_store = type(
-        "Store",
-        (),
-        {
-            "is_finalized": lambda _self: True,
-            "update_identity": lambda _self, _snapshot, **_kwargs: None,
-        },
-    )()
-    pipeline._sync_database = lambda: None
+    pipeline = TrackedIdentityProvider(
+        candidates=candidate_source,
+        encoder=encoder,
+        catalog=catalog,
+        tracks=TrackIdentityAggregator(gallery, samples=1, max_age=10),
+    )
 
-    result = pipeline.track_sources({"camera": [Frame(datetime(2026, 1, 1), frame)]})
+    result = pipeline.process({"camera": [Frame(datetime(2026, 1, 1), frame)]})
 
-    assert result[0].result[0].crop.identities == (IdentityResult("cow-001", 0.95),)
+    assert result[0].candidates[0].detection.identities == (
+        IdentityResult("cow-001", 0.95),
+    )
 
 
 def test_pipeline_stores_only_unknown_tracks_as_pending():
     pending = []
     gallery = type("Gallery", (), {"match": lambda _self, _embedding: None})()
-    pipeline = CowIdentityPipeline.__new__(CowIdentityPipeline)
-    pipeline.gallery = gallery
-    pipeline.config = type("Config", (), {"match_threshold": 0.75, "match_margin": 0})()
-    pipeline.encoder = type(
+    encoder = type(
         "Encoder",
         (),
         {"embed": lambda _self, _images: np.asarray([[1, 0]], dtype=np.float32)},
     )()
-    pipeline.identity_tracks = TrackIdentityAggregator(gallery, samples=1, max_age=10)
-    pipeline.tracklet_store = type(
-        "Store",
+    catalog = type(
+        "Catalog",
         (),
         {
-            "is_finalized": lambda _self: True,
-            "update_pending": lambda _self, snapshot: pending.append(snapshot),
+            "sync": lambda _self: gallery,
+            "record": lambda _self, snapshot: (
+                pending.append(snapshot) or SamplingDecision.CONTINUE
+            ),
+            "close": lambda _self: None,
         },
     )()
-    pipeline._sync_database = lambda: None
-    candidate = CowCandidate(
+    candidate = IdentityCandidate(
         Crop(0, 0, 10, 10, track_id=1),
         np.zeros((10, 10, 3), dtype=np.uint8),
     )
+    candidate_source = type(
+        "CandidateSource",
+        (),
+        {
+            "batches": lambda _self, batch: [
+                IdentityBatch("camera", batch["camera"], (candidate,))
+            ]
+        },
+    )()
+    pipeline = TrackedIdentityProvider(
+        candidates=candidate_source,
+        encoder=encoder,
+        catalog=catalog,
+        tracks=TrackIdentityAggregator(gallery, samples=1, max_age=10),
+    )
 
-    pipeline._identify("camera", [candidate])
+    pipeline.process(
+        {"camera": [Frame(datetime(2026, 1, 1), np.zeros((10, 10, 3), dtype=np.uint8))]}
+    )
 
     assert len(pending) == 1
     assert pending[0].identity_key is None
@@ -545,6 +635,39 @@ def test_enrollment_known_count_and_ambiguous_clustering():
 
     assert len(set(ambiguous.values())) == 3
     assert len(set(known.values())) == 2
+
+
+def test_catalog_finalizes_enrollment_and_loads_gallery(tmp_path):
+    store = TrackletStore(tmp_path / "cows.sqlite", session="scan")
+    catalog = CowIdentityCatalog(
+        store,
+        CatalogPolicy(
+            match_threshold=0.75,
+            match_margin=0,
+            track_samples=1,
+            enrollment_identity_count=1,
+        ),
+    )
+    assert catalog.initialize("test-model", 2) is None
+    store.upsert(
+        TrackletSnapshot(
+            "camera",
+            1,
+            1,
+            5,
+            5,
+            np.asarray([1, 0]),
+            np.zeros((10, 10, 3), dtype=np.uint8),
+        )
+    )
+    store.request_finalize()
+
+    gallery = catalog.sync()
+
+    assert gallery is not None
+    assert gallery.match(np.asarray([1, 0])).key == "cow-0001"
+    assert catalog.sync() is gallery
+    catalog.close()
 
 
 def test_tracklet_store_finalizes_and_applies_animal_number(tmp_path):
@@ -592,9 +715,9 @@ def test_tracklet_store_supports_detector_worker_thread(tmp_path):
     )
 
     with ThreadPoolExecutor(max_workers=1) as executor:
-        tracklet_id = executor.submit(store.upsert, snapshot).result()
+        executor.submit(store.upsert, snapshot).result()
 
-    assert tracklet_id.endswith(":camera-1:1")
+    assert store.tracklets()[0].id.endswith(":camera-1:1")
     store.close()
 
 
@@ -869,7 +992,7 @@ def test_video_benchmark_measures_identity_delay_per_track():
             frame,
             [GroundTruth("001", (frame, 0, 10 + frame, 10))],
             [
-                CowCandidate(
+                IdentityCandidate(
                     Crop(frame, 0, 10 + frame, 10, track_id=1),
                     np.zeros((10, 10, 3)),
                 )

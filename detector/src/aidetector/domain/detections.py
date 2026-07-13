@@ -3,17 +3,12 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 
 from aidetector.domain.frames import Frame
+from aidetector.domain.identity import IdentityResult
 
 Number = int | float
 Confidence = Mapping[str, Number]
 ConfidenceThreshold = Number | dict[str, Number]
 ConfidenceValue = Number | Confidence
-
-
-@dataclass(frozen=True, slots=True)
-class IdentityResult:
-    identity: str
-    similarity: float
 
 
 @dataclass(frozen=True, slots=True)

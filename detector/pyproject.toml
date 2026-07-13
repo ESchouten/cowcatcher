@@ -36,9 +36,11 @@ windowsml = [
 ]
 identity = [
     "huggingface-hub>=0.34.0",
+    "scipy>=1.11.0",
+]
+identity-benchmark = [
     "pandas>=2.2.0",
     "scikit-learn>=1.7.0",
-    "scipy>=1.11.0",
 ]
 
 [build-system]
@@ -50,7 +52,7 @@ main = "aidetector:main"
 generate-schema = "aidetector.utils.generate_schema:main"
 benchmark-cow-identity-video = "aidetector.dazzlecow.video_benchmark:main"
 benchmark-cow-enrollment = "aidetector.dazzlecow.enrollment_benchmark:main"
-cow-identity-enrollment = "aidetector.dazzlecow.enrollment:main"
+cow-identity-enrollment = "aidetector.dazzlecow.enrollment_cli:main"
 
 [dependency-groups]
 dev = [

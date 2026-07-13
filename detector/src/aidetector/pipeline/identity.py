@@ -3,7 +3,11 @@ from dataclasses import dataclass, replace
 from threading import Lock
 from time import monotonic
 
-from aidetector.domain.detections import DetectedObject, IdentityResult, Observation
+from aidetector.domain.detections import DetectedObject, Observation
+from aidetector.domain.frames import FrameBatch
+from aidetector.domain.identity import IdentityResult
+from aidetector.pipeline.identity_provider import IdentityProvider
+from aidetector.pipeline.ports import EnrichmentBatch
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,8 +36,6 @@ class IdentityRegistry:
 
     def publish(self, source: str, producer: str, observation: Observation) -> None:
         height, width = observation.frame.require_image().shape[:2]
-        if not width or not height:
-            return
         now = self.clock()
         identities = {
             (source, producer, item.track_id): _IdentityObservation(
@@ -53,8 +55,6 @@ class IdentityRegistry:
 
     def enrich(self, source: str, observation: Observation) -> Observation:
         height, width = observation.frame.require_image().shape[:2]
-        if not width or not height:
-            return observation
         now = self.clock()
         with self._lock:
             self._prune(now)
@@ -78,6 +78,60 @@ class IdentityRegistry:
         ]
         for key in expired:
             del self._observations[key]
+
+
+class IdentityEnricher:
+    def __init__(
+        self,
+        registry: IdentityRegistry,
+        producer: str,
+        provider: IdentityProvider | None,
+    ):
+        self.registry = registry
+        self.producer = producer
+        self.provider = provider
+
+    def start(self) -> None:
+        if self.provider is not None:
+            self.provider.start()
+
+    def close(self) -> None:
+        if self.provider is not None:
+            self.provider.close()
+
+    def process(self, batch: FrameBatch) -> EnrichmentBatch:
+        provider = self.provider
+        if provider is None:
+            return EnrichmentBatch()
+
+        observations = []
+        identified = provider.process(batch)
+        for item in identified:
+            frame = item.frames[-1]
+            identity_observation = Observation(
+                frame,
+                tuple(candidate.detection for candidate in item.candidates),
+            )
+            self.registry.publish(item.source, self.producer, identity_observation)
+            observations.append(
+                (
+                    item.source,
+                    self.registry.enrich(item.source, item.detection_observation)
+                    if item.detection_observation is not None
+                    else identity_observation,
+                )
+            )
+
+        model_results = tuple(
+            item.model_result for item in identified if item.model_result is not None
+        )
+        return EnrichmentBatch(
+            tuple(observations),
+            model_results or None,
+        )
+
+    def enrich(self, source: str, observation: Observation) -> Observation:
+        return self.registry.enrich(source, observation)
 
 
 def _enrich_object(

@@ -1,10 +1,20 @@
 from collections import defaultdict, deque
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
+from typing import Protocol
 
 import numpy as np
-from aidetector.dazzlecow.gallery import IdentityMatch, IdentityMatcher
-from aidetector.dazzlecow.localizer import CowCandidate
+from aidetector.domain.identity import (
+    IdentityCandidate,
+    IdentityMatch,
+    TrackletSnapshot,
+)
+from aidetector.domain.vectors import normalize_vector
 from numpy import ndarray
+
+
+class IdentityMatcher(Protocol):
+    def match(self, embedding: ndarray, /) -> IdentityMatch | None: ...
 
 
 @dataclass
@@ -16,19 +26,13 @@ class _Track:
     embedding_sum: ndarray
     observations: int = 0
     identity: IdentityMatch | None = None
-    stored: bool = False
+    sampling_stopped: bool = False
 
 
-@dataclass(frozen=True)
-class TrackletSnapshot:
-    source: str
-    track_id: int
-    first_frame: int
-    last_frame: int
-    observations: int
-    embedding: ndarray
-    preview: ndarray
-    identity_key: str | None = None
+@dataclass(frozen=True, slots=True)
+class IdentityUpdate:
+    candidates: tuple[IdentityCandidate, ...]
+    snapshots: tuple[TrackletSnapshot, ...]
 
 
 class TrackIdentityAggregator:
@@ -47,40 +51,40 @@ class TrackIdentityAggregator:
         self._frame_by_source: defaultdict[str, int] = defaultdict(int)
         self._tracks_by_source: defaultdict[str, dict[int, _Track]] = defaultdict(dict)
 
-    def set_gallery(self, gallery: IdentityMatcher) -> None:
+    def set_gallery(self, gallery: IdentityMatcher | None) -> None:
         self.gallery = gallery
-        for tracks in self._tracks_by_source.values():
-            for track in tracks.values():
-                track.identity = None
 
-    def mark_stored(self, source: str, track_id: int) -> None:
-        track = self._tracks_by_source[source].get(track_id)
+    def stop_sampling(self, source: str, track_id: int) -> None:
+        track = self._tracks_by_source.get(source, {}).get(track_id)
         if track is not None:
-            track.stored = True
+            track.sampling_stopped = True
 
     def apply(
         self,
         source: str,
-        candidates: list[CowCandidate],
+        candidates: Sequence[IdentityCandidate],
         embeddings: ndarray,
-    ) -> list[TrackletSnapshot]:
+    ) -> IdentityUpdate:
         if len(candidates) != len(embeddings):
-            raise ValueError("Cow candidates and embeddings differ in length")
+            raise ValueError("Identity candidates and embeddings differ in length")
 
         frame = self._frame_by_source[source] + 1
         self._frame_by_source[source] = frame
         tracks = self._tracks_by_source[source]
-        for track_id in [
+        expired = [
             track_id
             for track_id, track in tracks.items()
             if frame - track.last_frame > self.max_age
-        ]:
+        ]
+        for track_id in expired:
             del tracks[track_id]
 
+        updated = []
         snapshots = []
         for candidate, embedding in zip(candidates, embeddings, strict=True):
-            track_id = candidate.crop.track_id
+            track_id = candidate.detection.track_id
             if track_id is None:
+                updated.append(candidate)
                 continue
             track = tracks.get(track_id)
             if track is None:
@@ -93,10 +97,10 @@ class TrackIdentityAggregator:
                 )
                 tracks[track.track_id] = track
 
-            embedding = _normalize(embedding)
+            normalized = normalize_vector(embedding)
             track.last_frame = frame
-            track.embeddings.append(embedding)
-            track.embedding_sum += embedding
+            track.embeddings.append(normalized)
+            track.embedding_sum += normalized
             track.observations += 1
             if (
                 len(track.embeddings) == self.samples
@@ -104,13 +108,18 @@ class TrackIdentityAggregator:
                 and self.gallery is not None
             ):
                 track.identity = self.gallery.match(
-                    _normalize(np.mean(track.embeddings, axis=0))
+                    normalize_vector(np.mean(track.embeddings, axis=0))
                 )
-            candidate.crop = replace(
-                candidate.crop,
-                identities=(track.identity.result,) if track.identity else (),
+            updated.append(
+                replace(
+                    candidate,
+                    detection=replace(
+                        candidate.detection,
+                        identities=(track.identity.result,) if track.identity else (),
+                    ),
+                )
             )
-            if track.observations % self.samples == 0 and not track.stored:
+            if track.observations % self.samples == 0 and not track.sampling_stopped:
                 snapshots.append(
                     TrackletSnapshot(
                         source,
@@ -118,15 +127,9 @@ class TrackIdentityAggregator:
                         track.first_frame,
                         track.last_frame,
                         track.observations,
-                        _normalize(track.embedding_sum),
+                        normalize_vector(track.embedding_sum),
                         candidate.image,
                         track.identity.key if track.identity else None,
                     )
                 )
-        return snapshots
-
-
-def _normalize(embedding: ndarray) -> ndarray:
-    embedding = np.asarray(embedding, dtype=np.float32)
-    norm = np.linalg.norm(embedding)
-    return embedding / max(float(norm), np.finfo(np.float32).eps)
+        return IdentityUpdate(tuple(updated), tuple(snapshots))

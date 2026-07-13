@@ -1,25 +1,7 @@
-from dataclasses import dataclass
-from typing import Protocol
-
 import numpy as np
-from aidetector.domain.detections import IdentityResult
+from aidetector.domain.identity import IdentityMatch
+from aidetector.domain.vectors import normalize_rows, normalize_vector
 from numpy import ndarray
-
-
-@dataclass(frozen=True)
-class IdentityMatch:
-    key: str
-    label: str
-    similarity: float
-    margin: float
-
-    @property
-    def result(self) -> IdentityResult:
-        return IdentityResult(self.label, self.similarity)
-
-
-class IdentityMatcher(Protocol):
-    def match(self, embedding: ndarray, /) -> IdentityMatch | None: ...
 
 
 class CowIdentityGallery:
@@ -32,27 +14,9 @@ class CowIdentityGallery:
         match_threshold: float = 0.68,
         match_margin: float = 0.05,
     ):
-        self._initialize(
-            embeddings,
-            np.asarray(keys),
-            np.asarray(labels),
-            match_threshold,
-            match_margin,
-        )
-
-    def _initialize(
-        self,
-        embeddings: ndarray,
-        keys: ndarray,
-        labels: ndarray,
-        match_threshold: float,
-        match_margin: float,
-    ) -> None:
-        self.embeddings = _normalize(np.asarray(embeddings, dtype=np.float32))
+        self.embeddings = normalize_rows(embeddings)
         self.keys = np.asarray(keys, dtype=str)
         self.labels = np.asarray(labels, dtype=str)
-        if self.embeddings.ndim != 2:
-            raise ValueError("Cow identity embeddings must be a 2D array")
         if self.keys.ndim != 1 or self.labels.ndim != 1:
             raise ValueError("Cow identity keys and labels must be 1D arrays")
         if len(self.embeddings) != len(self.keys) or len(self.keys) != len(self.labels):
@@ -62,12 +26,10 @@ class CowIdentityGallery:
         if len(self.keys) == 0:
             raise ValueError("Cow identity database has no assigned tracklets")
         self.identity_keys = np.unique(self.keys)
-        self.identity_labels = {}
-        for key in self.identity_keys:
-            key_labels = np.unique(self.labels[self.keys == key])
-            if len(key_labels) != 1:
-                raise ValueError(f"Cow identity {key} has conflicting labels")
-            self.identity_labels[str(key)] = str(key_labels[0])
+        self.identity_labels = {
+            str(key): str(self.labels[np.flatnonzero(self.keys == key)[0]])
+            for key in self.identity_keys
+        }
         self.match_threshold = match_threshold
         self.match_margin = match_margin
 
@@ -84,7 +46,7 @@ class CowIdentityGallery:
                 "Cow identity embedding dimension does not match the database "
                 f"({embedding.shape} != ({self.embeddings.shape[1]},))"
             )
-        similarities = self.embeddings @ _normalize(embedding.reshape(1, -1))[0]
+        similarities = self.embeddings @ normalize_vector(embedding)
         scores = np.asarray(
             [np.max(similarities[self.keys == key]) for key in self.identity_keys]
         )
@@ -100,8 +62,3 @@ class CowIdentityGallery:
             similarity,
             margin,
         )
-
-
-def _normalize(values: ndarray) -> ndarray:
-    norms = np.linalg.norm(values, axis=1, keepdims=True)
-    return values / np.maximum(norms, np.finfo(np.float32).eps)
