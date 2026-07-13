@@ -25,7 +25,8 @@ dependencies = [
 default = [
     "onnx>=1.20.1",
     "onnxslim>=0.1.87",
-    "onnxruntime>=1.24.1",
+    "onnxruntime>=1.23.2,<1.24; python_version < '3.11'",
+    "onnxruntime>=1.24.1; python_version >= '3.11'",
 ]
 nvidia = [
     "onnx>=1.20.1",
