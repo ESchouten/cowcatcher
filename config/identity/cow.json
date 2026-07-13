@@ -1,5 +1,6 @@
 {
     "label": "cow",
+    "database": "cows.sqlite",
     "segment_model": "yolo26m-seg.pt",
     "imgsz": 640,
     "confidence": 0.1,

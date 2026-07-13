@@ -107,6 +107,7 @@
 		onfinalize={handleDndFinalize}
 	>
 		{#each orderedStreams as stream (stream.id)}
+			{@const tracks = streamSettings.tracksBySource[stream.source]}
 			<div
 				use:trackStreamVisibility={stream.source}
 				class="relative transition-opacity"
@@ -117,11 +118,9 @@
 					<Stream
 						label={stream.label}
 						source={stream.source}
-						showTracks
-						tracksUrl={streamSettings.tracksBySource[stream.source]?.tracksUrl ??
-							streamSettings.tracksUrl}
-						tracksSource={streamSettings.tracksBySource[stream.source]?.tracksSource ??
-							streamSettings.tracksSource}
+						showTracks={tracks !== undefined}
+						tracksUrl={tracks?.tracksUrl}
+						tracksSource={tracks?.tracksSource}
 					/>
 				{:else}
 					<div class="relative aspect-video w-full bg-black">

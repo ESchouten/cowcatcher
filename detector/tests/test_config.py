@@ -39,9 +39,10 @@ def test_cow_identity_preset_contains_domain_tuning():
     repo_root = Path(__file__).resolve().parents[2]
     preset = json.loads((repo_root / "config/identity/cow.json").read_text())
 
-    config = IdentityConfig(database=Path("identities.sqlite"), **preset)
+    config = IdentityConfig(**preset)
 
     assert config.label == "cow"
+    assert config.database == Path("cows.sqlite")
     assert config.segment_model == "yolo26m-seg.pt"
     assert config.min_area_ratio == 0.005
     assert config.max_area_ratio == 0.3

@@ -4,6 +4,7 @@ import type { StreamMeta } from '$lib/schema';
 import { updateConfigState } from '$lib/server/config-store';
 import * as v from 'valibot';
 import { redirect } from '@sveltejs/kit';
+import { tracksBySource } from './stream-tracks';
 
 function getRedirectTarget(next: string | undefined, fallback: string) {
 	return next?.startsWith('/') && !next.startsWith('//') ? next : fallback;
@@ -26,30 +27,7 @@ export const getStreams = query(async () => {
 
 export const getStreamSettings = query(async () => {
 	const { config } = await getConfig();
-	const tracksBySource: Record<string, { tracksUrl: string; tracksSource: string }> = {};
-	let fallback: { tracksUrl: string; tracksSource: string } | undefined;
-
-	config.detectors.forEach((detector, detectorIndex) => {
-		const sse = detector.exporters?.sse?.[0];
-		if (!sse) {
-			return;
-		}
-
-		const tracksUrl = `/api/tracks/${detectorIndex}`;
-		fallback ??= { tracksUrl, tracksSource: `${detectorIndex}:0` };
-
-		detector.detection.source.forEach((source, sourceIndex) => {
-			tracksBySource[source] = {
-				tracksUrl,
-				tracksSource: `${detectorIndex}:${sourceIndex}`
-			};
-		});
-	});
-
-	return {
-		...(fallback ?? { tracksUrl: '/api/tracks/0', tracksSource: '0:0' }),
-		tracksBySource
-	};
+	return { tracksBySource: tracksBySource(config) };
 });
 
 export const saveStream = form(

@@ -158,7 +158,7 @@
 		detector.identity = {
 			...IDENTITY_FORM_VALUES,
 			...selectedPreset,
-			database,
+			database: selectedPreset.database ?? database,
 			enrollment
 		};
 	}
