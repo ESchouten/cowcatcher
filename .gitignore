@@ -1,6 +1,7 @@
 detections
 /identities
 /detector/identities
+/detector/benchmark-cache/
 /web/identities
 datasets
 config.json
