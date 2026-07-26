@@ -442,6 +442,21 @@
           "default": 0.1,
           "title": "Crop Padding",
           "type": "number"
+        },
+        "keep_alive": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Keep Alive"
         }
       },
       "required": [

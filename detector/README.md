@@ -159,6 +159,7 @@ Can be a single object or a list. If you provide a list, the VLMs are tried in o
 | `key`      |              | API key for the model provider (Gemini, OpenAI, etc.). |
 | `url`      |              | Custom API endpoint, if you're running a local model. |
 | `strategy` | `"VIDEO"`    | `"VIDEO"` — sends the full detection clip to the AI. `"IMAGE"` — sends only a single frame. Video is more accurate but costs more tokens. |
+| `keep_alive` |            | Optional keep-alive passed to the provider request (useful for local LLM runtimes). Examples: `0` unloads after response, `"5m"` keeps it warm for 5 minutes, `-1` keeps it loaded indefinitely. |
 
 ---
 

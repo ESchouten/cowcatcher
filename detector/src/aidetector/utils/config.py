@@ -95,6 +95,7 @@ class VLMConfig:
     url: str | None = None
     strategy: Literal["IMAGE", "VIDEO"] = "VIDEO"
     crop_padding: float = 0.1
+    keep_alive: int | str | None = None
 
 
 @dataclass(kw_only=True)

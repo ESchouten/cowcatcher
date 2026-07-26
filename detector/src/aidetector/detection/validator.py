@@ -80,6 +80,10 @@ class Validator:
             )
 
             for model in models:
+                request_kwargs = dict(kwargs)
+                if vlm_config.keep_alive is not None:
+                    request_kwargs["keep_alive"] = vlm_config.keep_alive
+
                 for attempt in range(5):
                     try:
                         response = litellm.completion(
@@ -87,7 +91,7 @@ class Validator:
                             messages=messages,
                             response_format=response_format,
                             # max_tokens=1000,
-                            **kwargs,
+                            **request_kwargs,
                         )
                         output = json.loads(response.choices[0].message.content)
                         self.logger.info(f"VLM detected {output}")
