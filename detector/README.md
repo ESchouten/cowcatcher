@@ -25,9 +25,13 @@ Pick the right file for your hardware:
 | `aidetector-winml-<version>.exe` | Windows 11 with any GPU but NVIDIA |
 | `aidetector-cuda130-<version>.exe` | Windows 10/11 with NVIDIA RTX 3000 series or newer |
 | `aidetector-cuda126-<version>.exe` | Windows 10/11 with NVIDIA RTX 2000 series or older |
-| `aidetector-osx-<version>` | macOS (CPU / Apple Silicon) |
+| `aidetector-osx-<version>` | Apple silicon macOS (PyTorch MPS, FP16) |
 
 > **Not sure which to pick?** Start with `winml` on Windows. Use a `cuda` build only if you know your NVIDIA setup matches that CUDA version.
+
+On Apple silicon macOS, configured `.pt` detector models run directly through
+PyTorch MPS in FP16. They are not exported to ONNX. Explicitly configured
+`.onnx` models and auxiliary ONNX models keep their existing runtime path.
 
 **Setup:**
 1. Create a folder, e.g. `C:\aidetector`, and move the downloaded `.exe` into it.

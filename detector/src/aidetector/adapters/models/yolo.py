@@ -1,4 +1,5 @@
 import logging
+import sys
 from time import perf_counter
 from typing import Any
 
@@ -21,10 +22,32 @@ from ultralytics import YOLO
 from ultralytics.data.loaders import LoadStreams, SourceTypes
 
 logger = logging.getLogger(__name__)
+_EXPORTED_MODEL_SUFFIXES = (".onnx", ".engine")
+_MPS_OVERRIDES: dict[str, Any] = {
+    "device": "mps",
+    # Ultralytics 8.4 uses quantize=16 to select FP16 AutoBackend inference.
+    "quantize": 16,
+}
 
 
-def uses_pytorch_backend(config: YoloConfig) -> bool:
-    return TYPE == "cuda" and not config.model.endswith((".onnx", ".engine"))
+def pytorch_device(config: YoloConfig) -> str | None:
+    if config.model.endswith(_EXPORTED_MODEL_SUFFIXES):
+        return None
+    if TYPE == "cuda":
+        return "cuda"
+    if TYPE == "mps" or sys.platform == "darwin":
+        return "mps"
+    return None
+
+
+def _require_mps() -> None:
+    import torch
+
+    if not torch.backends.mps.is_available():
+        raise RuntimeError(
+            "PyTorch MPS is unavailable; the macOS detector requires Apple silicon "
+            "with an MPS-capable macOS release"
+        )
 
 
 class UltralyticsStreamBatch(LoadStreams):
@@ -108,8 +131,9 @@ def build_yolo_model(
     onnx_config: OnnxConfig,
     source_count: int,
 ) -> YOLO:
+    device = pytorch_device(config)
     model_path = config.model
-    if not config.model.endswith(".onnx") and not uses_pytorch_backend(config):
+    if not config.model.endswith(".onnx") and device is None:
         model_path = str(
             YOLO(config.model, task=config.task).export(
                 format="engine" if TYPE == "tensorrt" else "onnx",
@@ -122,7 +146,13 @@ def build_yolo_model(
             )
         )
 
+    if device == "mps":
+        _require_mps()
+        logger.info("Using PyTorch MPS FP16 for detector model %s", config.model)
+
     model = YOLO(model_path, task=config.task)
+    if device == "mps":
+        model.overrides.update(_MPS_OVERRIDES)
     _setup_ultralytics_predictor(model)
     return model
 

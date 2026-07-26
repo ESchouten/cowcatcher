@@ -292,9 +292,9 @@ jobs:
           make_latest: false
           files: detector/dist/${{ matrix.artifact_prefix }}-${{ steps.version.outputs.version }}.zip
 
-  macos-default-exe:
-    name: MacOS Default Executable
-    runs-on: macos-latest
+  macos-mps-exe:
+    name: macOS MPS Executable
+    runs-on: macos-15
     timeout-minutes: 60
     defaults:
       run:
@@ -320,9 +320,12 @@ jobs:
       - name: Set up Python
         run: uv python install ${{ env.PYTHON_VERSION }}
 
+      - name: Verify Apple silicon
+        run: test "$(uname -m)" = "arm64"
+
       - name: Build Executable
         run: |
-          echo 'TYPE = "default"' > ${{ env.VERSION_FILE }}
+          echo 'TYPE = "mps"' > ${{ env.VERSION_FILE }}
           echo 'REF_NAME = "${{ github.ref_name }}"' >> ${{ env.VERSION_FILE }}
           uv run --extra default pyinstaller src/aidetector/__init__.py --name "${ARTIFACT_NAME}.command" ${{ env.PYINSTALLER_ARGS }}
 

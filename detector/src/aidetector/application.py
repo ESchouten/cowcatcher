@@ -3,7 +3,7 @@ from time import sleep
 from aidetector.adapters.models.yolo import (
     YoloRunner,
     build_yolo_model,
-    uses_pytorch_backend,
+    pytorch_device,
 )
 from aidetector.adapters.sinks.factory import build_sinks
 from aidetector.adapters.sources.source import SourceProvider
@@ -214,7 +214,7 @@ def build_identity_provider(
         )
 
     encoder = build_miewid_encoder(
-        pytorch=uses_pytorch_backend(primary_config),
+        pytorch=pytorch_device(primary_config) == "cuda",
     )
     store = TrackletStore(config.database)
     catalog = SqliteIdentityCatalog(

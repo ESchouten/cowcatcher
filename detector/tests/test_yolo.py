@@ -8,10 +8,11 @@ from aidetector.adapters.models.yolo import (
     UltralyticsStreamBatch,
     YoloResultMapper,
     YoloRunner,
-    uses_pytorch_backend,
+    build_yolo_model,
+    pytorch_device,
 )
 from aidetector.domain.frames import Frame
-from aidetector.utils.config import YoloConfig
+from aidetector.utils.config import OnnxConfig, YoloConfig
 
 
 class FakeScalar:
@@ -98,19 +99,68 @@ def make_runner() -> YoloRunner:
 
 
 @pytest.mark.parametrize(
-    ("runtime", "model", "expected"),
+    ("runtime", "platform", "model", "expected_device"),
     [
-        ("cuda", "model.pt", True),
-        ("cuda", "model.onnx", False),
-        ("cuda", "model.engine", False),
-        ("default", "model.pt", False),
-        ("tensorrt", "model.pt", False),
+        ("cuda", "linux", "model.pt", "cuda"),
+        ("cuda", "linux", "model.onnx", None),
+        ("cuda", "linux", "model.engine", None),
+        ("default", "linux", "model.pt", None),
+        ("tensorrt", "linux", "model.pt", None),
+        ("default", "darwin", "model.pt", "mps"),
+        ("mps", "darwin", "model.pt", "mps"),
+        ("mps", "darwin", "model.onnx", None),
+        ("mps", "darwin", "model.engine", None),
     ],
 )
-def test_pytorch_backend_selection(monkeypatch, runtime, model, expected):
+def test_pytorch_device_selection(
+    monkeypatch,
+    runtime,
+    platform,
+    model,
+    expected_device,
+):
     monkeypatch.setattr(yolo_module, "TYPE", runtime)
+    monkeypatch.setattr(yolo_module.sys, "platform", platform)
 
-    assert uses_pytorch_backend(YoloConfig(model=model)) is expected
+    assert pytorch_device(YoloConfig(model=model)) == expected_device
+
+
+def test_macos_checkpoint_skips_onnx_export_and_uses_mps(monkeypatch):
+    created = []
+
+    class Model:
+        def __init__(self):
+            self.overrides = {}
+
+        def export(self, **kwargs):
+            raise AssertionError(f"unexpected ONNX export: {kwargs}")
+
+    def fake_yolo(path, task):
+        created.append((path, task))
+        return Model()
+
+    monkeypatch.setattr(yolo_module, "TYPE", "default")
+    monkeypatch.setattr(yolo_module.sys, "platform", "darwin")
+    monkeypatch.setattr(yolo_module, "YOLO", fake_yolo)
+    monkeypatch.setattr(yolo_module, "_require_mps", lambda: None)
+    monkeypatch.setattr(yolo_module, "_setup_ultralytics_predictor", lambda model: None)
+
+    result = build_yolo_model(YoloConfig(model="model.pt"), OnnxConfig(), 1)
+
+    assert created == [("model.pt", "detect")]
+    assert result.overrides == {
+        "device": "mps",
+        "quantize": 16,
+    }
+
+
+def test_macos_checkpoint_fails_closed_when_mps_is_unavailable(monkeypatch):
+    import torch
+
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: False)
+
+    with pytest.raises(RuntimeError, match="MPS is unavailable"):
+        yolo_module._require_mps()
 
 
 def test_ultralytics_stream_batch_behaves_like_stream_loader():
