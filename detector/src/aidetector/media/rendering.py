@@ -62,10 +62,17 @@ def get_plot(
             continue
 
         cv2.rectangle(image, (x1, y1), (x2, y2), color, thickness)
-        labels = [
-            f"{identity.identity} {identity.similarity:.0%}"
-            for identity in item.identities
-        ]
+        labels = []
+        if item.identity is not None:
+            identity_label = item.identity.official_id or item.identity.status.replace(
+                "_", " "
+            )
+            similarity = (
+                f" {item.identity.similarity:.0%}"
+                if item.identity.similarity is not None
+                else ""
+            )
+            labels.append(f"{identity_label}{similarity}")
         if item.label is not None and item.confidence is not None:
             labels.append(f"{item.label} {item.confidence:.0%}")
         if not labels:

@@ -40,10 +40,6 @@ windowsml = [
     "wasdk-microsoft-windows-ai-machinelearning[all]>=1.8.260209005",
     "wasdk-microsoft-windows-applicationmodel-dynamicdependency-bootstrap>=1.8.260209005",
 ]
-identity-benchmark = [
-    "pandas>=2.2.0",
-]
-
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -51,9 +47,6 @@ build-backend = "hatchling.build"
 [project.scripts]
 main = "aidetector:main"
 generate-schema = "aidetector.utils.generate_schema:main"
-benchmark-reid-video = "aidetector.benchmarks.reid.video:main"
-benchmark-reid-enrollment = "aidetector.benchmarks.reid.enrollment:main"
-identity-enrollment = "aidetector.reid.cli:main"
 
 [dependency-groups]
 dev = [

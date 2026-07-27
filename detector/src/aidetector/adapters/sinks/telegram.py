@@ -4,7 +4,7 @@ from typing import Any
 import requests
 
 from aidetector.adapters.sinks.media import EncodedFile, encode_media
-from aidetector.domain.detections import unique_identities
+from aidetector.domain.detections import identity_results
 from aidetector.pipeline.messages import CompletedEvent
 from aidetector.utils.config import ChatConfig
 
@@ -112,12 +112,17 @@ class TelegramSink:
             if message.status == "unvalidated"
             else ""
         )
-        identities = unique_identities(event.best.objects)
+        identities = [
+            item
+            for item in identity_results(event.best.objects)
+            if item.status == "matched"
+        ]
         identity_text = (
             "\nIdentities: "
             + ", ".join(
-                f"{identity.identity} ({identity.similarity:.0%})"
+                f"{identity.official_id} ({identity.similarity:.0%})"
                 for identity in identities
+                if identity.similarity is not None
             )
             if identities
             else ""

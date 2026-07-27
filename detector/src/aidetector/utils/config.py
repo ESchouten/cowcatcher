@@ -27,6 +27,7 @@ def config_list(value: T | list[T] | None) -> list[T]:
 HttpMethod = Literal["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]
 NonEmptyString = Annotated[str, Field(min_length=1)]
 Probability = Annotated[float, Field(ge=0, le=1)]
+PositiveProbability = Annotated[float, Field(gt=0, le=1)]
 FrameMargin = Annotated[float, Field(ge=0, lt=0.5)]
 NonNegativeFloat = Annotated[float, Field(ge=0)]
 PositiveFloat = Annotated[float, Field(gt=0)]
@@ -55,31 +56,70 @@ class YoloConfig:
     tracker: NonEmptyString = "bytetrack.yaml"
 
 
-@dataclass(config=STRICT_CONFIG, kw_only=True)
-class IdentityEnrollmentConfig:
-    identity_count: PositiveInt | None = None
+@dataclass(config=STRICT_CONFIG, frozen=True, kw_only=True)
+class IdentityDisplayConfig:
+    singular: NonEmptyString
+    plural: NonEmptyString
+    official_id_label: NonEmptyString
+
+
+@dataclass(config=STRICT_CONFIG, frozen=True, kw_only=True)
+class IdentityCandidateFilterConfig:
+    min_area_ratio: Probability
+    max_area_ratio: Probability
+    frame_edge_margin: FrameMargin
+
+    def __post_init__(self) -> None:
+        if self.min_area_ratio > self.max_area_ratio:
+            raise ValueError("Identity minimum area exceeds maximum area")
+
+
+@dataclass(config=STRICT_CONFIG, frozen=True, kw_only=True)
+class IdentityControlledZoneConfig:
+    zone_id: NonEmptyString
+    x1: Probability
+    y1: Probability
+    x2: Probability
+    y2: Probability
+    minimum_box_inside_ratio: PositiveProbability
+    minimum_stable_frames: PositiveInt
+    clear_frames: PositiveInt
+
+    def __post_init__(self) -> None:
+        if self.x2 <= self.x1 or self.y2 <= self.y1:
+            raise ValueError("Identity controlled zone must have positive extent")
 
 
 @dataclass(config=STRICT_CONFIG, kw_only=True)
 class IdentityConfig:
     database: Path
-    label: NonEmptyString
-    enrollment: IdentityEnrollmentConfig | None = None
-    segment_model: NonEmptyString | None = None
-    imgsz: PositiveInt = 640
-    confidence: Probability = 0.25
-    match_threshold: Probability = 0.68
-    match_margin: Probability = 0.05
-    min_area_ratio: Probability = 0
-    max_area_ratio: Probability = 1
-    margin: FrameMargin = 0
-    nms_iou: Probability = 0.7
-    track_samples: PositiveInt = 5
-    track_max_age: PositiveInt = 10
+    target_label: NonEmptyString
+    display: IdentityDisplayConfig
+    candidate_filter: IdentityCandidateFilterConfig
+    controlled_zone: IdentityControlledZoneConfig
+    encoder: Literal["miewid-dual-crop-v1"]
+    similarity_threshold: Probability
+    similarity_margin: Probability
+    query_frames: PositiveInt
+    gallery_frames: PositiveInt
+    track_max_age: PositiveInt
 
     def __post_init__(self) -> None:
-        if self.min_area_ratio > self.max_area_ratio:
-            raise ValueError("Identity minimum area exceeds maximum area")
+        if self.database.is_absolute():
+            raise ValueError("Identity database must be relative to config.json")
+        if self.query_frames != 2 or self.gallery_frames != 4:
+            raise ValueError(
+                "miewid-dual-crop-v1 requires exactly two query frames and "
+                "four gallery frames"
+            )
+
+    @property
+    def data_directory(self) -> Path:
+        return getattr(self, "_data_directory", Path.cwd())
+
+    def resolve_paths(self, data_directory: Path) -> None:
+        self.database = (data_directory / self.database).resolve()
+        self._data_directory = data_directory
 
 
 @dataclass(config=STRICT_CONFIG, kw_only=True)
@@ -181,8 +221,17 @@ class DetectorConfig:
     exporters: ExportersConfig | None = None
 
     def __post_init__(self) -> None:
-        if self.identity is not None and self.yolo is None:
+        if self.identity is None:
+            return
+        if self.yolo is None:
             raise ValueError("Identity enrichment requires a YOLO detector")
+        if not self.yolo.tracking:
+            raise ValueError("Identity enrichment requires YOLO tracking")
+        if (
+            isinstance(self.yolo.confidence, dict)
+            and self.identity.target_label not in self.yolo.confidence
+        ):
+            raise ValueError("Identity target label must be enabled in yolo.confidence")
 
 
 @dataclass(config=STRICT_CONFIG, kw_only=True)
@@ -251,9 +300,18 @@ def load_config(config_path: Path = DEFAULT_CONFIG_PATH) -> Config:
     config_json.pop("$schema", None)
 
     try:
-        return Config(**config_json)
+        config = Config(**config_json)
     except ValidationError as error:
         details = format_validation_errors(error)
         raise ConfigurationError(
             f"Configuration validation failed for {config_path}:\n{details}"
         ) from error
+    _resolve_identity_paths(config, config_path.resolve().parent)
+    return config
+
+
+def _resolve_identity_paths(config: Config, data_directory: Path) -> None:
+    for detector in config.detectors:
+        identity = detector.identity
+        if identity is not None:
+            identity.resolve_paths(data_directory)

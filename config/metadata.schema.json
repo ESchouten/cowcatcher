@@ -55,12 +55,16 @@
           "default": null,
           "title": "Track Id"
         },
-        "identities": {
-          "items": {
-            "$ref": "#/$defs/IdentityMetadata"
-          },
-          "title": "Identities",
-          "type": "array"
+        "identity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IdentityMetadata"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -75,18 +79,81 @@
     "IdentityMetadata": {
       "additionalProperties": false,
       "properties": {
-        "identity": {
-          "title": "Identity",
+        "status": {
+          "enum": [
+            "matched",
+            "unknown",
+            "ambiguous",
+            "insufficient_evidence",
+            "switch_risk",
+            "error"
+          ],
+          "title": "Status",
           "type": "string"
         },
+        "visual_identity_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Visual Identity Id"
+        },
+        "official_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Official Id"
+        },
         "similarity": {
-          "title": "Similarity",
-          "type": "number"
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Similarity"
+        },
+        "margin": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Margin"
+        },
+        "gallery_version": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Gallery Version"
         }
       },
       "required": [
-        "identity",
-        "similarity"
+        "status",
+        "visual_identity_id",
+        "official_id",
+        "similarity",
+        "margin",
+        "gallery_version"
       ],
       "title": "IdentityMetadata",
       "type": "object"
@@ -128,11 +195,11 @@
       "title": "Confidences",
       "type": "object"
     },
-    "identities": {
+    "identity_results": {
       "items": {
         "$ref": "#/$defs/IdentityMetadata"
       },
-      "title": "Identities",
+      "title": "Identity Results",
       "type": "array"
     },
     "observations": {
@@ -177,7 +244,7 @@
     "validated",
     "confidence",
     "confidences",
-    "identities",
+    "identity_results",
     "observations",
     "start",
     "end",
