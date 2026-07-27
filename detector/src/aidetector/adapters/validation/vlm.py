@@ -6,10 +6,11 @@ from time import sleep
 from typing import Any
 
 import litellm
+from litellm.exceptions import ServiceUnavailableError
+
 from aidetector.domain.events import DetectionEvent
 from aidetector.pipeline.ports import ArtifactProvider
 from aidetector.utils.config import VLMConfig, config_list
-from litellm.exceptions import ServiceUnavailableError
 
 logger = logging.getLogger(__name__)
 MAX_ATTEMPTS = 5
@@ -128,7 +129,7 @@ def _messages(
     else:
         image = artifacts.image(
             crop=True,
-            plot=True,
+            plot=False,
             padding=config.crop_padding,
         )
         image = image or artifacts.image()
