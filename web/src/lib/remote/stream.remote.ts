@@ -56,7 +56,7 @@ export const saveStream = form(
 				);
 			});
 		});
-		redirect(302, getRedirectTarget(next, '/streams'));
+		redirect(302, getRedirectTarget(next, '/setup/cameras'));
 	}
 );
 

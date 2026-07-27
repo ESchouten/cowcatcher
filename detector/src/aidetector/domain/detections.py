@@ -20,7 +20,7 @@ class DetectedObject:
     label: str | None = None
     confidence: float | None = None
     track_id: int | None = None
-    identities: tuple[IdentityResult, ...] = ()
+    identity: IdentityResult | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,11 +55,19 @@ def bounding_region(objects: Iterable[DetectedObject]) -> DetectedObject | None:
     )
 
 
-def unique_identities(objects: Iterable[DetectedObject]) -> tuple[IdentityResult, ...]:
-    identities: dict[str, IdentityResult] = {}
+def identity_results(objects: Iterable[DetectedObject]) -> tuple[IdentityResult, ...]:
+    identities: dict[tuple[str | None, str | None, str], IdentityResult] = {}
     for item in objects:
-        for identity in item.identities:
-            identities.setdefault(identity.identity, identity)
+        identity = item.identity
+        if identity is not None:
+            identities.setdefault(
+                (
+                    identity.visual_identity_id,
+                    identity.official_id,
+                    identity.status,
+                ),
+                identity,
+            )
     return tuple(identities.values())
 
 

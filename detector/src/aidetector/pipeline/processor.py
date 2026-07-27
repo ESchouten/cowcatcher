@@ -8,9 +8,14 @@ from aidetector.pipeline.dispatch import EventDispatcher
 from aidetector.pipeline.inference import (
     FrameProcessor,
     InferenceStage,
-    NoOpFrameEnricher,
+    NoOpObservationEnricher,
 )
-from aidetector.pipeline.ports import FrameEnricher, FrameSource, Resource, Sink
+from aidetector.pipeline.ports import (
+    FrameSource,
+    ObservationEnricher,
+    Resource,
+    Sink,
+)
 
 
 class DetectionPipeline:
@@ -22,7 +27,7 @@ class DetectionPipeline:
         interval: float,
         source: FrameSource,
         inference: InferenceStage | None,
-        enricher: FrameEnricher | None = None,
+        identity_stage: ObservationEnricher | None = None,
         dispatcher: EventDispatcher,
         live_sinks: list[Sink[LiveObservation]],
         compact: Callable[[Observation], Observation],
@@ -47,7 +52,7 @@ class DetectionPipeline:
             realtime=source.realtime,
             source_ids=source_ids,
             inference=inference,
-            enricher=enricher or NoOpFrameEnricher(),
+            identity_stage=identity_stage or NoOpObservationEnricher(),
             dispatcher=dispatcher,
             live_sinks=live_sinks,
             compact=compact,

@@ -36,7 +36,7 @@ export const saveTelegram = form(
 				app.telegrams.push({ label, token, chat });
 			}
 		});
-		redirect(302, getRedirectTarget(next, '/notifications'));
+		redirect(302, getRedirectTarget(next, '/setup/notifications'));
 	}
 );
 

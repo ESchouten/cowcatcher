@@ -423,6 +423,36 @@
       "title": "HealthcheckConfig",
       "type": "object"
     },
+    "IdentityCandidateFilterConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "min_area_ratio": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Min Area Ratio",
+          "type": "number"
+        },
+        "max_area_ratio": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Max Area Ratio",
+          "type": "number"
+        },
+        "frame_edge_margin": {
+          "exclusiveMaximum": 0.5,
+          "minimum": 0,
+          "title": "Frame Edge Margin",
+          "type": "number"
+        }
+      },
+      "required": [
+        "min_area_ratio",
+        "max_area_ratio",
+        "frame_edge_margin"
+      ],
+      "title": "IdentityCandidateFilterConfig",
+      "type": "object"
+    },
     "IdentityConfig": {
       "additionalProperties": false,
       "properties": {
@@ -431,98 +461,48 @@
           "title": "Database",
           "type": "string"
         },
-        "label": {
+        "target_label": {
           "minLength": 1,
-          "title": "Label",
+          "title": "Target Label",
           "type": "string"
         },
-        "enrollment": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/IdentityEnrollmentConfig"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
+        "display": {
+          "$ref": "#/$defs/IdentityDisplayConfig"
         },
-        "segment_model": {
-          "anyOf": [
-            {
-              "minLength": 1,
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Segment Model"
+        "candidate_filter": {
+          "$ref": "#/$defs/IdentityCandidateFilterConfig"
         },
-        "imgsz": {
-          "default": 640,
+        "controlled_zone": {
+          "$ref": "#/$defs/IdentityControlledZoneConfig"
+        },
+        "encoder": {
+          "const": "miewid-dual-crop-v1",
+          "title": "Encoder",
+          "type": "string"
+        },
+        "similarity_threshold": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Similarity Threshold",
+          "type": "number"
+        },
+        "similarity_margin": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Similarity Margin",
+          "type": "number"
+        },
+        "query_frames": {
           "exclusiveMinimum": 0,
-          "title": "Imgsz",
+          "title": "Query Frames",
           "type": "integer"
         },
-        "confidence": {
-          "default": 0.25,
-          "maximum": 1,
-          "minimum": 0,
-          "title": "Confidence",
-          "type": "number"
-        },
-        "match_threshold": {
-          "default": 0.68,
-          "maximum": 1,
-          "minimum": 0,
-          "title": "Match Threshold",
-          "type": "number"
-        },
-        "match_margin": {
-          "default": 0.05,
-          "maximum": 1,
-          "minimum": 0,
-          "title": "Match Margin",
-          "type": "number"
-        },
-        "min_area_ratio": {
-          "default": 0,
-          "maximum": 1,
-          "minimum": 0,
-          "title": "Min Area Ratio",
-          "type": "number"
-        },
-        "max_area_ratio": {
-          "default": 1,
-          "maximum": 1,
-          "minimum": 0,
-          "title": "Max Area Ratio",
-          "type": "number"
-        },
-        "margin": {
-          "default": 0,
-          "exclusiveMaximum": 0.5,
-          "minimum": 0,
-          "title": "Margin",
-          "type": "number"
-        },
-        "nms_iou": {
-          "default": 0.7,
-          "maximum": 1,
-          "minimum": 0,
-          "title": "Nms Iou",
-          "type": "number"
-        },
-        "track_samples": {
-          "default": 5,
+        "gallery_frames": {
           "exclusiveMinimum": 0,
-          "title": "Track Samples",
+          "title": "Gallery Frames",
           "type": "integer"
         },
         "track_max_age": {
-          "default": 10,
           "exclusiveMinimum": 0,
           "title": "Track Max Age",
           "type": "integer"
@@ -530,29 +510,107 @@
       },
       "required": [
         "database",
-        "label"
+        "target_label",
+        "display",
+        "candidate_filter",
+        "controlled_zone",
+        "encoder",
+        "similarity_threshold",
+        "similarity_margin",
+        "query_frames",
+        "gallery_frames",
+        "track_max_age"
       ],
       "title": "IdentityConfig",
       "type": "object"
     },
-    "IdentityEnrollmentConfig": {
+    "IdentityControlledZoneConfig": {
       "additionalProperties": false,
       "properties": {
-        "identity_count": {
-          "anyOf": [
-            {
-              "exclusiveMinimum": 0,
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Identity Count"
+        "zone_id": {
+          "minLength": 1,
+          "title": "Zone Id",
+          "type": "string"
+        },
+        "x1": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "X1",
+          "type": "number"
+        },
+        "y1": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Y1",
+          "type": "number"
+        },
+        "x2": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "X2",
+          "type": "number"
+        },
+        "y2": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Y2",
+          "type": "number"
+        },
+        "minimum_box_inside_ratio": {
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "title": "Minimum Box Inside Ratio",
+          "type": "number"
+        },
+        "minimum_stable_frames": {
+          "exclusiveMinimum": 0,
+          "title": "Minimum Stable Frames",
+          "type": "integer"
+        },
+        "clear_frames": {
+          "exclusiveMinimum": 0,
+          "title": "Clear Frames",
+          "type": "integer"
         }
       },
-      "title": "IdentityEnrollmentConfig",
+      "required": [
+        "zone_id",
+        "x1",
+        "y1",
+        "x2",
+        "y2",
+        "minimum_box_inside_ratio",
+        "minimum_stable_frames",
+        "clear_frames"
+      ],
+      "title": "IdentityControlledZoneConfig",
+      "type": "object"
+    },
+    "IdentityDisplayConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "singular": {
+          "minLength": 1,
+          "title": "Singular",
+          "type": "string"
+        },
+        "plural": {
+          "minLength": 1,
+          "title": "Plural",
+          "type": "string"
+        },
+        "official_id_label": {
+          "minLength": 1,
+          "title": "Official Id Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "singular",
+        "plural",
+        "official_id_label"
+      ],
+      "title": "IdentityDisplayConfig",
       "type": "object"
     },
     "OnnxConfig": {

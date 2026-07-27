@@ -1,224 +1,305 @@
 import { command, query } from '$app/server';
 import * as v from 'valibot';
-import type { DatabaseSync } from 'node:sqlite';
-import { getIdentityDatabases, openIdentityDatabase } from '$lib/server/identity-databases';
 import {
-	mergeIdentities as mergeStoredIdentities,
-	requestIdentityFinalization,
-	setIdentityAnimalNumber,
-	splitTracklet
-} from '$lib/server/identity-store';
+	confirmMapping,
+	correctMapping,
+	createOfficialIdentity,
+	createProvisionalMapping,
+	deactivateMapping,
+	mergeVisualIdentities,
+	readIdentityCatalog,
+	readCatalogControl,
+	rollbackMapping,
+	splitVisualIdentity,
+	updateOfficialIdentity,
+	type IdentityCatalogSnapshot
+} from '$lib/server/identity-catalog';
+import {
+	getIdentityDatabases,
+	openIdentityDatabase,
+	type IdentityDatabaseConfig
+} from '$lib/server/identity-databases';
+import { readConfigState } from '$lib/server/config-store';
 
-export interface IdentitySummary {
-	identity: string;
-	animalNumber: string | null;
-	tracklets: number;
-	preview: string | null;
-}
-
-export interface IdentityTracklet {
-	id: string;
-	source: string;
-	observations: number;
-	preview: string;
-}
-
-export interface IdentityDatabaseSummary {
-	database: string;
+export interface IdentityCatalogView {
+	catalogId: string;
 	label: string;
-	tracklets: number;
-	pendingTracklets: number;
-	pending: IdentityTracklet[];
-	finalizeRequested: boolean;
-	finalizeError: string | null;
-	identities: IdentitySummary[];
+	targetLabel: string;
+	display: IdentityDatabaseConfig['display'];
+	state: 'ready' | 'not_initialized' | 'error';
+	message: string | null;
+	snapshot: IdentityCatalogSnapshot | null;
 }
 
-function control(database: DatabaseSync, key: string): string | null {
-	const row = database.prepare('SELECT value FROM control WHERE key = ?').get(key) as
-		| { value: string }
-		| undefined;
-	return row?.value ?? null;
+export interface IdentityStatusView {
+	catalogId: string;
+	label: string;
+	state: IdentityCatalogView['state'];
+	message: string | null;
+	operatorRevision: number | null;
+	runtimeRevision: number | null;
+	activeGalleryVersion: number | null;
+	lastIdentityError: string | null;
 }
 
-export const getIdentities = query(async (): Promise<IdentityDatabaseSummary[]> => {
+function unavailableState(error: unknown): Pick<IdentityCatalogView, 'state' | 'message'> {
+	const message = error instanceof Error ? error.message : 'Identity catalog is unavailable';
+	return {
+		state: message.includes('Start the detector')
+			? ('not_initialized' as const)
+			: ('error' as const),
+		message
+	};
+}
+
+export const getIdentityCatalogs = query(async (): Promise<IdentityCatalogView[]> => {
 	const configured = await getIdentityDatabases();
 	return Promise.all(
-		configured.map(async ({ database, label }) => {
-			let connection: DatabaseSync;
+		configured.map(async (catalog) => {
 			try {
-				connection = await openIdentityDatabase(database);
-			} catch {
+				const database = await openIdentityDatabase(catalog.id);
+				try {
+					return {
+						catalogId: catalog.id,
+						label: catalog.label,
+						targetLabel: catalog.targetLabel,
+						display: catalog.display,
+						state: 'ready' as const,
+						message: null,
+						snapshot: readIdentityCatalog(database)
+					};
+				} finally {
+					database.close();
+				}
+			} catch (error) {
 				return {
-					database,
-					label,
-					tracklets: 0,
-					pendingTracklets: 0,
-					pending: [],
-					finalizeRequested: false,
-					finalizeError: null,
-					identities: []
+					catalogId: catalog.id,
+					label: catalog.label,
+					targetLabel: catalog.targetLabel,
+					display: catalog.display,
+					...unavailableState(error),
+					snapshot: null
 				};
-			}
-
-			try {
-				const tracklets = Number(
-					(connection.prepare('SELECT COUNT(*) AS count FROM tracklets').get() as { count: number })
-						.count
-				);
-				const pendingTracklets = Number(
-					(
-						connection
-							.prepare(
-								`SELECT COUNT(*) AS count
-								 FROM tracklets t
-								 LEFT JOIN identity_tracklets it ON it.tracklet_id = t.id
-								 WHERE it.tracklet_id IS NULL`
-							)
-							.get() as { count: number }
-					).count
-				);
-				const rows = connection
-					.prepare(
-						`SELECT i.identity, i.animal_number, COUNT(it.tracklet_id) AS tracklets,
-							(SELECT t.preview FROM tracklets t
-							 JOIN identity_tracklets preview_it ON preview_it.tracklet_id = t.id
-							 WHERE preview_it.identity = i.identity
-							 ORDER BY t.observations DESC LIMIT 1) AS preview
-						 FROM identities i
-						 LEFT JOIN identity_tracklets it ON it.identity = i.identity
-						 GROUP BY i.identity, i.animal_number
-						 ORDER BY i.identity`
-					)
-					.all() as Array<{
-					identity: string;
-					animal_number: string | null;
-					tracklets: number;
-					preview: Uint8Array | null;
-				}>;
-				const pending = connection
-					.prepare(
-						`SELECT t.id, t.source, t.observations, t.preview
-						 FROM tracklets t
-						 LEFT JOIN identity_tracklets it ON it.tracklet_id = t.id
-						 WHERE it.tracklet_id IS NULL
-						 ORDER BY t.observations DESC, t.id
-						 LIMIT 12`
-					)
-					.all() as Array<{
-					id: string;
-					source: string;
-					observations: number;
-					preview: Uint8Array;
-				}>;
-				return {
-					database,
-					label,
-					tracklets,
-					pendingTracklets,
-					pending: pending.map((tracklet) => ({
-						id: tracklet.id,
-						source: tracklet.source,
-						observations: Number(tracklet.observations),
-						preview: `data:image/jpeg;base64,${Buffer.from(tracklet.preview).toString('base64')}`
-					})),
-					finalizeRequested: control(connection, 'finalize_requested') === '1',
-					finalizeError: control(connection, 'finalize_error') || null,
-					identities: rows.map((row) => ({
-						identity: row.identity,
-						animalNumber: row.animal_number,
-						tracklets: Number(row.tracklets),
-						preview: row.preview
-							? `data:image/jpeg;base64,${Buffer.from(row.preview).toString('base64')}`
-							: null
-					}))
-				};
-			} finally {
-				connection.close();
 			}
 		})
 	);
 });
 
-export const getIdentityTracklets = query(
-	v.object({ database: v.string(), identity: v.string() }),
-	async ({ database, identity }): Promise<IdentityTracklet[]> => {
-		const connection = await openIdentityDatabase(database);
-		try {
-			const rows = connection
-				.prepare(
-					`SELECT t.id, t.source, t.observations, t.preview
-					 FROM tracklets t
-					 JOIN identity_tracklets it ON it.tracklet_id = t.id
-					 WHERE it.identity = ?
-					 ORDER BY t.source, t.first_frame, t.id`
-				)
-				.all(identity) as Array<{
-				id: string;
-				source: string;
-				observations: number;
-				preview: Uint8Array;
-			}>;
-			return rows.map((row) => ({
-				id: row.id,
-				source: row.source,
-				observations: Number(row.observations),
-				preview: `data:image/jpeg;base64,${Buffer.from(row.preview).toString('base64')}`
-			}));
-		} finally {
-			connection.close();
-		}
-	}
-);
-
-const databaseInput = v.object({ database: v.string() });
-
-export const finalizeIdentities = command(databaseInput, async ({ database }) => {
-	const connection = await openIdentityDatabase(database);
-	try {
-		requestIdentityFinalization(connection);
-	} finally {
-		connection.close();
-	}
+export const getIdentityStatus = query(async (): Promise<IdentityStatusView[]> => {
+	const configured = await getIdentityDatabases();
+	return Promise.all(
+		configured.map(async (catalog) => {
+			try {
+				const database = await openIdentityDatabase(catalog.id);
+				try {
+					const control = readCatalogControl(database);
+					return {
+						catalogId: catalog.id,
+						label: catalog.label,
+						state: 'ready' as const,
+						message: null,
+						...control
+					};
+				} finally {
+					database.close();
+				}
+			} catch (error) {
+				return {
+					catalogId: catalog.id,
+					label: catalog.label,
+					...unavailableState(error),
+					operatorRevision: null,
+					runtimeRevision: null,
+					activeGalleryVersion: null,
+					lastIdentityError: null
+				};
+			}
+		})
+	);
 });
 
-export const setAnimalNumber = command(
+export const getDetectorConnection = query(
+	async (): Promise<'unconfigured' | 'connected' | 'disconnected'> => {
+		const { config } = await readConfigState();
+		const detector = config.detectors.find((item) => item.exporters?.sse?.[0]);
+		const sse = detector?.exporters?.sse?.[0];
+		if (!sse) return 'unconfigured';
+		const host = process.env.DETECTOR_HOST?.trim() || '127.0.0.1';
+		const endpoint = (sse.endpoint?.trim() || '/events/0').replace(/^\/*/, '/');
+		const url = new URL(`http://${host}`);
+		url.port = String(sse.port ?? 8765);
+		url.pathname = endpoint.split('?', 1)[0];
+		try {
+			const response = await fetch(url, {
+				headers: { Accept: 'text/event-stream' },
+				signal: AbortSignal.timeout(750)
+			});
+			await response.body?.cancel();
+			return response.ok ? 'connected' : 'disconnected';
+		} catch {
+			return 'disconnected';
+		}
+	}
+);
+
+const catalogInput = {
+	catalogId: v.pipe(v.string(), v.trim(), v.minLength(1)),
+	expectedRevision: v.pipe(v.number(), v.integer(), v.minValue(0)),
+	reason: v.optional(v.string())
+};
+
+async function withCatalog<T>(
+	catalogId: string,
+	action: (database: Awaited<ReturnType<typeof openIdentityDatabase>>, galleryFrames: number) => T
+): Promise<T> {
+	const catalog = (await getIdentityDatabases()).find((item) => item.id === catalogId);
+	if (!catalog) throw new Error('Identity catalog is not configured');
+	const database = await openIdentityDatabase(catalogId);
+	try {
+		return action(database, catalog.galleryFrames);
+	} finally {
+		database.close();
+	}
+}
+
+export const addOfficialIdentity = command(
 	v.object({
-		database: v.string(),
-		identity: v.string(),
-		animalNumber: v.string()
+		...catalogInput,
+		officialId: v.pipe(v.string(), v.trim(), v.minLength(1)),
+		displayName: v.optional(v.string()),
+		notes: v.optional(v.string())
 	}),
-	async ({ database, identity, animalNumber }) => {
-		const connection = await openIdentityDatabase(database);
-		try {
-			setIdentityAnimalNumber(connection, identity, animalNumber);
-		} finally {
-			connection.close();
-		}
-	}
+	async ({ catalogId, expectedRevision, reason, officialId, displayName, notes }) =>
+		withCatalog(catalogId, (database) =>
+			createOfficialIdentity(
+				database,
+				{ officialId, displayName, notes },
+				{ expectedRevision, reason }
+			)
+		)
 );
 
-export const mergeIdentity = command(
-	v.object({ database: v.string(), source: v.string(), target: v.string() }),
-	async ({ database, source, target }) => {
-		if (source === target) throw new Error('Choose a different target identity');
-		const connection = await openIdentityDatabase(database);
-		try {
-			mergeStoredIdentities(connection, source, target);
-		} finally {
-			connection.close();
-		}
-	}
+export const editOfficialIdentity = command(
+	v.object({
+		...catalogInput,
+		officialId: v.pipe(v.string(), v.trim(), v.minLength(1)),
+		displayName: v.optional(v.string()),
+		status: v.picklist(['active', 'archived']),
+		notes: v.optional(v.string())
+	}),
+	async ({ catalogId, expectedRevision, reason, officialId, displayName, status, notes }) =>
+		withCatalog(catalogId, (database) =>
+			updateOfficialIdentity(
+				database,
+				{ officialId, displayName, status, notes },
+				{ expectedRevision, reason }
+			)
+		)
 );
 
-export const splitIdentityTracklet = command(
-	v.object({ database: v.string(), identity: v.string(), tracklet: v.string() }),
-	async ({ database, identity, tracklet }) => {
-		const connection = await openIdentityDatabase(database);
-		try {
-			splitTracklet(connection, identity, tracklet);
-		} finally {
-			connection.close();
-		}
-	}
+export const provisionIdentity = command(
+	v.object({
+		...catalogInput,
+		visualIdentityId: v.pipe(v.string(), v.regex(/^vid_/)),
+		officialId: v.pipe(v.string(), v.trim(), v.minLength(1)),
+		trackletId: v.pipe(v.string(), v.regex(/^trk_/))
+	}),
+	async ({ catalogId, expectedRevision, reason, visualIdentityId, officialId, trackletId }) =>
+		withCatalog(catalogId, (database, galleryFrames) =>
+			createProvisionalMapping(
+				database,
+				{ visualIdentityId, officialId, trackletId },
+				{ galleryFrames },
+				{ expectedRevision, reason }
+			)
+		)
+);
+
+export const confirmIdentity = command(
+	v.object({
+		...catalogInput,
+		mappingId: v.pipe(v.string(), v.regex(/^map_/)),
+		confirmationTrackletId: v.pipe(v.string(), v.regex(/^trk_/))
+	}),
+	async ({ catalogId, expectedRevision, reason, mappingId, confirmationTrackletId }) =>
+		withCatalog(catalogId, (database, galleryFrames) =>
+			confirmMapping(
+				database,
+				{ mappingId, confirmationTrackletId },
+				{ galleryFrames },
+				{ expectedRevision, reason }
+			)
+		)
+);
+
+export const correctIdentity = command(
+	v.object({
+		...catalogInput,
+		mappingId: v.pipe(v.string(), v.regex(/^map_/)),
+		officialId: v.pipe(v.string(), v.trim(), v.minLength(1)),
+		provisionalTrackletId: v.pipe(v.string(), v.regex(/^trk_/))
+	}),
+	async ({ catalogId, expectedRevision, reason, mappingId, officialId, provisionalTrackletId }) =>
+		withCatalog(catalogId, (database, galleryFrames) =>
+			correctMapping(
+				database,
+				{ mappingId, officialId, provisionalTrackletId },
+				{ galleryFrames },
+				{ expectedRevision, reason }
+			)
+		)
+);
+
+export const deactivateIdentity = command(
+	v.object({
+		...catalogInput,
+		mappingId: v.pipe(v.string(), v.regex(/^map_/))
+	}),
+	async ({ catalogId, expectedRevision, reason, mappingId }) =>
+		withCatalog(catalogId, (database) =>
+			deactivateMapping(database, mappingId, { expectedRevision, reason })
+		)
+);
+
+export const rollbackIdentity = command(
+	v.object({
+		...catalogInput,
+		mappingId: v.pipe(v.string(), v.regex(/^map_/))
+	}),
+	async ({ catalogId, expectedRevision, reason, mappingId }) =>
+		withCatalog(catalogId, (database) =>
+			rollbackMapping(database, mappingId, { expectedRevision, reason })
+		)
+);
+
+export const mergeIdentityEvidence = command(
+	v.object({
+		...catalogInput,
+		sourceVisualIdentityId: v.pipe(v.string(), v.regex(/^vid_/)),
+		targetVisualIdentityId: v.pipe(v.string(), v.regex(/^vid_/))
+	}),
+	async ({ catalogId, expectedRevision, reason, sourceVisualIdentityId, targetVisualIdentityId }) =>
+		withCatalog(catalogId, (database) =>
+			mergeVisualIdentities(
+				database,
+				{ sourceVisualIdentityId, targetVisualIdentityId },
+				{ expectedRevision, reason }
+			)
+		)
+);
+
+export const splitIdentityEvidence = command(
+	v.object({
+		...catalogInput,
+		sourceVisualIdentityId: v.pipe(v.string(), v.regex(/^vid_/)),
+		trackletIds: v.pipe(v.array(v.pipe(v.string(), v.regex(/^trk_/))), v.minLength(1))
+	}),
+	async ({ catalogId, expectedRevision, reason, sourceVisualIdentityId, trackletIds }) =>
+		withCatalog(catalogId, (database) =>
+			splitVisualIdentity(
+				database,
+				{ sourceVisualIdentityId, trackletIds },
+				{ expectedRevision, reason }
+			)
+		)
 );

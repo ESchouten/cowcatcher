@@ -2,6 +2,7 @@ import { command, query } from '$app/server';
 import { getConfig, getConfigSchema } from './config.remote';
 import * as v from 'valibot';
 import { updateConfigState } from '$lib/server/config-store';
+import { validateResolvedDetector } from '$lib/server/presets';
 
 export const getDetectorSchema = query(async () => {
 	const configSchema = await getConfigSchema();
@@ -36,10 +37,17 @@ export const saveDetector = command(
 		original: v.optional(v.string()),
 		detector: v.any(),
 		meta: v.object({
-			label: v.string()
+			label: v.string(),
+			presets: v.optional(
+				v.object({
+					detector: v.optional(v.object({ filename: v.string(), blob_sha: v.string() })),
+					identity: v.optional(v.object({ filename: v.string(), blob_sha: v.string() }))
+				})
+			)
 		})
 	}),
 	async ({ original, detector, meta }) => {
+		validateResolvedDetector(detector);
 		await updateConfigState(({ config, app }) => {
 			if (original) {
 				const index = app.detectors.findIndex((item) => item.label === original);

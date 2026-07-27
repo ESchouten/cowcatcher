@@ -70,7 +70,8 @@ function createStream(source: string, ffmpegPath: string, signal: AbortSignal) {
 				if (ended) return;
 				ended = true;
 				cleanup();
-				failure ? controller.error(failure) : controller.close();
+				if (failure) controller.error(failure);
+				else controller.close();
 			};
 			cancelProcess = () => {
 				if (ended) return;

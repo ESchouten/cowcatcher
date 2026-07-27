@@ -28,6 +28,7 @@ jobs:
         python-version:
           - "3.10"
           - "3.11"
+          - "3.12"
     env:
       UV_PYTHON: ${{ matrix.python-version }}
     defaults:
@@ -45,21 +46,24 @@ jobs:
         run: uv python install
 
       - name: Ruff
-        run: uv run --extra default --extra identity-benchmark ruff check src/aidetector tests
+        run: uv run --locked --extra default ruff check src/aidetector tests
 
       - name: Format
-        run: uv run --extra default --extra identity-benchmark ruff format --check src/aidetector tests
+        run: uv run --locked --extra default ruff format --check src/aidetector tests
 
       - name: Compile
-        run: uv run --extra default --extra identity-benchmark python -m compileall src/aidetector
+        run: uv run --locked --extra default python -m compileall src/aidetector
 
       - name: Type check
-        run: uv run --extra default --extra identity-benchmark ty check src
+        run: uv run --locked --extra default ty check src/aidetector
 
       - name: Verify generated schemas
         run: |
-          uv run --extra default --extra identity-benchmark generate-schema
+          uv run --locked --extra default generate-schema
           git diff --exit-code -- ../config/config.schema.json ../config/metadata.schema.json
 
       - name: Pytest
-        run: uv run --extra default --extra identity-benchmark pytest
+        run: uv run --locked --extra default pytest
+
+      - name: Build wheel
+        run: uv build --wheel

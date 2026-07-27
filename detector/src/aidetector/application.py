@@ -1,9 +1,11 @@
+from __future__ import annotations
+
 from time import sleep
+from typing import TYPE_CHECKING
 
 from aidetector.adapters.models.yolo import (
     YoloRunner,
     build_yolo_model,
-    pytorch_device,
 )
 from aidetector.adapters.sinks.factory import build_sinks
 from aidetector.adapters.sources.source import SourceProvider
@@ -15,16 +17,6 @@ from aidetector.pipeline.aggregation import EventAggregator
 from aidetector.pipeline.cooldown import CooldownTracker
 from aidetector.pipeline.dispatch import EventDispatcher
 from aidetector.pipeline.inference import InferenceStage
-from aidetector.pipeline.identity import (
-    IdentityEnricher,
-    IdentityRegistry,
-)
-from aidetector.pipeline.identity_provider import (
-    IdentityProvider,
-    ModelIdentityCandidateSource,
-    TrackedIdentityProvider,
-)
-from aidetector.pipeline.identity_tracking import TrackIdentityAggregator
 from aidetector.pipeline.processor import DetectionPipeline
 from aidetector.services.healthcheck import Healthcheck
 from aidetector.utils.config import (
@@ -32,9 +24,11 @@ from aidetector.utils.config import (
     DetectorConfig,
     IdentityConfig,
     OnnxConfig,
-    YoloConfig,
     config_list,
 )
+
+if TYPE_CHECKING:
+    from aidetector.reid.stage import IdentityStage
 
 
 class Application:
@@ -48,13 +42,11 @@ class Application:
 
     @classmethod
     def from_config(cls, config: Config) -> "Application":
-        identity_registry = IdentityRegistry()
         pipelines = [
             build_pipeline(
                 detector_config,
                 config.onnx,
                 index,
-                identity_registry,
             )
             for index, detector_config in enumerate(config.detectors)
         ]
@@ -98,7 +90,6 @@ def build_pipeline(
     config: DetectorConfig,
     onnx: OnnxConfig,
     pipeline_index: int,
-    identity_registry: IdentityRegistry,
 ) -> DetectionPipeline:
     source = SourceProvider(config.detection)
     inference = None
@@ -123,21 +114,13 @@ def build_pipeline(
         )
         cooldown_policy = CooldownPolicy(yolo.confidence, yolo.cooldown)
 
-    identity_pipeline = None
+    identity_stage = None
     if config.identity is not None:
         assert config.yolo is not None and runner is not None
-        identity_pipeline = build_identity_provider(
+        identity_stage = build_identity_stage(
             config.identity,
-            onnx,
-            source.sources,
-            config.yolo,
             runner,
         )
-    enricher = IdentityEnricher(
-        identity_registry,
-        f"detector-{pipeline_index}",
-        identity_pipeline,
-    )
 
     sinks = build_sinks(config.exporters, pipeline_index)
     dispatcher = EventDispatcher(
@@ -150,105 +133,76 @@ def build_pipeline(
         interval=config.detection.interval,
         source=source,
         inference=inference,
-        enricher=enricher,
+        identity_stage=identity_stage,
         dispatcher=dispatcher,
         live_sinks=sinks.live,
         compact=compact_observation,
-        resources=[*sinks.resources, enricher],
+        resources=[
+            *sinks.resources,
+            *([identity_stage] if identity_stage is not None else []),
+        ],
         pipeline_index=pipeline_index,
     )
 
 
-def build_identity_provider(
+def build_identity_stage(
     config: IdentityConfig,
-    onnx: OnnxConfig,
-    sources: list[str],
-    primary_config: YoloConfig,
     primary_runner: YoloRunner,
-) -> IdentityProvider:
-    from aidetector.reid.catalog import CatalogPolicy, SqliteIdentityCatalog
-    from aidetector.reid.miewid import MIEWID_MODEL, build_miewid_encoder
-    from aidetector.reid.segmentation import (
-        LocalizerSettings,
-        SegmentationLocalizer,
+) -> IdentityStage:
+    from aidetector.reid.controlled_zone import ControlledZonePolicy
+    from aidetector.reid.identity_catalog import IdentityCatalog
+    from aidetector.reid.miewid import build_miewid_encoder
+    from aidetector.reid.stage import (
+        CandidateFilterPolicy,
+        IdentityPolicy,
+        IdentityStage,
     )
-    from aidetector.reid.store import TrackletStore
 
-    settings = LocalizerSettings(
-        label=config.label,
-        confidence=config.confidence,
-        min_area_ratio=config.min_area_ratio,
-        max_area_ratio=config.max_area_ratio,
-        margin=config.margin,
-    )
-    if config.enrollment is None and not config.database.is_file():
-        raise FileNotFoundError(f"Identity database not found: {config.database}")
-    reuse_primary = (
-        primary_config.task == "segment"
-        and primary_config.tracking
-        and any(
-            name == config.label
-            for name, _ in primary_runner.class_confidences.values()
-        )
-    )
-    if reuse_primary:
-        identity_runner = primary_runner
-    else:
-        if config.segment_model is None:
-            raise ValueError(
-                "Identity enrichment requires a segmentation-capable YOLO model "
-                "or identity.segment_model"
-            )
-        identity_config = YoloConfig(
-            model=config.segment_model,
-            task="segment",
-            tracking=True,
-            confidence={config.label: config.confidence},
-            imgsz=config.imgsz,
-            iou=config.nms_iou,
-        )
-        identity_runner = YoloRunner(
-            identity_config,
-            sources,
-            build_yolo_model(identity_config, onnx, len(sources)),
-        )
-
-    encoder = build_miewid_encoder(
-        pytorch=pytorch_device(primary_config) == "cuda",
-    )
-    store = TrackletStore(config.database)
-    catalog = SqliteIdentityCatalog(
-        store,
-        CatalogPolicy(
-            match_threshold=config.match_threshold,
-            match_margin=config.match_margin,
-            track_samples=config.track_samples,
-            enrollment_identity_count=(
-                config.enrollment.identity_count
-                if config.enrollment is not None
-                else None
-            ),
-        ),
-    )
+    available_labels = {
+        name for name, _threshold in primary_runner.class_confidences.values()
+    }
+    catalog = IdentityCatalog(config.database)
     try:
-        gallery = catalog.initialize(MIEWID_MODEL, encoder.feature_dim)
-        if config.enrollment is None and gallery is None:
-            raise ValueError(f"Identity database is not finalized: {config.database}")
+        if config.target_label not in available_labels:
+            raise ValueError(
+                "Identity target label "
+                f"'{config.target_label}' is not tracked by the selected detector"
+            )
+        encoder = build_miewid_encoder(
+            model_key=config.encoder,
+            asset_root=config.data_directory,
+        )
     except Exception:
         catalog.close()
         raise
 
-    return TrackedIdentityProvider(
-        candidates=ModelIdentityCandidateSource(
-            identity_runner,
-            SegmentationLocalizer(settings),
-            reuse_for_detection=reuse_primary,
+    return IdentityStage(
+        policy=IdentityPolicy(
+            target_label=config.target_label,
+            candidate_filter=CandidateFilterPolicy(
+                min_area_ratio=config.candidate_filter.min_area_ratio,
+                max_area_ratio=config.candidate_filter.max_area_ratio,
+                frame_edge_margin=config.candidate_filter.frame_edge_margin,
+            ),
+            controlled_zone=ControlledZonePolicy(
+                zone_id=config.controlled_zone.zone_id,
+                x1=config.controlled_zone.x1,
+                y1=config.controlled_zone.y1,
+                x2=config.controlled_zone.x2,
+                y2=config.controlled_zone.y2,
+                minimum_box_inside_ratio=(
+                    config.controlled_zone.minimum_box_inside_ratio
+                ),
+                minimum_stable_frames=config.controlled_zone.minimum_stable_frames,
+                clear_frames=config.controlled_zone.clear_frames,
+            ),
+            encoder=config.encoder,
+            similarity_threshold=config.similarity_threshold,
+            similarity_margin=config.similarity_margin,
+            query_frames=config.query_frames,
+            gallery_frames=config.gallery_frames,
+            track_max_age=config.track_max_age,
         ),
         encoder=encoder,
         catalog=catalog,
-        tracks=TrackIdentityAggregator(
-            gallery,
-            samples=config.track_samples,
-            max_age=config.track_max_age,
-        ),
     )

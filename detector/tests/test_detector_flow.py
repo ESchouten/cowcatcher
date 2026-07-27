@@ -96,7 +96,14 @@ class RecordingRunner:
         return self.mapped
 
 
-def build_test_pipeline(*, tracking=False, runner=None, source=None, live_sink=None):
+def build_test_pipeline(
+    *,
+    tracking=False,
+    runner=None,
+    source=None,
+    live_sink=None,
+    identity_stage=None,
+):
     source = source or FakeSource()
     dispatcher = RecordingDispatcher()
     pipeline = DetectionPipeline(
@@ -107,6 +114,7 @@ def build_test_pipeline(*, tracking=False, runner=None, source=None, live_sink=N
             runner or RecordingRunner(),
             EventAggregator(event_policy(time_max=0)),
         ),
+        identity_stage=identity_stage,
         dispatcher=dispatcher,
         live_sinks=[live_sink] if live_sink else [],
         compact=lambda observation: observation,
@@ -355,6 +363,33 @@ def test_pipeline_tracks_sources_as_one_stream_batch():
         ("camera-1", "camera-1-tracked", 2),
         ("camera-2", "camera-2-tracked", 1),
     ]
+
+
+def test_identity_stage_runs_once_on_each_primary_tracking_result():
+    now = datetime.now()
+    mapped = [make_observation(now)]
+    runner = RecordingRunner(mapped=mapped)
+
+    class RecordingIdentityStage:
+        def __init__(self):
+            self.calls = []
+
+        def enrich(self, source, observation):
+            self.calls.append((source, observation))
+            return observation
+
+    identity_stage = RecordingIdentityStage()
+    pipeline, _ = build_test_pipeline(
+        tracking=True,
+        runner=runner,
+        identity_stage=identity_stage,
+    )
+    frame = Frame(now, np.zeros((80, 120, 3), dtype=np.uint8))
+
+    pipeline.processor.process({"camera-1": [frame]})
+
+    assert runner.calls == [("track_sources", ["camera-1"])]
+    assert identity_stage.calls == [("camera-1", mapped[-1])]
 
 
 def test_pipeline_publishes_live_observation_and_completed_event():

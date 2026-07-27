@@ -46,9 +46,9 @@
 			badge: hasStreams ? 'Done' : 'Recommended',
 			count: streams.length,
 			countLabel: streams.length === 1 ? 'stream' : 'streams',
-			href: '/streams/add?setup=1',
-			viewHref: '/streams',
-			action: hasStreams ? 'Add another' : 'Add stream'
+			href: '/setup/cameras/add',
+			viewHref: '/setup/cameras',
+			action: hasStreams ? 'Add another' : 'Add camera'
 		},
 		{
 			title: 'Telegram',
@@ -58,8 +58,8 @@
 			badge: hasTelegrams ? 'Done' : 'Optional',
 			count: telegrams.length,
 			countLabel: telegrams.length === 1 ? 'channel' : 'channels',
-			href: '/notifications/add?setup=1',
-			viewHref: '/notifications',
+			href: '/setup/notifications/add',
+			viewHref: '/setup/notifications',
 			action: hasTelegrams ? 'Add another' : 'Add Telegram'
 		},
 		{
@@ -70,18 +70,18 @@
 			badge: hasDetectors ? 'Done' : hasStreams ? 'Recommended' : 'Available',
 			count: detectors.length,
 			countLabel: detectors.length === 1 ? 'detector' : 'detectors',
-			href: '/detectors/add?setup=1',
-			viewHref: '/detectors',
+			href: '/setup/detectors/add?setup=1',
+			viewHref: '/setup/detectors',
 			action: hasDetectors ? 'Add another' : 'Add detector'
 		}
 	]);
 	const current = $derived(steps.find((step) => step.status === 'recommended') ?? steps[2]);
 	const primaryHref = $derived(
 		nextStep === 'done'
-			? '/detectors'
+			? '/setup/detectors'
 			: nextStep === 'streams'
-				? '/streams/add?setup=1'
-				: '/detectors/add?setup=1'
+				? '/setup/cameras/add'
+				: '/setup/detectors/add?setup=1'
 	);
 	const primaryLabel = $derived(
 		nextStep === 'done'

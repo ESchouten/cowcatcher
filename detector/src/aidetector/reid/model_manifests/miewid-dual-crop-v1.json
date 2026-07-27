@@ -1,0 +1,67 @@
+{
+  "allowed_environments": [
+    "research",
+    "noncommercial"
+  ],
+  "architecture_source": {
+    "config_json_sha256": "be4daa421d2d6781a71ca6ae2ea86732afec823aaeb9166311acf56066cc7464",
+    "modeling_miewid_sha256": "09ef802d44b528acb4848199ef5403dff3b9ac7a7d1c1c4af254f0c84aae5bd7",
+    "reviewed_local_inference_projection": "aidetector.reid.miewid.build_miewid_pytorch_model",
+    "source_revision": "4f1d7f2b521149e5fe34bb85f377248ce9971a7d"
+  },
+  "code_licence": "Project adapter AGPL-3.0; timm Apache-2.0; PyTorch BSD-3-Clause; safetensors Apache-2.0",
+  "dependency_versions": {
+    "numpy": "2.5.0",
+    "opencv": "4.13.0.92",
+    "python": "3.12.0",
+    "safetensors": "0.8.0",
+    "timm": "1.0.28",
+    "torch": "2.12.1"
+  },
+  "immutable_revision": "4f1d7f2b521149e5fe34bb85f377248ce9971a7d",
+  "input_schema": {
+    "dtype": "float32",
+    "shape": [
+      "batch",
+      3,
+      440,
+      440
+    ]
+  },
+  "licence_status": "DISPUTED_UNRESOLVED",
+  "model_version_id": "model_miewid_msv3_pytorch_4f1d7f2b_adff92b39678f37eb74861c6",
+  "name": "MiewID-msv3 official PyTorch safetensors local runtime",
+  "operator_supplied_local_asset_only": true,
+  "output_schema": {
+    "dtype": "float32",
+    "runtime_normalization": "L2",
+    "shape": [
+      "batch",
+      2152
+    ]
+  },
+  "preprocessing": {
+    "architecture": "efficientnetv2_rw_m+GeM+BatchNorm1d",
+    "device_order": [
+      "mps",
+      "cpu"
+    ],
+    "embedding_dimension": 2152,
+    "inference_dtype_by_device": {
+      "cpu": "float32",
+      "mps": "float16"
+    },
+    "interpolation": "opencv.INTER_LINEAR",
+    "state_key_count": 1210
+  },
+  "private_noncommercial_runtime_enabled": true,
+  "production_enabled": false,
+  "redistribution_allowed": false,
+  "runtime_download_allowed": false,
+  "security_note": "Operator-supplied checksum-pinned safetensors only. The reviewed local inference projection of the pinned upstream modeling_miewid.py architecture strictly loads all tensors. No pickle, upstream executable code, trust_remote_code, runtime network access, bundling, redistribution, or commercial use.",
+  "semantic_version": "3.0.0+hf.4f1d7f2b.pytorch",
+  "sha256": "adff92b39678f37eb74861c6399a741639a8907ec2382738e903d6120727b348",
+  "source_url": "https://huggingface.co/conservationxlabs/miewid-msv3",
+  "training_data_licence_summary": "The model card describes mixed expert-contributed, public, and community-science data. Individual upstream dataset terms are not fully auditable. Use is restricted to the operator-approved local free noncommercial runtime.",
+  "weight_licence": "DISPUTED_UNRESOLVED; operator-approved local noncommercial use only; redistribution and commercial use forbidden"
+}

@@ -4,6 +4,7 @@
 	import { getDetectionPage, getTypes } from '$lib/remote/detections.remote';
 	import { STAGES, type DetectionMetadata, type Stage } from '$lib/schema';
 	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import type { Action } from 'svelte/action';
 	import DetectionCard from './detection-card.svelte';
@@ -101,7 +102,9 @@
 		const currentUrl = `${page.url.pathname}${page.url.search}`;
 
 		if (nextUrl !== currentUrl) {
-			await goto(nextUrl, {
+			// The base route is resolved; only locally constructed search parameters are appended.
+			// eslint-disable-next-line svelte/no-navigation-without-resolve
+			await goto(`${resolve('/detections')}${search ? `?${search}` : ''}`, {
 				replaceState: true,
 				noScroll: true,
 				keepFocus: true,
@@ -133,8 +136,10 @@
 	};
 
 	$effect(() => {
-		type;
-		stage;
+		const selectedType = type;
+		const selectedStage = stage;
+		void selectedType;
+		void selectedStage;
 		void loadNextPage(true);
 	});
 </script>

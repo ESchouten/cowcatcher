@@ -2,22 +2,33 @@ from dataclasses import asdict, field
 
 from aidetector.domain.detections import (
     DetectedObject,
-    unique_identities,
+    identity_results,
 )
 from aidetector.domain.events import DetectionEvent
-from aidetector.domain.identity import IdentityResult
+from aidetector.domain.identity import IdentityResult, IdentityStatus
 from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass
 
 
 @dataclass(config=ConfigDict(extra="forbid"))
 class IdentityMetadata:
-    identity: str
-    similarity: float
+    status: IdentityStatus
+    visual_identity_id: str | None
+    official_id: str | None
+    similarity: float | None
+    margin: float | None
+    gallery_version: int | None
 
     @classmethod
     def from_result(cls, result: IdentityResult) -> "IdentityMetadata":
-        return cls(result.identity, result.similarity)
+        return cls(
+            status=result.status,
+            visual_identity_id=result.visual_identity_id,
+            official_id=result.official_id,
+            similarity=result.similarity,
+            margin=result.margin,
+            gallery_version=result.gallery_version,
+        )
 
 
 @dataclass(config=ConfigDict(extra="forbid"))
@@ -29,7 +40,7 @@ class CropMetadata:
     label: str | None = None
     confidence: float | None = None
     track_id: int | None = None
-    identities: list[IdentityMetadata] = field(default_factory=list)
+    identity: IdentityMetadata | None = None
 
     @classmethod
     def from_object(cls, item: DetectedObject) -> "CropMetadata":
@@ -41,9 +52,11 @@ class CropMetadata:
             label=item.label,
             confidence=item.confidence,
             track_id=item.track_id,
-            identities=[
-                IdentityMetadata.from_result(value) for value in item.identities
-            ],
+            identity=(
+                IdentityMetadata.from_result(item.identity)
+                if item.identity is not None
+                else None
+            ),
         )
 
     def as_dict(self) -> dict:
@@ -58,7 +71,7 @@ class DetectionMetadata:
     validated: bool | None
     confidence: float
     confidences: dict[str, float]
-    identities: list[IdentityMetadata]
+    identity_results: list[IdentityMetadata]
     observations: int
     start: str
     end: str
@@ -80,9 +93,9 @@ class DetectionMetadata:
             validated=validated,
             confidence=event.confidence,
             confidences=dict(event.best.confidences),
-            identities=[
+            identity_results=[
                 IdentityMetadata.from_result(item)
-                for item in unique_identities(event.best.objects)
+                for item in identity_results(event.best.objects)
             ],
             observations=len(event.observations),
             start=event.started_at.isoformat(),

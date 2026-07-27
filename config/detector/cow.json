@@ -1,0 +1,15 @@
+{
+    "detection": {
+        "interval": 1
+    },
+    "yolo": {
+        "model": "yolo26m-seg.pt",
+        "task": "segment",
+        "tracking": true,
+        "confidence": {
+            "cow": 0.1
+        },
+        "imgsz": 640,
+        "iou": 0.5
+    }
+}

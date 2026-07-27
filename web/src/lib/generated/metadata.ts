@@ -5,9 +5,19 @@ export type Source = string;
 export type Timestamp = string;
 export type Validated = boolean | null;
 export type Confidence = number;
-export type Identity = string;
-export type Similarity = number;
-export type Identities = IdentityMetadata[];
+export type Status =
+	| 'matched'
+	| 'unknown'
+	| 'ambiguous'
+	| 'insufficient_evidence'
+	| 'switch_risk'
+	| 'error';
+export type VisualIdentityId = string | null;
+export type OfficialId = string | null;
+export type Similarity = number | null;
+export type Margin = number | null;
+export type GalleryVersion = number | null;
+export type IdentityResults = IdentityMetadata[];
 export type Observations = number;
 export type Start = string;
 export type End = string;
@@ -19,7 +29,6 @@ export type Y2 = number;
 export type Label = string | null;
 export type Confidence1 = number | null;
 export type TrackId = number | null;
-export type Identities1 = IdentityMetadata[];
 export type Crops = CropMetadata[];
 
 export interface DetectionMetadata {
@@ -29,7 +38,7 @@ export interface DetectionMetadata {
 	validated: Validated;
 	confidence: Confidence;
 	confidences: Confidences;
-	identities: Identities;
+	identity_results: IdentityResults;
 	observations: Observations;
 	start: Start;
 	end: End;
@@ -41,8 +50,12 @@ export interface Confidences {
 	[k: string]: number;
 }
 export interface IdentityMetadata {
-	identity: Identity;
+	status: Status;
+	visual_identity_id: VisualIdentityId;
+	official_id: OfficialId;
 	similarity: Similarity;
+	margin: Margin;
+	gallery_version: GalleryVersion;
 }
 export interface CropMetadata {
 	x1: X1;
@@ -52,5 +65,5 @@ export interface CropMetadata {
 	label?: Label;
 	confidence?: Confidence1;
 	track_id?: TrackId;
-	identities?: Identities1;
+	identity?: IdentityMetadata | null;
 }

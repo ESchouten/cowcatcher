@@ -11,9 +11,8 @@ from aidetector.domain.frames import Frame, FrameBatch
 from aidetector.pipeline.aggregation import EventAggregator
 from aidetector.pipeline.dispatch import EventDispatcher
 from aidetector.pipeline.ports import (
-    EnrichmentBatch,
-    FrameEnricher,
     ModelRunner,
+    ObservationEnricher,
     Sink,
 )
 
@@ -25,10 +24,7 @@ class InferenceStage:
     events: EventAggregator
 
 
-class NoOpFrameEnricher:
-    def process(self, _batch: FrameBatch) -> EnrichmentBatch:
-        return EnrichmentBatch()
-
+class NoOpObservationEnricher:
     def enrich(self, _source: str, observation: Observation) -> Observation:
         return observation
 
@@ -43,7 +39,7 @@ class FrameProcessor:
         realtime: bool,
         source_ids: dict[str, str],
         inference: InferenceStage | None,
-        enricher: FrameEnricher,
+        identity_stage: ObservationEnricher,
         dispatcher: EventDispatcher,
         live_sinks: list[Sink[LiveObservation]],
         compact: Callable[[Observation], Observation],
@@ -53,7 +49,7 @@ class FrameProcessor:
         self.realtime = realtime
         self.source_ids = source_ids
         self.inference = inference
-        self.enricher = enricher
+        self.identity_stage = identity_stage
         self.dispatcher = dispatcher
         self.live_sinks = list(live_sinks)
         self.compact = compact
@@ -63,9 +59,7 @@ class FrameProcessor:
     def process(self, batch: FrameBatch) -> None:
         if not batch:
             return
-        enrichment = self.enricher.process(batch)
         if not self._detection_is_due():
-            self._publish_enrichment(enrichment.observations)
             return
 
         if self.inference is None:
@@ -82,11 +76,7 @@ class FrameProcessor:
             return
 
         if self.inference.tracking:
-            tracked_results = enrichment.model_results
-            if tracked_results is None:
-                self._publish_enrichment(enrichment.observations)
-                tracked_results = tuple(self.inference.runner.track_sources(batch))
-            for tracked in tracked_results:
+            for tracked in self.inference.runner.track_sources(batch):
                 self._handle_model_result(
                     tracked.source,
                     tracked.result,
@@ -94,7 +84,6 @@ class FrameProcessor:
                 )
             return
 
-        self._publish_enrichment(enrichment.observations)
         sources = list(batch)
         results = self.inference.runner.detect(
             [batch[source][-1].require_image() for source in sources]
@@ -132,21 +121,18 @@ class FrameProcessor:
         observations = self.inference.runner.observations_from_result(result, frames)
         source_id = self.source_ids[source]
         if observations:
-            observations[-1] = self.enricher.enrich(source, observations[-1])
+            observations[-1] = self.identity_stage.enrich(
+                source,
+                observations[-1],
+            )
             self._publish(LiveObservation(source_id, observations[-1]))
             self._submit(self.inference.events.add(source_id, observations))
             return
 
         trailing = [Observation(frame) for frame in frames]
+        trailing[-1] = self.identity_stage.enrich(source, trailing[-1])
         self._publish(LiveObservation(source_id, trailing[-1]))
         self._submit(self.inference.events.add_trailing(source_id, trailing))
-
-    def _publish_enrichment(
-        self,
-        observations: tuple[tuple[str, Observation], ...],
-    ) -> None:
-        for source, observation in observations:
-            self._publish(LiveObservation(self.source_ids[source], observation))
 
     def _publish(self, message: LiveObservation) -> None:
         for sink in self.live_sinks:

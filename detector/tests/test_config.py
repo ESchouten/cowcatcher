@@ -8,6 +8,39 @@ from aidetector.domain.detections import confidence_matches, matching_confidence
 from aidetector.utils.config import Config, IdentityConfig, YoloConfig, load_config
 
 
+def identity_fragment() -> dict:
+    return {
+        "target_label": "cow",
+        "display": {
+            "singular": "cow",
+            "plural": "cows",
+            "official_id_label": "Cow ID",
+        },
+        "database": "identities/cows.sqlite",
+        "candidate_filter": {
+            "min_area_ratio": 0.005,
+            "max_area_ratio": 0.3,
+            "frame_edge_margin": 0.2,
+        },
+        "controlled_zone": {
+            "zone_id": "identity_observation",
+            "x1": 0.2,
+            "y1": 0.2,
+            "x2": 0.8,
+            "y2": 0.8,
+            "minimum_box_inside_ratio": 0.9,
+            "minimum_stable_frames": 2,
+            "clear_frames": 2,
+        },
+        "encoder": "miewid-dual-crop-v1",
+        "similarity_threshold": 0.75,
+        "similarity_margin": 0.05,
+        "query_frames": 2,
+        "gallery_frames": 4,
+        "track_max_age": 10,
+    }
+
+
 def test_example_config_validates():
     repo_root = Path(__file__).resolve().parents[2]
     config = load_config(repo_root / "example/config.json")
@@ -24,15 +57,13 @@ def test_yolo_defaults_are_deterministic():
     assert config.tracker == "bytetrack.yaml"
 
 
-def test_identity_defaults_are_model_neutral():
-    config = IdentityConfig(database=Path("identities.sqlite"), label="object")
+@pytest.mark.parametrize("field", list(identity_fragment()))
+def test_identity_policy_fields_are_required(field):
+    fragment = identity_fragment()
+    del fragment[field]
 
-    assert config.segment_model is None
-    assert config.confidence == 0.25
-    assert config.min_area_ratio == 0
-    assert config.max_area_ratio == 1
-    assert config.margin == 0
-    assert config.nms_iou == 0.7
+    with pytest.raises(ValidationError):
+        IdentityConfig(**fragment)
 
 
 def test_cow_identity_preset_contains_domain_tuning():
@@ -41,12 +72,143 @@ def test_cow_identity_preset_contains_domain_tuning():
 
     config = IdentityConfig(**preset)
 
-    assert config.label == "cow"
-    assert config.database == Path("cows.sqlite")
-    assert config.segment_model == "yolo26m-seg.pt"
-    assert config.min_area_ratio == 0.005
-    assert config.max_area_ratio == 0.3
-    assert config.margin == 0.2
+    assert preset == identity_fragment()
+    assert config.target_label == "cow"
+    assert config.database == Path("identities/cows.sqlite")
+    assert config.encoder == "miewid-dual-crop-v1"
+    assert config.candidate_filter.min_area_ratio == 0.005
+    assert config.candidate_filter.max_area_ratio == 0.3
+    assert config.candidate_filter.frame_edge_margin == 0.2
+    assert config.controlled_zone.zone_id == "identity_observation"
+    assert config.controlled_zone.minimum_box_inside_ratio == 0.9
+    assert config.controlled_zone.minimum_stable_frames == 2
+    assert config.controlled_zone.clear_frames == 2
+
+
+def test_cow_detector_preset_only_contains_detector_defaults():
+    repo_root = Path(__file__).resolve().parents[2]
+    preset = json.loads((repo_root / "config/detector/cow.json").read_text())
+
+    assert preset == {
+        "detection": {"interval": 1},
+        "yolo": {
+            "model": "yolo26m-seg.pt",
+            "task": "segment",
+            "tracking": True,
+            "confidence": {"cow": 0.1},
+            "imgsz": 640,
+            "iou": 0.5,
+        },
+    }
+    assert "identity" not in preset
+    assert "exporters" not in preset
+    assert "source" not in preset["detection"]
+
+
+def test_removed_identity_detector_presets_are_absent():
+    repo_root = Path(__file__).resolve().parents[2]
+
+    assert not (repo_root / "config/detector/cow-identity.json").exists()
+    assert not (repo_root / "config/detector/cow-identity-enrollment.json").exists()
+
+
+def test_identity_database_is_resolved_from_config_directory(tmp_path):
+    path = tmp_path / "farm" / "config.json"
+    path.parent.mkdir()
+    path.write_text(
+        json.dumps(
+            {
+                "detectors": [
+                    {
+                        "detection": {"source": "camera"},
+                        "yolo": {
+                            "model": "model.pt",
+                            "tracking": True,
+                            "confidence": {"cow": 0.1},
+                        },
+                        "identity": identity_fragment(),
+                    }
+                ]
+            }
+        )
+    )
+
+    config = load_config(path)
+
+    assert config.detectors[0].identity is not None
+    assert (
+        config.detectors[0].identity.database
+        == (path.parent / "identities/cows.sqlite").resolve()
+    )
+    assert config.detectors[0].identity.data_directory == path.parent.resolve()
+
+
+def test_identity_requires_tracking_and_enabled_target_label():
+    fragment = identity_fragment()
+
+    with pytest.raises(ValidationError, match="requires YOLO tracking"):
+        Config(
+            detectors=[
+                {
+                    "detection": {"source": "camera"},
+                    "yolo": {"model": "model.pt", "tracking": False},
+                    "identity": fragment,
+                }
+            ]
+        )
+
+    with pytest.raises(ValidationError, match="target label"):
+        Config(
+            detectors=[
+                {
+                    "detection": {"source": "camera"},
+                    "yolo": {
+                        "model": "model.pt",
+                        "tracking": True,
+                        "confidence": {"horse": 0.1},
+                    },
+                    "identity": fragment,
+                }
+            ]
+        )
+
+
+def test_miewid_frame_counts_are_frozen():
+    fragment = identity_fragment()
+    fragment["query_frames"] = 3
+
+    with pytest.raises(ValidationError, match="exactly two query frames"):
+        IdentityConfig(**fragment)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("x2", 0.2, "positive extent"),
+        ("minimum_box_inside_ratio", 0, "greater than 0"),
+        ("minimum_stable_frames", 0, "greater than 0"),
+        ("clear_frames", 0, "greater than 0"),
+    ],
+)
+def test_controlled_identity_zone_fails_closed(
+    field: str,
+    value: float | int,
+    message: str,
+) -> None:
+    fragment = identity_fragment()
+    fragment["controlled_zone"][field] = value
+
+    with pytest.raises(ValidationError, match=message):
+        IdentityConfig(**fragment)
+
+
+@pytest.mark.parametrize("field", list(identity_fragment()["controlled_zone"]))
+def test_controlled_identity_zone_fields_are_required(field: str) -> None:
+    fragment = identity_fragment()
+    del fragment["controlled_zone"][field]
+
+    with pytest.raises(ValidationError):
+        IdentityConfig(**fragment)
 
 
 def test_confidence_helpers_support_global_and_per_class_thresholds():
@@ -86,16 +248,22 @@ def test_load_config_does_not_rewrite_user_file(tmp_path):
         },
         {
             "detection": {"source": "camera"},
-            "identity": {"label": "cow", "database": "identities/cows.sqlite"},
+            "identity": identity_fragment(),
         },
         {
             "detection": {"source": "camera"},
-            "yolo": {"model": "model.pt"},
+            "yolo": {
+                "model": "model.pt",
+                "tracking": True,
+                "confidence": {"cow": 0.1},
+            },
             "identity": {
-                "label": "cow",
-                "database": "identities/cows.sqlite",
-                "min_area_ratio": 0.5,
-                "max_area_ratio": 0.1,
+                **identity_fragment(),
+                "candidate_filter": {
+                    "min_area_ratio": 0.5,
+                    "max_area_ratio": 0.1,
+                    "frame_edge_margin": 0.2,
+                },
             },
         },
     ],

@@ -1,5 +1,8 @@
 # Exclude the project virtual environment from image builds
 .venv
 .cache
+build
 detections
+dist
+*.spec
 __pycache__

@@ -51,6 +51,15 @@ export interface AppConfig {
 
 export interface DetectorMeta {
 	label: string;
+	presets?: {
+		detector?: AppliedPreset;
+		identity?: AppliedPreset;
+	};
+}
+
+export interface AppliedPreset {
+	filename: string;
+	blob_sha: string;
 }
 
 export interface TelegramMeta extends TelegramConfig {
