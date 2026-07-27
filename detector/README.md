@@ -197,17 +197,22 @@ gates. It uses native PyTorch MPS FP16 on Apple silicon and CPU FP32 elsewhere.
 Unknown, ambiguous, low-quality, or stale-gallery observations remain
 unidentified.
 
-The reviewed checkpoint is never downloaded or bundled. Place the exact
-checksum-pinned file at this path relative to the directory containing
-`config.json`:
+The checkpoint is not bundled. When identity is enabled and the file is
+missing, the detector downloads the official `model.safetensors` once from the
+immutable reviewed Hugging Face revision and stores it at this path relative to
+the directory containing `config.json`:
 
 ```text
 models/miewid/miewid_msv3_official_4f1d7f2b.safetensors
 ```
 
-The packaged model manifest records its checksum, architecture, preprocessing,
-device policy, and restricted local non-commercial provenance. Missing or
-changed assets fail closed.
+The download is written to a temporary `.partial` file, checked against the
+reviewed byte size and SHA-256, and atomically installed. Existing files are
+never updated or silently replaced. The packaged model manifest records the
+fixed upstream repository, commit, filename, checksum, architecture,
+preprocessing, device policy, and restricted local non-commercial provenance.
+The first identity start therefore needs internet access; later starts are
+fully local. Changed or incomplete assets fail closed.
 
 On first detector start, Python creates SQLite schema version 2 at the configured
 relative database path. The web app then manages official identities, provisional

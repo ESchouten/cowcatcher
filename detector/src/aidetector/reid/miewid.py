@@ -29,7 +29,7 @@ class MiewIdEmbeddingBackend(Protocol):
 
 
 class MiewIdDualCropEncoder:
-    """Network-free PyTorch implementation of the frozen M7ZQ encoder."""
+    """PyTorch inference implementation of the frozen M7ZQ encoder."""
 
     feature_dim = MIEWID_EMBEDDING_DIMENSION
 

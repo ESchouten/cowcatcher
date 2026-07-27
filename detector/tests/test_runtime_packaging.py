@@ -12,6 +12,7 @@ SOURCE_ROOT = DETECTOR_ROOT / "src/aidetector"
 PYPROJECT_PATH = DETECTOR_ROOT / "pyproject.toml"
 
 IDENTITY_RUNTIME_REQUIREMENTS = {
+    "requests",
     "safetensors",
     "timm",
     "torch",
@@ -59,7 +60,7 @@ def test_runtime_declares_identity_without_research_dependencies() -> None:
     }
 
 
-def test_production_source_has_no_model_download_path() -> None:
+def test_production_model_download_uses_only_pinned_safe_weights() -> None:
     production_source = "\n".join(
         path.read_text(encoding="utf-8") for path in SOURCE_ROOT.rglob("*.py")
     ).lower()
@@ -67,9 +68,15 @@ def test_production_source_has_no_model_download_path() -> None:
     assert "huggingface_hub" not in production_source
     assert "hf_hub_download" not in production_source
     assert ".from_pretrained(" not in production_source
+    assert "trust_remote_code" not in production_source
+    assert "torch.load(" not in production_source
     for asset in MODEL_REGISTRY.values():
         assert "://" not in asset.checkpoint
         assert asset.checkpoint.startswith("models/")
+        assert asset.download.revision == asset.immutable_revision
+        assert asset.download.filename.endswith(".safetensors")
+        assert asset.download.url.startswith("https://huggingface.co/")
+        assert f"/resolve/{asset.immutable_revision}/" in asset.download.url
         manifest = SOURCE_ROOT / "reid/model_manifests" / asset.manifest
         assert manifest.is_file()
         assert len(asset.sha256) == 64

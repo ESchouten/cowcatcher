@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import pytest
+from aidetector.reid import models as model_registry
 
 from aidetector.reid.models import (
     MIEWID_CONFIG_SOURCE_SHA256,
@@ -14,6 +15,7 @@ from aidetector.reid.models import (
     MIEWID_PYTORCH_SIZE_BYTES,
     MIEWID_STATE_KEY_COUNT,
     MODEL_REGISTRY,
+    ModelDownloadError,
     resolve_model_asset,
 )
 
@@ -51,6 +53,13 @@ def test_model_registry_owns_exact_m7zq_execution_provenance():
     assert asset.input_size == MIEWID_INPUT_SIZE
     assert asset.embedding_dimension == MIEWID_EMBEDDING_DIMENSION
     assert asset.runtime_backend == "pytorch"
+    assert asset.download.repository == "conservationxlabs/miewid-msv3"
+    assert asset.download.revision == MIEWID_PYTORCH_REVISION
+    assert asset.download.filename == "model.safetensors"
+    assert asset.download.url == (
+        "https://huggingface.co/conservationxlabs/miewid-msv3/resolve/"
+        f"{MIEWID_PYTORCH_REVISION}/model.safetensors"
+    )
     assert asset.device_order == ("mps", "cpu")
     assert asset.device_dtypes == (("mps", "float16"), ("cpu", "float32"))
     assert asset.preprocessing.crops == (
@@ -69,15 +78,44 @@ def test_unknown_encoder_fails_before_any_runtime_download(tmp_path: Path):
         resolve_model_asset("network-model", tmp_path)
 
 
-def test_missing_reviewed_checkpoint_fails_closed(tmp_path: Path):
-    with pytest.raises(FileNotFoundError, match="checkpoint is missing"):
+def test_missing_reviewed_checkpoint_uses_only_pinned_download(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    calls: list[Path] = []
+
+    def unavailable_download(_asset, checkpoint: Path) -> None:
+        calls.append(checkpoint)
+        raise ModelDownloadError("offline")
+
+    monkeypatch.setattr(
+        model_registry,
+        "_download_checkpoint",
+        unavailable_download,
+    )
+
+    with pytest.raises(ModelDownloadError, match="offline"):
         resolve_model_asset(MIEWID_DUAL_CROP_V1, tmp_path)
 
+    assert calls == [
+        tmp_path / "models/miewid/miewid_msv3_official_4f1d7f2b.safetensors"
+    ]
 
-def test_corrupt_reviewed_checkpoint_fails_before_model_load(tmp_path: Path):
+
+def test_corrupt_reviewed_checkpoint_is_never_replaced(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
     checkpoint = tmp_path / "models/miewid/miewid_msv3_official_4f1d7f2b.safetensors"
     checkpoint.parent.mkdir(parents=True)
     checkpoint.write_bytes(b"not-the-reviewed-checkpoint")
+    monkeypatch.setattr(
+        model_registry,
+        "_download_checkpoint",
+        lambda *_args: pytest.fail("existing checkpoints must not be downloaded"),
+    )
 
     with pytest.raises(ValueError, match="byte size changed"):
         resolve_model_asset(MIEWID_DUAL_CROP_V1, tmp_path)
+
+    assert checkpoint.read_bytes() == b"not-the-reviewed-checkpoint"
