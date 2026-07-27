@@ -1,33 +1,16 @@
-import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 
 import { decodePresetBlob, validatePreset, validateResolvedDetector } from './presets';
 
 const identity = {
 	target_label: 'cow',
-	display: { singular: 'cow', plural: 'cows', official_id_label: 'Cow ID' },
 	database: 'identities/cows.sqlite',
-	candidate_filter: {
-		min_area_ratio: 0.005,
-		max_area_ratio: 0.3,
-		frame_edge_margin: 0.2
-	},
-	controlled_zone: {
-		zone_id: 'identity_observation',
+	zone: {
 		x1: 0.2,
 		y1: 0.2,
 		x2: 0.8,
-		y2: 0.8,
-		minimum_box_inside_ratio: 0.9,
-		minimum_stable_frames: 2,
-		clear_frames: 2
-	},
-	encoder: 'miewid-dual-crop-v1',
-	similarity_threshold: 0.75,
-	similarity_margin: 0.05,
-	query_frames: 2,
-	gallery_frames: 4,
-	track_max_age: 10
+		y2: 0.8
+	}
 };
 
 describe('remote preset validation', () => {
@@ -47,37 +30,30 @@ describe('remote preset validation', () => {
 		).not.toThrow();
 	});
 
-	it('rejects unknown, incomplete, and semantically changed identity policy', () => {
+	it('rejects unknown, incomplete, and invalid identity presets', () => {
 		expect(() => validatePreset('identity', { ...identity, hidden_default: 1 })).toThrow(
-			'unknown property'
+			'additional properties'
 		);
 		const missing = Object.fromEntries(
-			Object.entries(identity).filter(([key]) => key !== 'similarity_margin')
+			Object.entries(identity).filter(([key]) => key !== 'database')
 		);
-		expect(() => validatePreset('identity', missing)).toThrow('required property');
-		expect(() => validatePreset('identity', { ...identity, query_frames: 3 })).toThrow(
-			'requires two query'
-		);
+		expect(() => validatePreset('identity', missing)).toThrow('required');
 		expect(() =>
 			validatePreset('identity', {
 				...identity,
-				controlled_zone: { ...identity.controlled_zone, x2: 0.2 }
+				zone: { ...identity.zone, x2: 0.2 }
 			})
 		).toThrow('positive extent');
 	});
 
-	it('verifies and returns the GitHub blob SHA with the resolved value', () => {
+	it('decodes a GitHub preset', () => {
 		const bytes = Buffer.from(JSON.stringify(identity));
-		const sha = createHash('sha1').update(`blob ${bytes.byteLength}\0`).update(bytes).digest('hex');
 
-		expect(decodePresetBlob('identity', 'cow.json', sha, bytes.toString('base64'))).toEqual({
+		expect(decodePresetBlob('identity', 'cow.json', 'revision', bytes.toString('base64'))).toEqual({
 			filename: 'cow.json',
-			blobSha: sha,
+			blobSha: 'revision',
 			value: identity
 		});
-		expect(() =>
-			decodePresetBlob('identity', 'cow.json', '0'.repeat(40), bytes.toString('base64'))
-		).toThrow('blob SHA mismatch');
 	});
 
 	it('rejects incompatible resolved detector and identity combinations', () => {
@@ -102,7 +78,7 @@ describe('remote preset validation', () => {
 				},
 				identity: {
 					...identity,
-					controlled_zone: { ...identity.controlled_zone, y2: 0.2 }
+					zone: { ...identity.zone, y2: 0.2 }
 				}
 			})
 		).toThrow('positive extent');

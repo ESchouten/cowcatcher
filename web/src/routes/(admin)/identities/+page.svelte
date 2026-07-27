@@ -46,9 +46,9 @@
 	);
 	const snapshot = $derived(catalog?.snapshot ?? null);
 	const revision = $derived(snapshot?.control.operatorRevision ?? 0);
-	const singular = $derived(catalog?.display.singular ?? 'identity');
-	const plural = $derived(catalog?.display.plural ?? 'identities');
-	const officialIdLabel = $derived(catalog?.display.officialIdLabel ?? 'Official ID');
+	const singular = $derived(catalog?.targetLabel ?? 'identity');
+	const plural = $derived(singular === 'identity' ? 'identities' : `${singular}s`);
+	const officialIdLabel = $derived(`${titleCase(singular)} ID`);
 
 	let search = $state('');
 	let addOpen = $state(false);
@@ -269,8 +269,7 @@
 					expectedRevision: revision,
 					mappingId: selectedVisual.mappingId!,
 					officialId: correctionOfficialId,
-					provisionalTrackletId: correctionTrackletId,
-					reason: 'Official identity corrected from the details view'
+					provisionalTrackletId: correctionTrackletId
 				}).updates(catalogsQuery),
 			'Could not correct the mapping.'
 		);
@@ -289,8 +288,7 @@
 				deactivateIdentity({
 					catalogId: catalog.catalogId,
 					expectedRevision: revision,
-					mappingId: selectedVisual.mappingId!,
-					reason: 'Mapping deactivated from the details view'
+					mappingId: selectedVisual.mappingId!
 				}).updates(catalogsQuery),
 			'Could not deactivate the mapping.'
 		);
@@ -305,8 +303,7 @@
 				rollbackIdentity({
 					catalogId: catalog.catalogId,
 					expectedRevision: revision,
-					mappingId: selectedVisual.mappingId!,
-					reason: 'Operator requested rollback'
+					mappingId: selectedVisual.mappingId!
 				}).updates(catalogsQuery),
 			'Could not roll back the mapping.'
 		);
@@ -322,8 +319,7 @@
 					catalogId: catalog.catalogId,
 					expectedRevision: revision,
 					sourceVisualIdentityId: selectedVisual.visualIdentityId,
-					targetVisualIdentityId: mergeTargetId,
-					reason: 'Operator merged duplicate visual identities'
+					targetVisualIdentityId: mergeTargetId
 				}).updates(catalogsQuery),
 			'Could not merge the visual identities.'
 		);
@@ -343,8 +339,7 @@
 					catalogId: catalog.catalogId,
 					expectedRevision: revision,
 					sourceVisualIdentityId: selectedVisual.visualIdentityId,
-					trackletIds,
-					reason: 'Operator split mixed visual evidence'
+					trackletIds
 				}).updates(catalogsQuery),
 			'Could not split the visual identity.'
 		);

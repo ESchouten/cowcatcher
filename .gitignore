@@ -3,6 +3,7 @@ detections
 /detector/identities
 /detector/benchmark-cache/
 /web/identities
+/.pnpm-store/
 /models/
 /detector/models/
 datasets

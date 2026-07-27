@@ -423,36 +423,6 @@
       "title": "HealthcheckConfig",
       "type": "object"
     },
-    "IdentityCandidateFilterConfig": {
-      "additionalProperties": false,
-      "properties": {
-        "min_area_ratio": {
-          "maximum": 1,
-          "minimum": 0,
-          "title": "Min Area Ratio",
-          "type": "number"
-        },
-        "max_area_ratio": {
-          "maximum": 1,
-          "minimum": 0,
-          "title": "Max Area Ratio",
-          "type": "number"
-        },
-        "frame_edge_margin": {
-          "exclusiveMaximum": 0.5,
-          "minimum": 0,
-          "title": "Frame Edge Margin",
-          "type": "number"
-        }
-      },
-      "required": [
-        "min_area_ratio",
-        "max_area_ratio",
-        "frame_edge_margin"
-      ],
-      "title": "IdentityCandidateFilterConfig",
-      "type": "object"
-    },
     "IdentityConfig": {
       "additionalProperties": false,
       "properties": {
@@ -466,72 +436,21 @@
           "title": "Target Label",
           "type": "string"
         },
-        "display": {
-          "$ref": "#/$defs/IdentityDisplayConfig"
-        },
-        "candidate_filter": {
-          "$ref": "#/$defs/IdentityCandidateFilterConfig"
-        },
-        "controlled_zone": {
-          "$ref": "#/$defs/IdentityControlledZoneConfig"
-        },
-        "encoder": {
-          "const": "miewid-dual-crop-v1",
-          "title": "Encoder",
-          "type": "string"
-        },
-        "similarity_threshold": {
-          "maximum": 1,
-          "minimum": 0,
-          "title": "Similarity Threshold",
-          "type": "number"
-        },
-        "similarity_margin": {
-          "maximum": 1,
-          "minimum": 0,
-          "title": "Similarity Margin",
-          "type": "number"
-        },
-        "query_frames": {
-          "exclusiveMinimum": 0,
-          "title": "Query Frames",
-          "type": "integer"
-        },
-        "gallery_frames": {
-          "exclusiveMinimum": 0,
-          "title": "Gallery Frames",
-          "type": "integer"
-        },
-        "track_max_age": {
-          "exclusiveMinimum": 0,
-          "title": "Track Max Age",
-          "type": "integer"
+        "zone": {
+          "$ref": "#/$defs/IdentityZoneConfig"
         }
       },
       "required": [
         "database",
         "target_label",
-        "display",
-        "candidate_filter",
-        "controlled_zone",
-        "encoder",
-        "similarity_threshold",
-        "similarity_margin",
-        "query_frames",
-        "gallery_frames",
-        "track_max_age"
+        "zone"
       ],
       "title": "IdentityConfig",
       "type": "object"
     },
-    "IdentityControlledZoneConfig": {
+    "IdentityZoneConfig": {
       "additionalProperties": false,
       "properties": {
-        "zone_id": {
-          "minLength": 1,
-          "title": "Zone Id",
-          "type": "string"
-        },
         "x1": {
           "maximum": 1,
           "minimum": 0,
@@ -555,62 +474,15 @@
           "minimum": 0,
           "title": "Y2",
           "type": "number"
-        },
-        "minimum_box_inside_ratio": {
-          "exclusiveMinimum": 0,
-          "maximum": 1,
-          "title": "Minimum Box Inside Ratio",
-          "type": "number"
-        },
-        "minimum_stable_frames": {
-          "exclusiveMinimum": 0,
-          "title": "Minimum Stable Frames",
-          "type": "integer"
-        },
-        "clear_frames": {
-          "exclusiveMinimum": 0,
-          "title": "Clear Frames",
-          "type": "integer"
         }
       },
       "required": [
-        "zone_id",
         "x1",
         "y1",
         "x2",
-        "y2",
-        "minimum_box_inside_ratio",
-        "minimum_stable_frames",
-        "clear_frames"
+        "y2"
       ],
-      "title": "IdentityControlledZoneConfig",
-      "type": "object"
-    },
-    "IdentityDisplayConfig": {
-      "additionalProperties": false,
-      "properties": {
-        "singular": {
-          "minLength": 1,
-          "title": "Singular",
-          "type": "string"
-        },
-        "plural": {
-          "minLength": 1,
-          "title": "Plural",
-          "type": "string"
-        },
-        "official_id_label": {
-          "minLength": 1,
-          "title": "Official Id Label",
-          "type": "string"
-        }
-      },
-      "required": [
-        "singular",
-        "plural",
-        "official_id_label"
-      ],
-      "title": "IdentityDisplayConfig",
+      "title": "IdentityZoneConfig",
       "type": "object"
     },
     "OnnxConfig": {

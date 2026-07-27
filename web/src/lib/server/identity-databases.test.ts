@@ -5,7 +5,6 @@ import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 
 import {
-	IDENTITY_BUSY_TIMEOUT_MS,
 	IDENTITY_SCHEMA_VERSION,
 	openConfiguredIdentityDatabase,
 	validateIdentityDatabase
@@ -22,7 +21,7 @@ function initializedDatabase(): DatabaseSync {
 }
 
 describe('shared identity database contract', () => {
-	it('accepts the exact Python-owned schema and required control row', () => {
+	it('accepts the Python-owned schema', () => {
 		const database = initializedDatabase();
 
 		expect(() => validateIdentityDatabase(database)).not.toThrow();
@@ -38,29 +37,6 @@ describe('shared identity database contract', () => {
 
 		expect(() => validateIdentityDatabase(database)).toThrow(
 			'Unsupported identity database schema'
-		);
-		database.close();
-	});
-
-	it('rejects the pre-zone schema without migrating it', () => {
-		const database = initializedDatabase();
-		database.exec('PRAGMA user_version = 1');
-
-		expect(() => validateIdentityDatabase(database)).toThrow(
-			'Unsupported identity database schema 1'
-		);
-		expect(
-			(database.prepare('PRAGMA user_version').get() as { user_version: number }).user_version
-		).toBe(1);
-		database.close();
-	});
-
-	it('uses the same busy timeout expected by the Python catalog', () => {
-		const database = initializedDatabase();
-		database.exec(`PRAGMA busy_timeout = ${IDENTITY_BUSY_TIMEOUT_MS}`);
-
-		expect((database.prepare('PRAGMA busy_timeout').get() as { timeout: number }).timeout).toBe(
-			5_000
 		);
 		database.close();
 	});

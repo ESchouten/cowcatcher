@@ -6,9 +6,8 @@ Detection works in two stages:
 1. **YOLO** — a fast AI model that scans every frame looking for objects.
 2. **VLM** *(optional)* — a smarter AI (like Gemini or GPT-5) that double-checks the detection by looking at the footage and answering a question you define, e.g. *"Is there really a cow mounting another cow?"*. This dramatically reduces false alerts.
 
-For individual recognition, a tracked YOLO detector can optionally be enriched
-with a generic identity stage. Presets choose the target label and farmer-facing
-terminology; SQLite stores the complete identity catalog and retained evidence.
+Tracked YOLO detections can optionally be matched to known individuals. SQLite
+stores the identity catalog and its evidence.
 
 Confirmed detections can be sent to **Telegram**, saved to **disk**, or posted to a **webhook**.
 
@@ -89,7 +88,7 @@ domain <- pipeline <- adapters <- application
 - `adapters/` contains Ultralytics, video sources, VLM validation, HTTP/SSE, Telegram, webhook, and disk implementations.
 - `application.py` is the composition root. It is the only module that translates configuration objects into runtime policies and concrete adapters.
 - `media/` renders and caches event artifacts. Equal artifact requests within one event are encoded only once.
-- `reid/` contains the optional tracked identity stage, controlled observation-zone policy, checksum-verified MiewID adapter, and the shared SQLite schema.
+- `reid/` contains tracked identity matching, MiewID inference, and its SQLite catalog.
 
 Live observations and completed events are sent through the same generic `Sink.send()` contract. Validation and every event sink have small bounded queues. When an external service falls behind, only its oldest pending event is replaced so inference continues. `tests/test_architecture.py` enforces the dependency direction.
 
@@ -179,40 +178,15 @@ This is the fast first-pass AI that scans every frame. Without a YOLO model, the
 
 ### `identity` — Individual recognition
 
-Identity consumes the primary detector's tracked objects. The detector must have
-tracking enabled and its confidence map must include `target_label`. Results are
-attached only to the same source and exact tracker ID; no second localizer or
-geometric reassociation runs.
+Identity needs a tracked YOLO detector whose confidence map includes
+`target_label`. Configure the SQLite `database` and the normalized observation
+`zone`; the model, crop rules, thresholds, and evidence counts are fixed runtime
+defaults.
 
-Every identity policy field is required. Apply a detector preset and an identity
-preset in Setup, or copy their resolved values into `config.json`. Python reads
-only `config.json`, never the preset files. The included cow presets are an
-example of domain-specific labels and thresholds; the runtime and catalog use
-generic identity names.
-
-Evidence is accepted only for one stable target inside the configured controlled
-zone. The `miewid-dual-crop-v1` encoder uses two frames per query, four explicitly
-selected gallery frames, and the configured similarity and runner-up-margin
-gates. It uses native PyTorch MPS FP16 on Apple silicon and CPU FP32 elsewhere.
-Unknown, ambiguous, low-quality, or stale-gallery observations remain
-unidentified.
-
-The checkpoint is not bundled. When identity is enabled and the file is
-missing, the detector downloads the official `model.safetensors` once from the
-immutable reviewed Hugging Face revision and stores it at this path relative to
-the directory containing `config.json`:
-
-```text
-models/miewid/miewid_msv3_official_4f1d7f2b.safetensors
-```
-
-The download is written to a temporary `.partial` file, checked against the
-reviewed byte size and SHA-256, and atomically installed. Existing files are
-never updated or silently replaced. The packaged model manifest records the
-fixed upstream repository, commit, filename, checksum, architecture,
-preprocessing, device policy, and restricted local non-commercial provenance.
-The first identity start therefore needs internet access; later starts are
-fully local. Changed or incomplete assets fail closed.
+The detector accepts evidence from one stable target in the zone. MiewID runs
+with PyTorch MPS FP16 on Apple silicon and CPU FP32 elsewhere. Its pinned
+`model.safetensors` checkpoint is downloaded and cached by Hugging Face on first
+use.
 
 On first detector start, Python creates SQLite schema version 2 at the configured
 relative database path. The web app then manages official identities, provisional
@@ -221,10 +195,7 @@ and gallery activation directly in that database. A first assignment remains
 provisional; a distinct eligible tracklet must confirm it. Predictions never
 become mapping truth or automatically expand the gallery.
 
-JPEG previews and float32 embeddings are stored as BLOBs, so backing up the
-single SQLite file preserves the complete identity catalog. Ordinary detection
-videos remain normal exports. Databases from the removed experimental identity
-implementation are unsupported and must be recreated.
+Back up the SQLite file to preserve the catalog, previews, and embeddings.
 
 ---
 

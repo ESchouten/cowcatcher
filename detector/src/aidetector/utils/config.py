@@ -27,8 +27,6 @@ def config_list(value: T | list[T] | None) -> list[T]:
 HttpMethod = Literal["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]
 NonEmptyString = Annotated[str, Field(min_length=1)]
 Probability = Annotated[float, Field(ge=0, le=1)]
-PositiveProbability = Annotated[float, Field(gt=0, le=1)]
-FrameMargin = Annotated[float, Field(ge=0, lt=0.5)]
 NonNegativeFloat = Annotated[float, Field(ge=0)]
 PositiveFloat = Annotated[float, Field(gt=0)]
 PositiveInt = Annotated[int, Field(gt=0)]
@@ -57,69 +55,29 @@ class YoloConfig:
 
 
 @dataclass(config=STRICT_CONFIG, frozen=True, kw_only=True)
-class IdentityDisplayConfig:
-    singular: NonEmptyString
-    plural: NonEmptyString
-    official_id_label: NonEmptyString
-
-
-@dataclass(config=STRICT_CONFIG, frozen=True, kw_only=True)
-class IdentityCandidateFilterConfig:
-    min_area_ratio: Probability
-    max_area_ratio: Probability
-    frame_edge_margin: FrameMargin
-
-    def __post_init__(self) -> None:
-        if self.min_area_ratio > self.max_area_ratio:
-            raise ValueError("Identity minimum area exceeds maximum area")
-
-
-@dataclass(config=STRICT_CONFIG, frozen=True, kw_only=True)
-class IdentityControlledZoneConfig:
-    zone_id: NonEmptyString
+class IdentityZoneConfig:
     x1: Probability
     y1: Probability
     x2: Probability
     y2: Probability
-    minimum_box_inside_ratio: PositiveProbability
-    minimum_stable_frames: PositiveInt
-    clear_frames: PositiveInt
 
     def __post_init__(self) -> None:
-        if self.x2 <= self.x1 or self.y2 <= self.y1:
-            raise ValueError("Identity controlled zone must have positive extent")
+        if self.x1 >= self.x2 or self.y1 >= self.y2:
+            raise ValueError("Identity zone must have positive extent")
 
 
 @dataclass(config=STRICT_CONFIG, kw_only=True)
 class IdentityConfig:
     database: Path
     target_label: NonEmptyString
-    display: IdentityDisplayConfig
-    candidate_filter: IdentityCandidateFilterConfig
-    controlled_zone: IdentityControlledZoneConfig
-    encoder: Literal["miewid-dual-crop-v1"]
-    similarity_threshold: Probability
-    similarity_margin: Probability
-    query_frames: PositiveInt
-    gallery_frames: PositiveInt
-    track_max_age: PositiveInt
+    zone: IdentityZoneConfig
 
     def __post_init__(self) -> None:
         if self.database.is_absolute():
             raise ValueError("Identity database must be relative to config.json")
-        if self.query_frames != 2 or self.gallery_frames != 4:
-            raise ValueError(
-                "miewid-dual-crop-v1 requires exactly two query frames and "
-                "four gallery frames"
-            )
-
-    @property
-    def data_directory(self) -> Path:
-        return getattr(self, "_data_directory", Path.cwd())
 
     def resolve_paths(self, data_directory: Path) -> None:
         self.database = (data_directory / self.database).resolve()
-        self._data_directory = data_directory
 
 
 @dataclass(config=STRICT_CONFIG, kw_only=True)

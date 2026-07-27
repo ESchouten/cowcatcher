@@ -85,8 +85,7 @@
             "unknown",
             "ambiguous",
             "insufficient_evidence",
-            "switch_risk",
-            "error"
+            "switch_risk"
           ],
           "title": "Status",
           "type": "string"

@@ -6,18 +6,6 @@ import { APP_CONFIG_PATH, CONFIG_PATH, resolveWithinDirectory } from './shared-p
 
 export const IDENTITY_SCHEMA_VERSION = 2;
 export const IDENTITY_BUSY_TIMEOUT_MS = 5_000;
-export const IDENTITY_TABLES = [
-	'audit_events',
-	'control',
-	'evidence_frames',
-	'gallery_items',
-	'gallery_versions',
-	'mappings',
-	'official_identities',
-	'tracklets',
-	'visual_identities',
-	'visual_identity_tracklets'
-] as const;
 
 export interface IdentityDatabaseConfig {
 	id: string;
@@ -25,12 +13,6 @@ export interface IdentityDatabaseConfig {
 	label: string;
 	path: string;
 	targetLabel: string;
-	galleryFrames: number;
-	display: {
-		singular: string;
-		plural: string;
-		officialIdLabel: string;
-	};
 }
 
 export async function getIdentityDatabases(): Promise<IdentityDatabaseConfig[]> {
@@ -55,13 +37,7 @@ export async function getIdentityDatabases(): Promise<IdentityDatabaseConfig[]> 
 			database,
 			label: app.detectors?.[index]?.label ?? `Detector ${index + 1}`,
 			path: resolved,
-			targetLabel: identity.target_label,
-			galleryFrames: identity.gallery_frames,
-			display: {
-				singular: identity.display.singular,
-				plural: identity.display.plural,
-				officialIdLabel: identity.display.official_id_label
-			}
+			targetLabel: identity.target_label
 		});
 	}
 
@@ -111,27 +87,5 @@ export function validateIdentityDatabase(connection: DatabaseSync): void {
 			`Unsupported identity database schema ${version?.user_version ?? 'unknown'}; ` +
 				`expected ${IDENTITY_SCHEMA_VERSION}`
 		);
-	}
-	const rows = connection
-		.prepare(
-			`SELECT name
-			 FROM sqlite_schema
-			 WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`
-		)
-		.all() as Array<{ name: string }>;
-	const tables = new Set(rows.map(({ name }) => name));
-	const missing = IDENTITY_TABLES.filter((table) => !tables.has(table));
-	if (missing.length) {
-		throw new Error(`Identity database is missing required tables: ${missing.join(', ')}`);
-	}
-	const control = connection
-		.prepare('SELECT schema_version FROM control WHERE singleton = 1')
-		.get() as { schema_version: number } | undefined;
-	if (control?.schema_version !== IDENTITY_SCHEMA_VERSION) {
-		throw new Error('Identity database control record does not match its schema');
-	}
-	const foreignKeyViolation = connection.prepare('PRAGMA foreign_key_check').get();
-	if (foreignKeyViolation) {
-		throw new Error('Identity database contains foreign-key violations');
 	}
 }

@@ -149,60 +149,27 @@ def build_identity_stage(
     config: IdentityConfig,
     primary_runner: YoloRunner,
 ) -> IdentityStage:
-    from aidetector.reid.controlled_zone import ControlledZonePolicy
     from aidetector.reid.identity_catalog import IdentityCatalog
     from aidetector.reid.miewid import build_miewid_encoder
-    from aidetector.reid.stage import (
-        CandidateFilterPolicy,
-        IdentityPolicy,
-        IdentityStage,
-    )
+    from aidetector.reid.stage import IdentityStage
 
     available_labels = {
         name for name, _threshold in primary_runner.class_confidences.values()
     }
-    catalog = IdentityCatalog(config.database)
-    try:
-        if config.target_label not in available_labels:
-            raise ValueError(
-                "Identity target label "
-                f"'{config.target_label}' is not tracked by the selected detector"
-            )
-        encoder = build_miewid_encoder(
-            model_key=config.encoder,
-            asset_root=config.data_directory,
+    if config.target_label not in available_labels:
+        raise ValueError(
+            f"Identity target label '{config.target_label}' is not tracked "
+            "by the selected detector"
         )
-    except Exception:
-        catalog.close()
-        raise
 
     return IdentityStage(
-        policy=IdentityPolicy(
-            target_label=config.target_label,
-            candidate_filter=CandidateFilterPolicy(
-                min_area_ratio=config.candidate_filter.min_area_ratio,
-                max_area_ratio=config.candidate_filter.max_area_ratio,
-                frame_edge_margin=config.candidate_filter.frame_edge_margin,
-            ),
-            controlled_zone=ControlledZonePolicy(
-                zone_id=config.controlled_zone.zone_id,
-                x1=config.controlled_zone.x1,
-                y1=config.controlled_zone.y1,
-                x2=config.controlled_zone.x2,
-                y2=config.controlled_zone.y2,
-                minimum_box_inside_ratio=(
-                    config.controlled_zone.minimum_box_inside_ratio
-                ),
-                minimum_stable_frames=config.controlled_zone.minimum_stable_frames,
-                clear_frames=config.controlled_zone.clear_frames,
-            ),
-            encoder=config.encoder,
-            similarity_threshold=config.similarity_threshold,
-            similarity_margin=config.similarity_margin,
-            query_frames=config.query_frames,
-            gallery_frames=config.gallery_frames,
-            track_max_age=config.track_max_age,
+        target_label=config.target_label,
+        zone=(
+            config.zone.x1,
+            config.zone.y1,
+            config.zone.x2,
+            config.zone.y2,
         ),
-        encoder=encoder,
-        catalog=catalog,
+        encoder=build_miewid_encoder(),
+        catalog=IdentityCatalog(config.database),
     )

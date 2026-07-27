@@ -483,28 +483,6 @@
 					<Label for="identity-label">Target label</Label>
 					<Input id="identity-label" required bind:value={detector.identity.target_label} />
 				</div>
-				<div class="flex flex-col gap-2">
-					<Label for="identity-confidence">Identity similarity</Label>
-					<Input
-						id="identity-confidence"
-						type="number"
-						min="0"
-						max="1"
-						step="0.01"
-						bind:value={detector.identity.similarity_threshold}
-					/>
-				</div>
-				<div class="flex flex-col gap-2">
-					<Label for="identity-margin">Runner-up margin</Label>
-					<Input
-						id="identity-margin"
-						type="number"
-						min="0"
-						max="1"
-						step="0.01"
-						bind:value={detector.identity.similarity_margin}
-					/>
-				</div>
 				<div class="space-y-4 rounded-md border p-4 sm:col-span-2">
 					<div class="space-y-1">
 						<p class="text-sm font-medium">Controlled observation zone</p>
@@ -522,7 +500,7 @@
 								min="0"
 								max="1"
 								step="0.01"
-								bind:value={detector.identity.controlled_zone.x1}
+								bind:value={detector.identity.zone.x1}
 							/>
 						</div>
 						<div class="flex flex-col gap-2">
@@ -533,7 +511,7 @@
 								min="0"
 								max="1"
 								step="0.01"
-								bind:value={detector.identity.controlled_zone.y1}
+								bind:value={detector.identity.zone.y1}
 							/>
 						</div>
 						<div class="flex flex-col gap-2">
@@ -544,7 +522,7 @@
 								min="0"
 								max="1"
 								step="0.01"
-								bind:value={detector.identity.controlled_zone.x2}
+								bind:value={detector.identity.zone.x2}
 							/>
 						</div>
 						<div class="flex flex-col gap-2">
@@ -555,40 +533,7 @@
 								min="0"
 								max="1"
 								step="0.01"
-								bind:value={detector.identity.controlled_zone.y2}
-							/>
-						</div>
-					</div>
-					<div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
-						<div class="flex flex-col gap-2">
-							<Label for="identity-zone-containment">Box inside zone</Label>
-							<Input
-								id="identity-zone-containment"
-								type="number"
-								min="0.01"
-								max="1"
-								step="0.01"
-								bind:value={detector.identity.controlled_zone.minimum_box_inside_ratio}
-							/>
-						</div>
-						<div class="flex flex-col gap-2">
-							<Label for="identity-zone-stable">Stable frames</Label>
-							<Input
-								id="identity-zone-stable"
-								type="number"
-								min="1"
-								step="1"
-								bind:value={detector.identity.controlled_zone.minimum_stable_frames}
-							/>
-						</div>
-						<div class="flex flex-col gap-2">
-							<Label for="identity-zone-clear">Clear frames</Label>
-							<Input
-								id="identity-zone-clear"
-								type="number"
-								min="1"
-								step="1"
-								bind:value={detector.identity.controlled_zone.clear_frames}
+								bind:value={detector.identity.zone.y2}
 							/>
 						</div>
 					</div>

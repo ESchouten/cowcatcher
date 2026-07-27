@@ -1,7 +1,5 @@
 <script lang="ts">
 	import { getDetectorConnection, getIdentityStatus } from '$lib/remote/identity.remote';
-	import CircleAlertIcon from '@lucide/svelte/icons/circle-alert';
-	import CircleCheckIcon from '@lucide/svelte/icons/circle-check';
 	import DatabaseIcon from '@lucide/svelte/icons/database';
 	import LayersIcon from '@lucide/svelte/icons/layers-3';
 	import RadioIcon from '@lucide/svelte/icons/radio';
@@ -74,28 +72,11 @@
 		</span>
 	</div>
 
-	<div class="flex min-w-0 items-center gap-2 border-b border-sidebar-border px-2 py-2">
+	<div class="flex min-w-0 items-center gap-2 px-2 py-2">
 		<LayersIcon class="size-3.5 shrink-0 text-muted-foreground" />
 		<span class="min-w-0 flex-1 truncate text-xs text-muted-foreground">Gallery</span>
 		<span class="truncate text-xs font-medium" data-testid="gallery-version">
 			{catalog?.activeGalleryVersion ? `v${catalog.activeGalleryVersion}` : 'Not active'}
-		</span>
-	</div>
-
-	<div class="flex min-w-0 items-center gap-2 px-2 py-2">
-		{#if catalog?.lastIdentityError}
-			<CircleAlertIcon class="size-3.5 shrink-0 text-destructive" />
-		{:else}
-			<CircleCheckIcon class="size-3.5 shrink-0 text-emerald-600" />
-		{/if}
-		<span class="min-w-0 flex-1 truncate text-xs text-muted-foreground"> Last identity error </span>
-		<span
-			class:text-destructive={Boolean(catalog?.lastIdentityError)}
-			class="max-w-24 truncate text-xs font-medium"
-			title={catalog?.lastIdentityError ?? undefined}
-			data-testid="last-identity-error"
-		>
-			{catalog?.lastIdentityError ?? 'None'}
 		</span>
 	</div>
 </section>

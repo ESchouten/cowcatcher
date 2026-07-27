@@ -14,18 +14,13 @@ import {
 	updateOfficialIdentity,
 	type IdentityCatalogSnapshot
 } from '$lib/server/identity-catalog';
-import {
-	getIdentityDatabases,
-	openIdentityDatabase,
-	type IdentityDatabaseConfig
-} from '$lib/server/identity-databases';
+import { getIdentityDatabases, openIdentityDatabase } from '$lib/server/identity-databases';
 import { readConfigState } from '$lib/server/config-store';
 
 export interface IdentityCatalogView {
 	catalogId: string;
 	label: string;
 	targetLabel: string;
-	display: IdentityDatabaseConfig['display'];
 	state: 'ready' | 'not_initialized' | 'error';
 	message: string | null;
 	snapshot: IdentityCatalogSnapshot | null;
@@ -36,10 +31,7 @@ export interface IdentityStatusView {
 	label: string;
 	state: IdentityCatalogView['state'];
 	message: string | null;
-	operatorRevision: number | null;
-	runtimeRevision: number | null;
 	activeGalleryVersion: number | null;
-	lastIdentityError: string | null;
 }
 
 function unavailableState(error: unknown): Pick<IdentityCatalogView, 'state' | 'message'> {
@@ -63,7 +55,6 @@ export const getIdentityCatalogs = query(async (): Promise<IdentityCatalogView[]
 						catalogId: catalog.id,
 						label: catalog.label,
 						targetLabel: catalog.targetLabel,
-						display: catalog.display,
 						state: 'ready' as const,
 						message: null,
 						snapshot: readIdentityCatalog(database)
@@ -76,7 +67,6 @@ export const getIdentityCatalogs = query(async (): Promise<IdentityCatalogView[]
 					catalogId: catalog.id,
 					label: catalog.label,
 					targetLabel: catalog.targetLabel,
-					display: catalog.display,
 					...unavailableState(error),
 					snapshot: null
 				};
@@ -92,13 +82,12 @@ export const getIdentityStatus = query(async (): Promise<IdentityStatusView[]> =
 			try {
 				const database = await openIdentityDatabase(catalog.id);
 				try {
-					const control = readCatalogControl(database);
 					return {
 						catalogId: catalog.id,
 						label: catalog.label,
 						state: 'ready' as const,
 						message: null,
-						...control
+						activeGalleryVersion: readCatalogControl(database).activeGalleryVersion
 					};
 				} finally {
 					database.close();
@@ -108,10 +97,7 @@ export const getIdentityStatus = query(async (): Promise<IdentityStatusView[]> =
 					catalogId: catalog.id,
 					label: catalog.label,
 					...unavailableState(error),
-					operatorRevision: null,
-					runtimeRevision: null,
-					activeGalleryVersion: null,
-					lastIdentityError: null
+					activeGalleryVersion: null
 				};
 			}
 		})
@@ -144,19 +130,16 @@ export const getDetectorConnection = query(
 
 const catalogInput = {
 	catalogId: v.pipe(v.string(), v.trim(), v.minLength(1)),
-	expectedRevision: v.pipe(v.number(), v.integer(), v.minValue(0)),
-	reason: v.optional(v.string())
+	expectedRevision: v.pipe(v.number(), v.integer(), v.minValue(0))
 };
 
 async function withCatalog<T>(
 	catalogId: string,
-	action: (database: Awaited<ReturnType<typeof openIdentityDatabase>>, galleryFrames: number) => T
+	action: (database: Awaited<ReturnType<typeof openIdentityDatabase>>) => T
 ): Promise<T> {
-	const catalog = (await getIdentityDatabases()).find((item) => item.id === catalogId);
-	if (!catalog) throw new Error('Identity catalog is not configured');
 	const database = await openIdentityDatabase(catalogId);
 	try {
-		return action(database, catalog.galleryFrames);
+		return action(database);
 	} finally {
 		database.close();
 	}
@@ -169,13 +152,9 @@ export const addOfficialIdentity = command(
 		displayName: v.optional(v.string()),
 		notes: v.optional(v.string())
 	}),
-	async ({ catalogId, expectedRevision, reason, officialId, displayName, notes }) =>
+	async ({ catalogId, expectedRevision, officialId, displayName, notes }) =>
 		withCatalog(catalogId, (database) =>
-			createOfficialIdentity(
-				database,
-				{ officialId, displayName, notes },
-				{ expectedRevision, reason }
-			)
+			createOfficialIdentity(database, { officialId, displayName, notes }, { expectedRevision })
 		)
 );
 
@@ -187,12 +166,12 @@ export const editOfficialIdentity = command(
 		status: v.picklist(['active', 'archived']),
 		notes: v.optional(v.string())
 	}),
-	async ({ catalogId, expectedRevision, reason, officialId, displayName, status, notes }) =>
+	async ({ catalogId, expectedRevision, officialId, displayName, status, notes }) =>
 		withCatalog(catalogId, (database) =>
 			updateOfficialIdentity(
 				database,
 				{ officialId, displayName, status, notes },
-				{ expectedRevision, reason }
+				{ expectedRevision }
 			)
 		)
 );
@@ -204,13 +183,12 @@ export const provisionIdentity = command(
 		officialId: v.pipe(v.string(), v.trim(), v.minLength(1)),
 		trackletId: v.pipe(v.string(), v.regex(/^trk_/))
 	}),
-	async ({ catalogId, expectedRevision, reason, visualIdentityId, officialId, trackletId }) =>
-		withCatalog(catalogId, (database, galleryFrames) =>
+	async ({ catalogId, expectedRevision, visualIdentityId, officialId, trackletId }) =>
+		withCatalog(catalogId, (database) =>
 			createProvisionalMapping(
 				database,
 				{ visualIdentityId, officialId, trackletId },
-				{ galleryFrames },
-				{ expectedRevision, reason }
+				{ expectedRevision }
 			)
 		)
 );
@@ -221,14 +199,9 @@ export const confirmIdentity = command(
 		mappingId: v.pipe(v.string(), v.regex(/^map_/)),
 		confirmationTrackletId: v.pipe(v.string(), v.regex(/^trk_/))
 	}),
-	async ({ catalogId, expectedRevision, reason, mappingId, confirmationTrackletId }) =>
-		withCatalog(catalogId, (database, galleryFrames) =>
-			confirmMapping(
-				database,
-				{ mappingId, confirmationTrackletId },
-				{ galleryFrames },
-				{ expectedRevision, reason }
-			)
+	async ({ catalogId, expectedRevision, mappingId, confirmationTrackletId }) =>
+		withCatalog(catalogId, (database) =>
+			confirmMapping(database, { mappingId, confirmationTrackletId }, { expectedRevision })
 		)
 );
 
@@ -239,13 +212,12 @@ export const correctIdentity = command(
 		officialId: v.pipe(v.string(), v.trim(), v.minLength(1)),
 		provisionalTrackletId: v.pipe(v.string(), v.regex(/^trk_/))
 	}),
-	async ({ catalogId, expectedRevision, reason, mappingId, officialId, provisionalTrackletId }) =>
-		withCatalog(catalogId, (database, galleryFrames) =>
+	async ({ catalogId, expectedRevision, mappingId, officialId, provisionalTrackletId }) =>
+		withCatalog(catalogId, (database) =>
 			correctMapping(
 				database,
 				{ mappingId, officialId, provisionalTrackletId },
-				{ galleryFrames },
-				{ expectedRevision, reason }
+				{ expectedRevision }
 			)
 		)
 );
@@ -255,9 +227,9 @@ export const deactivateIdentity = command(
 		...catalogInput,
 		mappingId: v.pipe(v.string(), v.regex(/^map_/))
 	}),
-	async ({ catalogId, expectedRevision, reason, mappingId }) =>
+	async ({ catalogId, expectedRevision, mappingId }) =>
 		withCatalog(catalogId, (database) =>
-			deactivateMapping(database, mappingId, { expectedRevision, reason })
+			deactivateMapping(database, mappingId, { expectedRevision })
 		)
 );
 
@@ -266,10 +238,8 @@ export const rollbackIdentity = command(
 		...catalogInput,
 		mappingId: v.pipe(v.string(), v.regex(/^map_/))
 	}),
-	async ({ catalogId, expectedRevision, reason, mappingId }) =>
-		withCatalog(catalogId, (database) =>
-			rollbackMapping(database, mappingId, { expectedRevision, reason })
-		)
+	async ({ catalogId, expectedRevision, mappingId }) =>
+		withCatalog(catalogId, (database) => rollbackMapping(database, mappingId, { expectedRevision }))
 );
 
 export const mergeIdentityEvidence = command(
@@ -278,12 +248,12 @@ export const mergeIdentityEvidence = command(
 		sourceVisualIdentityId: v.pipe(v.string(), v.regex(/^vid_/)),
 		targetVisualIdentityId: v.pipe(v.string(), v.regex(/^vid_/))
 	}),
-	async ({ catalogId, expectedRevision, reason, sourceVisualIdentityId, targetVisualIdentityId }) =>
+	async ({ catalogId, expectedRevision, sourceVisualIdentityId, targetVisualIdentityId }) =>
 		withCatalog(catalogId, (database) =>
 			mergeVisualIdentities(
 				database,
 				{ sourceVisualIdentityId, targetVisualIdentityId },
-				{ expectedRevision, reason }
+				{ expectedRevision }
 			)
 		)
 );
@@ -294,12 +264,8 @@ export const splitIdentityEvidence = command(
 		sourceVisualIdentityId: v.pipe(v.string(), v.regex(/^vid_/)),
 		trackletIds: v.pipe(v.array(v.pipe(v.string(), v.regex(/^trk_/))), v.minLength(1))
 	}),
-	async ({ catalogId, expectedRevision, reason, sourceVisualIdentityId, trackletIds }) =>
+	async ({ catalogId, expectedRevision, sourceVisualIdentityId, trackletIds }) =>
 		withCatalog(catalogId, (database) =>
-			splitVisualIdentity(
-				database,
-				{ sourceVisualIdentityId, trackletIds },
-				{ expectedRevision, reason }
-			)
+			splitVisualIdentity(database, { sourceVisualIdentityId, trackletIds }, { expectedRevision })
 		)
 );

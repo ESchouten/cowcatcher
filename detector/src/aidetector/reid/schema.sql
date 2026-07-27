@@ -15,7 +15,7 @@ CREATE TABLE visual_identities (
     visual_identity_id TEXT PRIMARY KEY
         CHECK (visual_identity_id GLOB 'vid_*'),
     status TEXT NOT NULL DEFAULT 'pending'
-        CHECK (status IN ('pending', 'active', 'merged', 'split', 'archived')),
+        CHECK (status IN ('pending', 'active', 'merged')),
     merged_into_visual_identity_id TEXT
         REFERENCES visual_identities(visual_identity_id),
     created_at TEXT NOT NULL,
@@ -40,12 +40,9 @@ CREATE TABLE tracklets (
             evidence_status IN (
                 'eligible',
                 'insufficient',
-                'impure',
                 'switch_risk'
             )
         ),
-    predicted_visual_identity_id TEXT
-        REFERENCES visual_identities(visual_identity_id),
     preview_jpeg BLOB NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
@@ -70,22 +67,6 @@ CREATE TABLE evidence_frames (
     CHECK (length(embedding) = embedding_dimension * 4)
 );
 
-CREATE TABLE audit_events (
-    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-    event_id TEXT NOT NULL UNIQUE CHECK (event_id GLOB 'evt_*'),
-    event_type TEXT NOT NULL,
-    actor TEXT NOT NULL,
-    entity_type TEXT NOT NULL,
-    entity_id TEXT NOT NULL,
-    operator_revision INTEGER,
-    previous_event_id TEXT REFERENCES audit_events(event_id),
-    before_json TEXT,
-    after_json TEXT,
-    reason TEXT NOT NULL DEFAULT '',
-    occurred_at TEXT NOT NULL,
-    content_sha256 TEXT NOT NULL UNIQUE CHECK (length(content_sha256) = 64)
-);
-
 CREATE TABLE visual_identity_tracklets (
     tracklet_id TEXT PRIMARY KEY
         REFERENCES tracklets(tracklet_id) ON DELETE CASCADE,
@@ -93,7 +74,6 @@ CREATE TABLE visual_identity_tracklets (
         REFERENCES visual_identities(visual_identity_id),
     assignment_kind TEXT NOT NULL
         CHECK (assignment_kind IN ('initial', 'human_merge', 'human_split')),
-    audit_event_id TEXT REFERENCES audit_events(event_id),
     assigned_at TEXT NOT NULL
 );
 
@@ -167,12 +147,9 @@ CREATE TABLE gallery_items (
 
 CREATE TABLE control (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-    schema_version INTEGER NOT NULL CHECK (schema_version = 2),
     operator_revision INTEGER NOT NULL DEFAULT 0 CHECK (operator_revision >= 0),
-    runtime_revision INTEGER NOT NULL DEFAULT 0 CHECK (runtime_revision >= 0),
     active_gallery_version INTEGER
         REFERENCES gallery_versions(gallery_version),
-    last_identity_error TEXT,
     configuration_sha256 TEXT,
     encoder_key TEXT,
     embedding_dimension INTEGER,
@@ -181,22 +158,8 @@ CREATE TABLE control (
 
 INSERT INTO control (
     singleton,
-    schema_version,
     operator_revision,
-    runtime_revision,
     updated_at
-) VALUES (1, 2, 0, 0, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
-
-CREATE TRIGGER audit_events_immutable_update
-BEFORE UPDATE ON audit_events
-BEGIN
-    SELECT RAISE(ABORT, 'audit events are immutable');
-END;
-
-CREATE TRIGGER audit_events_immutable_delete
-BEFORE DELETE ON audit_events
-BEGIN
-    SELECT RAISE(ABORT, 'audit events are immutable');
-END;
+) VALUES (1, 0, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 
 PRAGMA user_version = 2;

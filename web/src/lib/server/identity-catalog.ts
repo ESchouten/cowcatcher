@@ -1,19 +1,13 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 
 export type OfficialIdentityStatus = 'active' | 'archived';
 export type MappingState = 'provisional' | 'confirmed' | 'inactive' | 'rejected';
-export type EvidenceStatus = 'eligible' | 'insufficient' | 'impure' | 'switch_risk';
+export type EvidenceStatus = 'eligible' | 'insufficient' | 'switch_risk';
 
 export interface CatalogControl {
 	operatorRevision: number;
-	runtimeRevision: number;
 	activeGalleryVersion: number | null;
-	lastIdentityError: string | null;
-}
-
-export interface CatalogPolicy {
-	galleryFrames: number;
 }
 
 export interface OfficialIdentityRecord {
@@ -42,7 +36,7 @@ export interface IdentityTrackletRecord {
 
 export interface VisualIdentityRecord {
 	visualIdentityId: string;
-	status: 'pending' | 'active' | 'split';
+	status: 'pending' | 'active';
 	mappingId: string | null;
 	officialId: string | null;
 	mappingState: 'provisional' | 'confirmed' | null;
@@ -59,23 +53,6 @@ export interface IdentityCatalogSnapshot {
 
 export interface MutationOptions {
 	expectedRevision: number;
-	reason?: string;
-	actor?: string;
-}
-
-interface AuditEvent {
-	eventType: string;
-	entityType: string;
-	entityId: string;
-	before: unknown;
-	after: unknown;
-	reason: string;
-}
-
-interface MutationResult<T> {
-	value: T;
-	audit: AuditEvent;
-	afterAudit?: (eventId: string) => void;
 }
 
 interface MappingRow {
@@ -88,13 +65,7 @@ interface MappingRow {
 	version: number;
 }
 
-interface TrackletEligibility {
-	trackletId: string;
-	visualIdentityId: string;
-	evidenceIds: string[];
-}
-
-const DEFAULT_ACTOR = 'private-network-web';
+const EVIDENCE_FRAMES = 2;
 
 function now(): string {
 	return new Date().toISOString();
@@ -108,20 +79,10 @@ function jpegDataUrl(value: Uint8Array | null): string | null {
 	return value ? `data:image/jpeg;base64,${Buffer.from(value).toString('base64')}` : null;
 }
 
-function canonicalJson(value: unknown): string {
-	if (value === null || typeof value !== 'object') return JSON.stringify(value);
-	if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
-	const object = value as Record<string, unknown>;
-	return `{${Object.keys(object)
-		.sort()
-		.map((key) => `${JSON.stringify(key)}:${canonicalJson(object[key])}`)
-		.join(',')}}`;
-}
-
 function transaction<T>(
 	database: DatabaseSync,
 	options: MutationOptions,
-	action: (revision: number, occurredAt: string) => MutationResult<T>
+	action: (occurredAt: string) => T
 ): T {
 	database.exec('BEGIN IMMEDIATE');
 	try {
@@ -135,7 +96,7 @@ function transaction<T>(
 
 		const revision = Number(control.operator_revision) + 1;
 		const occurredAt = now();
-		const result = action(revision, occurredAt);
+		const result = action(occurredAt);
 		database
 			.prepare(
 				`UPDATE control
@@ -143,99 +104,31 @@ function transaction<T>(
 				 WHERE singleton = 1`
 			)
 			.run(revision, occurredAt);
-		const eventId = insertAuditEvent(
-			database,
-			{
-				...result.audit,
-				reason: result.audit.reason || options.reason?.trim() || 'operator action'
-			},
-			options.actor?.trim() || DEFAULT_ACTOR,
-			revision,
-			occurredAt
-		);
-		result.afterAudit?.(eventId);
 		database.exec('COMMIT');
-		return result.value;
+		return result;
 	} catch (error) {
 		database.exec('ROLLBACK');
 		throw error;
 	}
 }
 
-function insertAuditEvent(
-	database: DatabaseSync,
-	event: AuditEvent,
-	actor: string,
-	operatorRevision: number,
-	occurredAt: string
-): string {
-	const previous = database
-		.prepare('SELECT event_id FROM audit_events ORDER BY sequence DESC LIMIT 1')
-		.get() as { event_id: string } | undefined;
-	const eventId = id('evt');
-	const beforeJson = event.before === null ? null : canonicalJson(event.before);
-	const afterJson = event.after === null ? null : canonicalJson(event.after);
-	const content = {
-		event_id: eventId,
-		event_type: event.eventType,
-		actor,
-		entity_type: event.entityType,
-		entity_id: event.entityId,
-		operator_revision: operatorRevision,
-		previous_event_id: previous?.event_id ?? null,
-		before_json: beforeJson,
-		after_json: afterJson,
-		reason: event.reason,
-		occurred_at: occurredAt
-	};
-	const contentSha256 = createHash('sha256').update(canonicalJson(content)).digest('hex');
-	database
-		.prepare(
-			`INSERT INTO audit_events (
-				event_id, event_type, actor, entity_type, entity_id,
-				operator_revision, previous_event_id, before_json, after_json,
-				reason, occurred_at, content_sha256
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-		)
-		.run(
-			eventId,
-			event.eventType,
-			actor,
-			event.entityType,
-			event.entityId,
-			operatorRevision,
-			previous?.event_id ?? null,
-			beforeJson,
-			afterJson,
-			event.reason,
-			occurredAt,
-			contentSha256
-		);
-	return eventId;
-}
-
 export function readCatalogControl(database: DatabaseSync): CatalogControl {
 	const row = database
 		.prepare(
-			`SELECT operator_revision, runtime_revision,
-			        active_gallery_version, last_identity_error
+			`SELECT operator_revision, active_gallery_version
 			 FROM control WHERE singleton = 1`
 		)
 		.get() as
 		| {
 				operator_revision: number;
-				runtime_revision: number;
 				active_gallery_version: number | null;
-				last_identity_error: string | null;
 		  }
 		| undefined;
 	if (!row) throw new Error('Identity catalog control record is missing');
 	return {
 		operatorRevision: Number(row.operator_revision),
-		runtimeRevision: Number(row.runtime_revision),
 		activeGalleryVersion:
-			row.active_gallery_version === null ? null : Number(row.active_gallery_version),
-		lastIdentityError: row.last_identity_error
+			row.active_gallery_version === null ? null : Number(row.active_gallery_version)
 	};
 }
 
@@ -284,7 +177,7 @@ export function readIdentityCatalog(database: DatabaseSync): IdentityCatalogSnap
 			 LEFT JOIN mappings m
 			   ON m.visual_identity_id = vi.visual_identity_id
 			  AND m.state IN ('provisional', 'confirmed')
-			 WHERE vi.status NOT IN ('merged', 'archived')
+			 WHERE vi.status <> 'merged'
 			 ORDER BY
 			   CASE WHEN m.mapping_id IS NULL THEN 0 ELSE 1 END,
 			   vi.updated_at DESC,
@@ -292,7 +185,7 @@ export function readIdentityCatalog(database: DatabaseSync): IdentityCatalogSnap
 		)
 		.all() as Array<{
 		visual_identity_id: string;
-		status: 'pending' | 'active' | 'split';
+		status: 'pending' | 'active';
 		mapping_id: string | null;
 		official_id: string | null;
 		mapping_state: 'provisional' | 'confirmed' | null;
@@ -430,20 +323,11 @@ function mappingById(database: DatabaseSync, mappingId: string): MappingRow {
 	return mapping;
 }
 
-function requiredFrames(policy: CatalogPolicy, confirmation: boolean): number {
-	if (!Number.isInteger(policy.galleryFrames) || policy.galleryFrames < 2) {
-		throw new Error('Identity gallery policy is invalid');
-	}
-	const half = Math.floor(policy.galleryFrames / 2);
-	return confirmation ? half : half + (policy.galleryFrames % 2);
-}
-
 function eligibleTracklet(
 	database: DatabaseSync,
 	visualIdentityId: string,
-	trackletId: string,
-	frameCount: number
-): TrackletEligibility {
+	trackletId: string
+): void {
 	const row = database
 		.prepare(
 			`SELECT t.tracklet_id, t.evidence_status, vit.visual_identity_id
@@ -466,21 +350,14 @@ function eligibleTracklet(
 	}
 	const evidence = database
 		.prepare(
-			`SELECT evidence_id
+			`SELECT COUNT(*) AS count
 			 FROM evidence_frames
-			 WHERE tracklet_id = ?
-			 ORDER BY frame_index
-			 LIMIT ?`
+			 WHERE tracklet_id = ?`
 		)
-		.all(trackletId, frameCount) as Array<{ evidence_id: string }>;
-	if (evidence.length !== frameCount) {
-		throw new Error(`This tracklet needs ${frameCount} eligible evidence frames`);
+		.get(trackletId) as { count: number };
+	if (Number(evidence.count) < EVIDENCE_FRAMES) {
+		throw new Error(`This tracklet needs ${EVIDENCE_FRAMES} eligible evidence frames`);
 	}
-	return {
-		trackletId,
-		visualIdentityId,
-		evidenceIds: evidence.map((item) => item.evidence_id)
-	};
 }
 
 function nextMappingVersion(database: DatabaseSync, visualIdentityId: string): number {
@@ -506,7 +383,7 @@ export function createOfficialIdentity(
 	const displayName = record.displayName?.trim() || null;
 	const notes = record.notes?.trim() || '';
 	if (!officialId) throw new Error('Official ID is required');
-	return transaction(database, options, (_revision, occurredAt) => {
+	return transaction(database, options, (occurredAt) => {
 		database
 			.prepare(
 				`INSERT INTO official_identities (
@@ -514,18 +391,7 @@ export function createOfficialIdentity(
 				) VALUES (?, ?, 'active', ?, ?, ?)`
 			)
 			.run(officialId, displayName, notes, occurredAt, occurredAt);
-		const after = { official_id: officialId, display_name: displayName, status: 'active', notes };
-		return {
-			value: officialId,
-			audit: {
-				eventType: 'official_identity_created',
-				entityType: 'official_identity',
-				entityId: officialId,
-				before: null,
-				after,
-				reason: options.reason ?? 'official identity created by operator'
-			}
-		};
+		return officialId;
 	});
 }
 
@@ -539,35 +405,20 @@ export function updateOfficialIdentity(
 	},
 	options: MutationOptions
 ): void {
-	transaction(database, options, (_revision, occurredAt) => {
-		const before = officialIdentity(database, record.officialId);
+	transaction(database, options, (occurredAt) => {
+		officialIdentity(database, record.officialId);
 		if (record.status === 'archived' && activeMappingForOfficial(database, record.officialId)) {
 			throw new Error('Deactivate the active mapping before archiving this identity');
 		}
-		const after = {
-			official_id: before.official_id,
-			display_name: record.displayName?.trim() || null,
-			status: record.status,
-			notes: record.notes?.trim() || ''
-		};
+		const displayName = record.displayName?.trim() || null;
+		const notes = record.notes?.trim() || '';
 		database
 			.prepare(
 				`UPDATE official_identities
 				 SET display_name = ?, status = ?, notes = ?, updated_at = ?
 				 WHERE official_id = ?`
 			)
-			.run(after.display_name, after.status, after.notes, occurredAt, record.officialId);
-		return {
-			value: undefined,
-			audit: {
-				eventType: 'official_identity_updated',
-				entityType: 'official_identity',
-				entityId: record.officialId,
-				before,
-				after,
-				reason: options.reason ?? 'official identity updated by operator'
-			}
-		};
+			.run(displayName, record.status, notes, occurredAt, record.officialId);
 	});
 }
 
@@ -578,10 +429,9 @@ export function createProvisionalMapping(
 		officialId: string;
 		trackletId: string;
 	},
-	policy: CatalogPolicy,
 	options: MutationOptions
 ): string {
-	return transaction(database, options, (_revision, occurredAt) => {
+	return transaction(database, options, (occurredAt) => {
 		const official = officialIdentity(database, input.officialId);
 		if (official.status !== 'active') throw new Error('Archived identities cannot be mapped');
 		if (activeMappingForVisual(database, input.visualIdentityId)) {
@@ -590,12 +440,7 @@ export function createProvisionalMapping(
 		if (activeMappingForOfficial(database, input.officialId)) {
 			throw new Error('This official identity already has an active mapping');
 		}
-		const evidence = eligibleTracklet(
-			database,
-			input.visualIdentityId,
-			input.trackletId,
-			requiredFrames(policy, false)
-		);
+		eligibleTracklet(database, input.visualIdentityId, input.trackletId);
 		const mappingId = id('map');
 		const version = nextMappingVersion(database, input.visualIdentityId);
 		database
@@ -619,38 +464,19 @@ export function createProvisionalMapping(
 			.prepare(
 				`UPDATE visual_identities
 				 SET status = 'active', updated_at = ?
-				 WHERE visual_identity_id = ? AND status IN ('pending', 'active', 'split')`
+				 WHERE visual_identity_id = ? AND status IN ('pending', 'active')`
 			)
 			.run(occurredAt, input.visualIdentityId);
-		return {
-			value: mappingId,
-			audit: {
-				eventType: 'mapping_provisioned',
-				entityType: 'mapping',
-				entityId: mappingId,
-				before: null,
-				after: {
-					mapping_id: mappingId,
-					visual_identity_id: input.visualIdentityId,
-					official_id: input.officialId,
-					state: 'provisional',
-					provisional_tracklet_id: input.trackletId,
-					evidence_ids: evidence.evidenceIds,
-					version
-				},
-				reason: options.reason ?? 'first human mapping evidence'
-			}
-		};
+		return mappingId;
 	});
 }
 
 export function confirmMapping(
 	database: DatabaseSync,
 	input: { mappingId: string; confirmationTrackletId: string },
-	policy: CatalogPolicy,
 	options: MutationOptions
 ): void {
-	transaction(database, options, (_revision, occurredAt) => {
+	transaction(database, options, (occurredAt) => {
 		const before = mappingById(database, input.mappingId);
 		if (before.state !== 'provisional') {
 			throw new Error('Only a provisional mapping can be confirmed');
@@ -658,18 +484,8 @@ export function confirmMapping(
 		if (before.provisional_tracklet_id === input.confirmationTrackletId) {
 			throw new Error('Confirmation requires a distinct tracklet');
 		}
-		const first = eligibleTracklet(
-			database,
-			before.visual_identity_id,
-			before.provisional_tracklet_id,
-			requiredFrames(policy, false)
-		);
-		const confirmation = eligibleTracklet(
-			database,
-			before.visual_identity_id,
-			input.confirmationTrackletId,
-			requiredFrames(policy, true)
-		);
+		eligibleTracklet(database, before.visual_identity_id, before.provisional_tracklet_id);
+		eligibleTracklet(database, before.visual_identity_id, input.confirmationTrackletId);
 		database
 			.prepare(
 				`UPDATE mappings
@@ -677,22 +493,6 @@ export function confirmMapping(
 				 WHERE mapping_id = ?`
 			)
 			.run(input.confirmationTrackletId, occurredAt, input.mappingId);
-		return {
-			value: undefined,
-			audit: {
-				eventType: 'mapping_confirmed',
-				entityType: 'mapping',
-				entityId: input.mappingId,
-				before,
-				after: {
-					...before,
-					state: 'confirmed',
-					confirmation_tracklet_id: input.confirmationTrackletId,
-					evidence_ids: [...first.evidenceIds, ...confirmation.evidenceIds]
-				},
-				reason: options.reason ?? 'independent human confirmation'
-			}
-		};
 	});
 }
 
@@ -703,10 +503,9 @@ export function correctMapping(
 		officialId: string;
 		provisionalTrackletId: string;
 	},
-	policy: CatalogPolicy,
 	options: MutationOptions
 ): string {
-	return transaction(database, options, (_revision, occurredAt) => {
+	return transaction(database, options, (occurredAt) => {
 		const before = mappingById(database, input.mappingId);
 		if (!['provisional', 'confirmed'].includes(before.state)) {
 			throw new Error('Only an active mapping can be corrected');
@@ -720,12 +519,7 @@ export function correctMapping(
 		if (occupied && occupied.mapping_id !== input.mappingId) {
 			throw new Error('This official identity already has an active mapping');
 		}
-		const evidence = eligibleTracklet(
-			database,
-			before.visual_identity_id,
-			input.provisionalTrackletId,
-			requiredFrames(policy, false)
-		);
+		eligibleTracklet(database, before.visual_identity_id, input.provisionalTrackletId);
 		database
 			.prepare(`UPDATE mappings SET state = 'inactive', updated_at = ? WHERE mapping_id = ?`)
 			.run(occurredAt, before.mapping_id);
@@ -748,25 +542,7 @@ export function correctMapping(
 				occurredAt,
 				occurredAt
 			);
-		return {
-			value: mappingId,
-			audit: {
-				eventType: 'mapping_corrected',
-				entityType: 'mapping',
-				entityId: mappingId,
-				before,
-				after: {
-					mapping_id: mappingId,
-					visual_identity_id: before.visual_identity_id,
-					official_id: input.officialId,
-					state: 'provisional',
-					provisional_tracklet_id: input.provisionalTrackletId,
-					evidence_ids: evidence.evidenceIds,
-					version
-				},
-				reason: options.reason ?? 'operator corrected official mapping'
-			}
-		};
+		return mappingId;
 	});
 }
 
@@ -775,7 +551,7 @@ export function deactivateMapping(
 	mappingId: string,
 	options: MutationOptions
 ): void {
-	transaction(database, options, (_revision, occurredAt) => {
+	transaction(database, options, (occurredAt) => {
 		const before = mappingById(database, mappingId);
 		if (!['provisional', 'confirmed'].includes(before.state)) {
 			throw new Error('Identity mapping is already inactive');
@@ -783,17 +559,6 @@ export function deactivateMapping(
 		database
 			.prepare(`UPDATE mappings SET state = 'inactive', updated_at = ? WHERE mapping_id = ?`)
 			.run(occurredAt, mappingId);
-		return {
-			value: undefined,
-			audit: {
-				eventType: 'mapping_deactivated',
-				entityType: 'mapping',
-				entityId: mappingId,
-				before,
-				after: { ...before, state: 'inactive' },
-				reason: options.reason ?? 'operator deactivated mapping'
-			}
-		};
 	});
 }
 
@@ -802,7 +567,7 @@ export function rollbackMapping(
 	mappingId: string,
 	options: MutationOptions
 ): string | null {
-	return transaction(database, options, (_revision, occurredAt) => {
+	return transaction(database, options, (occurredAt) => {
 		const before = mappingById(database, mappingId);
 		if (!['provisional', 'confirmed'].includes(before.state)) {
 			throw new Error('Only the active mapping can be rolled back');
@@ -827,21 +592,7 @@ export function rollbackMapping(
 				.prepare(`UPDATE mappings SET state = ?, updated_at = ? WHERE mapping_id = ?`)
 				.run(restoredState, occurredAt, previous.mapping_id);
 		}
-		return {
-			value: previous && restoredState ? previous.mapping_id : null,
-			audit: {
-				eventType: 'mapping_rolled_back',
-				entityType: 'mapping',
-				entityId: mappingId,
-				before,
-				after: {
-					rolled_back_mapping_id: mappingId,
-					restored_mapping_id: previous && restoredState ? previous.mapping_id : null,
-					restored_state: restoredState
-				},
-				reason: options.reason ?? 'operator rollback'
-			}
-		};
+		return previous && restoredState ? previous.mapping_id : null;
 	});
 }
 
@@ -853,7 +604,7 @@ export function mergeVisualIdentities(
 	if (input.sourceVisualIdentityId === input.targetVisualIdentityId) {
 		throw new Error('Choose two different visual identities');
 	}
-	transaction(database, options, (_revision, occurredAt) => {
+	transaction(database, options, (occurredAt) => {
 		const rows = database
 			.prepare(
 				`SELECT visual_identity_id, status
@@ -864,24 +615,24 @@ export function mergeVisualIdentities(
 			visual_identity_id: string;
 			status: string;
 		}>;
-		if (rows.length !== 2 || rows.some((row) => ['merged', 'archived'].includes(row.status))) {
+		if (rows.length !== 2 || rows.some((row) => row.status === 'merged')) {
 			throw new Error('Both visual identities must be active');
 		}
 		if (activeMappingForVisual(database, input.sourceVisualIdentityId)) {
 			throw new Error('Deactivate or correct the source mapping before merging evidence');
 		}
-		const moved = database
+		const hasEvidence = database
 			.prepare(
-				`SELECT tracklet_id FROM visual_identity_tracklets
-				 WHERE visual_identity_id = ? ORDER BY tracklet_id`
+				`SELECT 1 FROM visual_identity_tracklets
+				 WHERE visual_identity_id = ? LIMIT 1`
 			)
-			.all(input.sourceVisualIdentityId) as Array<{ tracklet_id: string }>;
-		if (!moved.length) throw new Error('The source identity has no evidence to merge');
+			.get(input.sourceVisualIdentityId);
+		if (!hasEvidence) throw new Error('The source identity has no evidence to merge');
 		database
 			.prepare(
 				`UPDATE visual_identity_tracklets
 				 SET visual_identity_id = ?, assignment_kind = 'human_merge',
-				     audit_event_id = NULL, assigned_at = ?
+				     assigned_at = ?
 				 WHERE visual_identity_id = ?`
 			)
 			.run(input.targetVisualIdentityId, occurredAt, input.sourceVisualIdentityId);
@@ -900,34 +651,6 @@ export function mergeVisualIdentities(
 				 WHERE visual_identity_id = ?`
 			)
 			.run(occurredAt, input.targetVisualIdentityId);
-		return {
-			value: undefined,
-			audit: {
-				eventType: 'visual_identities_merged',
-				entityType: 'visual_identity',
-				entityId: input.sourceVisualIdentityId,
-				before: {
-					source_visual_identity_id: input.sourceVisualIdentityId,
-					target_visual_identity_id: input.targetVisualIdentityId,
-					tracklet_ids: moved.map((row) => row.tracklet_id)
-				},
-				after: {
-					source_status: 'merged',
-					merged_into_visual_identity_id: input.targetVisualIdentityId
-				},
-				reason: options.reason ?? 'operator merged visual evidence'
-			},
-			afterAudit: (eventId) => {
-				database
-					.prepare(
-						`UPDATE visual_identity_tracklets
-						 SET audit_event_id = ?
-						 WHERE visual_identity_id = ?
-						   AND tracklet_id IN (${moved.map(() => '?').join(',')})`
-					)
-					.run(eventId, input.targetVisualIdentityId, ...moved.map((row) => row.tracklet_id));
-			}
-		};
 	});
 }
 
@@ -938,7 +661,7 @@ export function splitVisualIdentity(
 ): string {
 	const selected = [...new Set(input.trackletIds)];
 	if (!selected.length) throw new Error('Select at least one tracklet to split');
-	return transaction(database, options, (_revision, occurredAt) => {
+	return transaction(database, options, (occurredAt) => {
 		const all = database
 			.prepare(
 				`SELECT tracklet_id FROM visual_identity_tracklets
@@ -965,7 +688,7 @@ export function splitVisualIdentity(
 			.prepare(
 				`UPDATE visual_identity_tracklets
 				 SET visual_identity_id = ?, assignment_kind = 'human_split',
-				     audit_event_id = NULL, assigned_at = ?
+				     assigned_at = ?
 				 WHERE visual_identity_id = ?
 				   AND tracklet_id IN (${placeholders})`
 			)
@@ -984,32 +707,6 @@ export function splitVisualIdentity(
 		database
 			.prepare(`UPDATE visual_identities SET updated_at = ? WHERE visual_identity_id = ?`)
 			.run(occurredAt, input.sourceVisualIdentityId);
-		return {
-			value: newVisualIdentityId,
-			audit: {
-				eventType: 'visual_identity_split',
-				entityType: 'visual_identity',
-				entityId: newVisualIdentityId,
-				before: {
-					source_visual_identity_id: input.sourceVisualIdentityId,
-					active_mapping_id: mapping?.mapping_id ?? null
-				},
-				after: {
-					new_visual_identity_id: newVisualIdentityId,
-					tracklet_ids: selected,
-					invalidated_mapping_id: mappingInvalidated ? mapping?.mapping_id : null
-				},
-				reason: options.reason ?? 'operator split visual evidence'
-			},
-			afterAudit: (eventId) => {
-				database
-					.prepare(
-						`UPDATE visual_identity_tracklets
-						 SET audit_event_id = ?
-						 WHERE visual_identity_id = ?`
-					)
-					.run(eventId, newVisualIdentityId);
-			}
-		};
+		return newVisualIdentityId;
 	});
 }

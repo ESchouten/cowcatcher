@@ -15,7 +15,6 @@ import {
 } from './identity-catalog';
 
 const openDatabases: DatabaseSync[] = [];
-const POLICY = { galleryFrames: 4 };
 const TIMESTAMP = '2026-07-24T10:00:00.000Z';
 
 function databaseFixture(): DatabaseSync {
@@ -93,7 +92,7 @@ afterEach(() => {
 });
 
 describe('generic identity catalog operator transactions', () => {
-	it('keeps the first mapping provisional and audits it with explicit evidence', () => {
+	it('keeps the first mapping provisional', () => {
 		const database = databaseFixture();
 		visualIdentity(database, 'vid_alpha', [{ id: 'trk_alpha_1' }]);
 		createOfficialIdentity(
@@ -109,7 +108,6 @@ describe('generic identity catalog operator transactions', () => {
 				officialId: 'NL-001',
 				trackletId: 'trk_alpha_1'
 			},
-			POLICY,
 			{ expectedRevision: 1 }
 		);
 
@@ -122,11 +120,6 @@ describe('generic identity catalog operator transactions', () => {
 			mappingId,
 			mappingState: 'provisional'
 		});
-		const audit = database
-			.prepare(`SELECT event_type, after_json FROM audit_events WHERE entity_id = ?`)
-			.get(mappingId) as { event_type: string; after_json: string };
-		expect(audit.event_type).toBe('mapping_provisioned');
-		expect(JSON.parse(audit.after_json).evidence_ids).toHaveLength(2);
 	});
 
 	it('requires a distinct eligible confirmation tracklet and four total frames', () => {
@@ -136,19 +129,26 @@ describe('generic identity catalog operator transactions', () => {
 		const mappingId = createProvisionalMapping(
 			database,
 			{ visualIdentityId: 'vid_beta', officialId: 'NL-002', trackletId: 'trk_beta_1' },
-			POLICY,
 			{ expectedRevision: 1 }
 		);
 
 		expect(() =>
-			confirmMapping(database, { mappingId, confirmationTrackletId: 'trk_beta_1' }, POLICY, {
-				expectedRevision: 2
-			})
+			confirmMapping(
+				database,
+				{ mappingId, confirmationTrackletId: 'trk_beta_1' },
+				{
+					expectedRevision: 2
+				}
+			)
 		).toThrow('distinct tracklet');
 		expect(() =>
-			confirmMapping(database, { mappingId, confirmationTrackletId: 'trk_beta_2' }, POLICY, {
-				expectedRevision: 2
-			})
+			confirmMapping(
+				database,
+				{ mappingId, confirmationTrackletId: 'trk_beta_2' },
+				{
+					expectedRevision: 2
+				}
+			)
 		).toThrow('needs 2 eligible evidence frames');
 		expect(readIdentityCatalog(database).control.operatorRevision).toBe(2);
 
@@ -161,15 +161,15 @@ describe('generic identity catalog operator transactions', () => {
 				) VALUES ('evd_beta_2_1', 'trk_beta_2', 1, ?, ?, ?, ?, 2, 1.0, ?)`
 			)
 			.run(TIMESTAMP, '1'.repeat(64), Buffer.from([0xff]), Buffer.alloc(8), TIMESTAMP);
-		confirmMapping(database, { mappingId, confirmationTrackletId: 'trk_beta_2' }, POLICY, {
-			expectedRevision: 2
-		});
+		confirmMapping(
+			database,
+			{ mappingId, confirmationTrackletId: 'trk_beta_2' },
+			{
+				expectedRevision: 2
+			}
+		);
 
 		expect(readIdentityCatalog(database).officialIdentities[0].mappingState).toBe('confirmed');
-		const audit = database
-			.prepare(`SELECT after_json FROM audit_events WHERE event_type = 'mapping_confirmed'`)
-			.get() as { after_json: string };
-		expect(JSON.parse(audit.after_json).evidence_ids).toHaveLength(4);
 	});
 
 	it('corrects to a provisional mapping and rolls back to the prior mapping', () => {
@@ -180,7 +180,6 @@ describe('generic identity catalog operator transactions', () => {
 		const firstMapping = createProvisionalMapping(
 			database,
 			{ visualIdentityId: 'vid_gamma', officialId: 'NL-003', trackletId: 'trk_gamma_1' },
-			POLICY,
 			{ expectedRevision: 2 }
 		);
 		const correction = correctMapping(
@@ -190,7 +189,6 @@ describe('generic identity catalog operator transactions', () => {
 				officialId: 'NL-004',
 				provisionalTrackletId: 'trk_gamma_1'
 			},
-			POLICY,
 			{ expectedRevision: 3 }
 		);
 
@@ -199,23 +197,11 @@ describe('generic identity catalog operator transactions', () => {
 				expect.objectContaining({ officialId: 'NL-004', mappingState: 'provisional' })
 			])
 		);
-		expect(
-			rollbackMapping(database, correction, {
-				expectedRevision: 4,
-				reason: 'test correction rollback'
-			})
-		).toBe(firstMapping);
+		expect(rollbackMapping(database, correction, { expectedRevision: 4 })).toBe(firstMapping);
 		const restored = database
 			.prepare(`SELECT state FROM mappings WHERE mapping_id = ?`)
 			.get(firstMapping) as { state: string };
 		expect(restored.state).toBe('provisional');
-		expect(
-			(
-				database
-					.prepare(`SELECT COUNT(*) AS count FROM audit_events WHERE operator_revision IS NOT NULL`)
-					.get() as { count: number }
-			).count
-		).toBe(5);
 	});
 
 	it('fails a stale concurrent operator revision without partial writes', () => {
@@ -235,7 +221,7 @@ describe('generic identity catalog operator transactions', () => {
 		expect(readIdentityCatalog(database).control.operatorRevision).toBe(1);
 	});
 
-	it('merges and splits visual evidence with direct immutable audit links', () => {
+	it('merges and splits visual evidence', () => {
 		const database = databaseFixture();
 		visualIdentity(database, 'vid_merge_source', [{ id: 'trk_merge_1' }, { id: 'trk_merge_2' }]);
 		visualIdentity(database, 'vid_merge_target', [{ id: 'trk_merge_3' }]);
@@ -263,12 +249,11 @@ describe('generic identity catalog operator transactions', () => {
 				database
 					.prepare(
 						`SELECT COUNT(*) AS count FROM visual_identity_tracklets
-						 WHERE visual_identity_id = 'vid_merge_target'
-						   AND audit_event_id IS NOT NULL`
+						 WHERE visual_identity_id = 'vid_merge_target'`
 					)
 					.get() as { count: number }
 			).count
-		).toBe(2);
+		).toBe(3);
 
 		const split = splitVisualIdentity(
 			database,
@@ -279,14 +264,11 @@ describe('generic identity catalog operator transactions', () => {
 		expect(
 			database
 				.prepare(
-					`SELECT assignment_kind, audit_event_id
+					`SELECT assignment_kind
 						 FROM visual_identity_tracklets WHERE tracklet_id = 'trk_merge_2'`
 				)
-				.get() as { assignment_kind: string; audit_event_id: string | null }
+				.get() as { assignment_kind: string }
 		).toMatchObject({ assignment_kind: 'human_split' });
 		expect(readIdentityCatalog(database).control.operatorRevision).toBe(2);
-		expect(() =>
-			database.exec(`UPDATE audit_events SET reason = 'tampered' WHERE sequence = 1`)
-		).toThrow('audit events are immutable');
 	});
 });

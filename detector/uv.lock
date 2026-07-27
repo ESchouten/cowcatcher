@@ -19,6 +19,7 @@ name = "aidetector"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "huggingface-hub" },
     { name = "imageio-ffmpeg" },
     { name = "lap" },
     { name = "litellm" },
@@ -69,6 +70,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "huggingface-hub", specifier = ">=0.34.0" },
     { name = "imageio-ffmpeg", specifier = ">=0.6.0" },
     { name = "lap", specifier = ">=0.5.12" },
     { name = "litellm", specifier = ">=1.81.6" },

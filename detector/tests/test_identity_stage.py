@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -9,24 +8,19 @@ import pytest
 
 from aidetector.domain.detections import DetectedObject, Observation
 from aidetector.domain.frames import Frame
-from aidetector.reid.controlled_zone import ControlledZonePolicy
 from aidetector.reid.identity_catalog import IdentityCatalog
-from aidetector.reid.models import MIEWID_EMBEDDING_DIMENSION
-from aidetector.reid.stage import (
-    CandidateFilterPolicy,
-    IdentityPolicy,
-    IdentityStage,
-)
+from aidetector.reid.miewid import FEATURE_DIM
+from aidetector.reid.stage import TRACK_MAX_AGE, IdentityStage
 
 
 def unit_vector(index: int) -> np.ndarray:
-    vector = np.zeros(MIEWID_EMBEDDING_DIMENSION, dtype=np.float32)
+    vector = np.zeros(FEATURE_DIM, dtype=np.float32)
     vector[index] = 1.0
     return vector
 
 
 class FakeEncoder:
-    feature_dim = MIEWID_EMBEDDING_DIMENSION
+    feature_dim = FEATURE_DIM
 
     def __init__(self, vector: np.ndarray | None = None):
         self.vector = vector if vector is not None else unit_vector(0)
@@ -37,46 +31,18 @@ class FakeEncoder:
         return np.stack([self.vector.copy() for _crop in crops])
 
 
-def policy(*, max_age: int = 10) -> IdentityPolicy:
-    return IdentityPolicy(
-        target_label="cow",
-        candidate_filter=CandidateFilterPolicy(
-            min_area_ratio=0.005,
-            max_area_ratio=0.3,
-            frame_edge_margin=0.2,
-        ),
-        controlled_zone=ControlledZonePolicy(
-            zone_id="identity_observation",
-            x1=0.2,
-            y1=0.2,
-            x2=0.8,
-            y2=0.8,
-            minimum_box_inside_ratio=0.9,
-            minimum_stable_frames=2,
-            clear_frames=2,
-        ),
-        encoder="miewid-dual-crop-v1",
-        similarity_threshold=0.75,
-        similarity_margin=0.05,
-        query_frames=2,
-        gallery_frames=4,
-        track_max_age=max_age,
-    )
-
-
 def make_stage(
     tmp_path: Path,
     *,
     encoder: FakeEncoder | None = None,
-    max_age: int = 10,
 ) -> tuple[IdentityStage, IdentityCatalog, FakeEncoder]:
     catalog = IdentityCatalog(tmp_path / "identities.sqlite")
     fake = encoder or FakeEncoder()
     stage = IdentityStage(
-        policy=policy(max_age=max_age),
+        target_label="cow",
+        zone=(0.2, 0.2, 0.8, 0.8),
         encoder=fake,  # type: ignore[arg-type]
         catalog=catalog,
-        process_run_id="test-run",
     )
     stage.start()
     return stage, catalog, fake
@@ -129,7 +95,6 @@ def seed_confirmed_identity(
                     ),
                     preview_jpeg=b"\xff\xd8gallery\xff\xd9",
                     embedding=embedding,
-                    quality=1.0,
                     observation_count=frame_index + 1,
                 )
             )
@@ -138,7 +103,7 @@ def seed_confirmed_identity(
     visual_identity_id = stored[0].visual_identity_id
     second_visual_identity_id = stored[2].visual_identity_id
     now = "2026-07-24T00:00:00Z"
-    with catalog.transaction(immediate=True):
+    with catalog.transaction():
         catalog.connection.execute(
             """
             UPDATE visual_identity_tracklets
@@ -292,42 +257,6 @@ def test_stage_suppresses_cached_identity_outside_the_zone(tmp_path: Path):
     stage.close()
 
 
-def test_stage_shutdown_never_promotes_an_active_zone_visit(tmp_path: Path):
-    database = tmp_path / "identities.sqlite"
-    stage, catalog, _encoder = make_stage(tmp_path)
-    stage.enrich("camera", observation(cow(7)))
-    stage.enrich("camera", observation(cow(7)))
-    stage.enrich("camera", observation(cow(7)))
-
-    assert (
-        catalog.connection.execute("SELECT evidence_status FROM tracklets").fetchone()[
-            0
-        ]
-        == "insufficient"
-    )
-    stage.close()
-
-    connection = sqlite3.connect(database)
-    try:
-        assert (
-            connection.execute("SELECT evidence_status FROM tracklets").fetchone()[0]
-            == "insufficient"
-        )
-        assert (
-            connection.execute(
-                """
-                SELECT COUNT(*)
-                FROM audit_events
-                WHERE event_type = 'tracklet_finalized'
-                  AND reason = 'detector stopped before controlled-zone clearance'
-                """
-            ).fetchone()[0]
-            == 1
-        )
-    finally:
-        connection.close()
-
-
 def test_stage_scopes_track_ids_and_zone_visits_by_source(tmp_path: Path):
     stage, _catalog, encoder = make_stage(tmp_path)
     stage.enrich("camera-a", observation(cow(7)))
@@ -372,14 +301,13 @@ def test_stage_matches_gallery_but_never_assigns_prediction_as_truth(tmp_path: P
 
     runtime_assignment = catalog.connection.execute(
         """
-        SELECT vit.visual_identity_id, t.predicted_visual_identity_id
+        SELECT vit.visual_identity_id
         FROM tracklets t
         JOIN visual_identity_tracklets vit USING (tracklet_id)
         WHERE t.source = 'camera'
         """
     ).fetchone()
     assert runtime_assignment["visual_identity_id"] != gallery_visual_id
-    assert runtime_assignment["predicted_visual_identity_id"] == gallery_visual_id
     assert (
         catalog.connection.execute(
             """
@@ -484,47 +412,13 @@ def test_duplicate_track_ids_and_filtered_boxes_never_enter_encoder(tmp_path: Pa
     stage.close()
 
 
-def test_duplicate_existing_track_id_persists_switch_risk(tmp_path: Path):
-    stage, catalog, encoder = make_stage(tmp_path)
-    stage.enrich("camera", observation(cow(7)))
-    stage.enrich("camera", observation(cow(7)))
-    calls_before_duplicate = len(encoder.calls)
-
-    duplicate = stage.enrich("camera", observation(cow(7), cow(7)))
-
-    assert all(
-        item.identity is not None and item.identity.status == "switch_risk"
-        for item in duplicate.objects
-    )
-    assert len(encoder.calls) == calls_before_duplicate
-    row = catalog.connection.execute(
-        """
-        SELECT evidence_status
-        FROM tracklets
-        WHERE source = 'camera' AND track_id = 7
-        """
-    ).fetchone()
-    assert row["evidence_status"] == "switch_risk"
-    assert (
-        catalog.connection.execute(
-            """
-        SELECT COUNT(*)
-        FROM audit_events
-        WHERE event_type = 'tracklet_switch_risk'
-        """
-        ).fetchone()[0]
-        == 1
-    )
-    stage.close()
-
-
 def test_track_id_reuse_after_max_age_creates_a_new_tracklet(tmp_path: Path):
-    stage, catalog, _encoder = make_stage(tmp_path, max_age=2)
+    stage, catalog, _encoder = make_stage(tmp_path)
 
     stage.enrich("camera", observation(cow(7)))
     first = stage.enrich("camera", observation(cow(7)))
-    stage.enrich("camera", observation())
-    stage.enrich("camera", observation())
+    for _ in range(TRACK_MAX_AGE + 1):
+        stage.enrich("camera", observation())
     stage.enrich("camera", observation(cow(7)))
     reused = stage.enrich("camera", observation(cow(7)))
 
@@ -539,60 +433,4 @@ def test_track_id_reuse_after_max_age_creates_a_new_tracklet(tmp_path: Path):
         ).fetchone()[0]
         == 2
     )
-    stage.close()
-
-
-def test_corrupt_evidence_disables_output_until_operator_revision_changes(
-    tmp_path: Path,
-):
-    stage, catalog, encoder = make_stage(tmp_path)
-    seed_confirmed_identity(
-        catalog,
-        official_id="NL-123",
-        embedding=unit_vector(0),
-        seed=100,
-    )
-    stage.enrich("camera", observation(cow(7)))
-    stage.enrich("camera", observation(cow(7)))
-    stage.enrich("camera", observation(cow(7)))
-
-    catalog.connection.execute("PRAGMA ignore_check_constraints = ON")
-    catalog.connection.execute(
-        """
-        UPDATE evidence_frames
-        SET embedding = x'00'
-        WHERE evidence_id = (
-            SELECT json_each.value
-            FROM gallery_items
-            JOIN control
-              ON gallery_items.gallery_version = control.active_gallery_version
-            JOIN json_each(gallery_items.evidence_ids_json)
-            WHERE control.singleton = 1
-            LIMIT 1
-        )
-        """
-    )
-    catalog.connection.execute("PRAGMA ignore_check_constraints = OFF")
-    catalog.connection.execute(
-        """
-        UPDATE control
-        SET operator_revision = operator_revision + 1
-        WHERE singleton = 1
-        """
-    )
-    calls_before_error = len(encoder.calls)
-
-    failed = stage.enrich("camera", observation(cow(8)))
-    repeated = stage.enrich("camera", observation(cow(8)))
-
-    assert failed.objects[0].identity is not None
-    assert failed.objects[0].identity.status == "error"
-    assert repeated.objects[0].identity is not None
-    assert repeated.objects[0].identity.status == "error"
-    assert len(encoder.calls) == calls_before_error
-    control = catalog.control()
-    assert control.active_gallery_version is None
-    assert "BLOB" in (control.last_identity_error or "")
-    with np.testing.assert_raises(sqlite3.IntegrityError):
-        catalog.connection.execute("DELETE FROM audit_events")
     stage.close()

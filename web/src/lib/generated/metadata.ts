@@ -5,13 +5,7 @@ export type Source = string;
 export type Timestamp = string;
 export type Validated = boolean | null;
 export type Confidence = number;
-export type Status =
-	| 'matched'
-	| 'unknown'
-	| 'ambiguous'
-	| 'insufficient_evidence'
-	| 'switch_risk'
-	| 'error';
+export type Status = 'matched' | 'unknown' | 'ambiguous' | 'insufficient_evidence' | 'switch_risk';
 export type VisualIdentityId = string | null;
 export type OfficialId = string | null;
 export type Similarity = number | null;

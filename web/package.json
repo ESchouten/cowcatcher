@@ -11,12 +11,11 @@
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-		"test:server": "node --experimental-strip-types --test tests/*.test.mjs",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"generate:schemas": "node scripts/generate-schemas.mjs",
 		"format": "prettier --write .",
 		"lint": "prettier --check . && eslint .",
-		"test": "vitest run --exclude 'tests/**/*.test.mjs' && pnpm run test:server",
+		"test": "vitest run",
 		"shadcn": "pnpx shadcn-svelte@latest update --all --yes && pnpm format"
 	},
 	"devDependencies": {
@@ -65,6 +64,7 @@
 	"dependencies": {
 		"@jesterkit/exe-sveltekit": "^0.1.7",
 		"@monaco-editor/loader": "^1.7.0",
+		"ajv": "^8.17.1",
 		"ffmpeg-static": "^5.3.0",
 		"monaco-editor": "^0.55.1",
 		"reflect-metadata": "^0.2.2"

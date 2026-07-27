@@ -3,7 +3,7 @@
 	import { onDestroy } from 'svelte';
 
 	type IdentityResult = {
-		status: 'matched' | 'unknown' | 'ambiguous' | 'insufficient_evidence' | 'switch_risk' | 'error';
+		status: 'matched' | 'unknown' | 'ambiguous' | 'insufficient_evidence' | 'switch_risk';
 		visual_identity_id: string | null;
 		official_id: string | null;
 		similarity: number | null;
@@ -108,8 +108,6 @@
 				return 'Collecting identity';
 			case 'switch_risk':
 				return 'Track changed';
-			case 'error':
-				return 'Identity unavailable';
 			default:
 				return 'Unknown';
 		}

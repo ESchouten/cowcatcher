@@ -30,26 +30,10 @@ export type Iou = number;
 export type Tracker = string;
 export type Database = string;
 export type TargetLabel = string;
-export type Singular = string;
-export type Plural = string;
-export type OfficialIdLabel = string;
-export type MinAreaRatio = number;
-export type MaxAreaRatio = number;
-export type FrameEdgeMargin = number;
-export type ZoneId = string;
 export type X1 = number;
 export type Y1 = number;
 export type X2 = number;
 export type Y2 = number;
-export type MinimumBoxInsideRatio = number;
-export type MinimumStableFrames = number;
-export type ClearFrames = number;
-export type Encoder = 'miewid-dual-crop-v1';
-export type SimilarityThreshold = number;
-export type SimilarityMargin = number;
-export type QueryFrames = number;
-export type GalleryFrames = number;
-export type TrackMaxAge = number;
 export type Vlm = VLMConfig | VLMConfig[] | null;
 export type Prompt = string;
 export type Model1 = string | [string, ...string[]];
@@ -171,35 +155,13 @@ export interface YoloConfig {
 export interface IdentityConfig {
 	database: Database;
 	target_label: TargetLabel;
-	display: IdentityDisplayConfig;
-	candidate_filter: IdentityCandidateFilterConfig;
-	controlled_zone: IdentityControlledZoneConfig;
-	encoder: Encoder;
-	similarity_threshold: SimilarityThreshold;
-	similarity_margin: SimilarityMargin;
-	query_frames: QueryFrames;
-	gallery_frames: GalleryFrames;
-	track_max_age: TrackMaxAge;
+	zone: IdentityZoneConfig;
 }
-export interface IdentityDisplayConfig {
-	singular: Singular;
-	plural: Plural;
-	official_id_label: OfficialIdLabel;
-}
-export interface IdentityCandidateFilterConfig {
-	min_area_ratio: MinAreaRatio;
-	max_area_ratio: MaxAreaRatio;
-	frame_edge_margin: FrameEdgeMargin;
-}
-export interface IdentityControlledZoneConfig {
-	zone_id: ZoneId;
+export interface IdentityZoneConfig {
 	x1: X1;
 	y1: Y1;
 	x2: X2;
 	y2: Y2;
-	minimum_box_inside_ratio: MinimumBoxInsideRatio;
-	minimum_stable_frames: MinimumStableFrames;
-	clear_frames: ClearFrames;
 }
 export interface VLMConfig {
 	prompt: Prompt;

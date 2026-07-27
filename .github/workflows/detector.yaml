@@ -16,7 +16,7 @@ permissions:
 
 env:
   PYTHON_VERSION: "3.11"
-  PYINSTALLER_ARGS: --onefile --hidden-import ultralytics --collect-all litellm --collect-all onnxruntime --collect-all onnx --collect-all safetensors --collect-all timm --collect-data aidetector --hidden-import=tiktoken_ext.openai_public --hidden-import=tiktoken_ext --additional-hooks-dir pyinstaller_hooks --paths src --clean --noconfirm
+  PYINSTALLER_ARGS: --onefile --hidden-import ultralytics --collect-all litellm --collect-all onnxruntime --collect-all onnx --collect-all huggingface_hub --collect-all safetensors --collect-all timm --collect-data aidetector --hidden-import=tiktoken_ext.openai_public --hidden-import=tiktoken_ext --additional-hooks-dir pyinstaller_hooks --paths src --clean --noconfirm
   VERSION_FILE: src/aidetector/utils/version.py
 
 jobs:
