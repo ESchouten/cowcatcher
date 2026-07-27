@@ -6,7 +6,9 @@ Detection works in two stages:
 1. **YOLO** — a fast AI model that scans every frame looking for objects.
 2. **VLM** *(optional)* — a smarter AI (like Gemini or GPT-5) that double-checks the detection by looking at the footage and answering a question you define, e.g. *"Is there really a cow mounting another cow?"*. This dramatically reduces false alerts.
 
-For individual animal recognition, a normal YOLO detector can optionally be enriched with identities. A configured YOLO segmentation label is encoded with the MIT-licensed MiewID model and matched against identities stored in SQLite. The current model has been evaluated for Holstein-Friesian cattle; the pipeline itself is not tied to the `cow` label.
+For individual recognition, a tracked YOLO detector can optionally be enriched
+with a generic identity stage. Presets choose the target label and farmer-facing
+terminology; SQLite stores the complete identity catalog and retained evidence.
 
 Confirmed detections can be sent to **Telegram**, saved to **disk**, or posted to a **webhook**.
 
@@ -87,7 +89,7 @@ domain <- pipeline <- adapters <- application
 - `adapters/` contains Ultralytics, video sources, VLM validation, HTTP/SSE, Telegram, webhook, and disk implementations.
 - `application.py` is the composition root. It is the only module that translates configuration objects into runtime policies and concrete adapters.
 - `media/` renders and caches event artifacts. Equal artifact requests within one event are encoded only once.
-- Generic identity candidates, track aggregation, registry sharing, and enrichment live in `domain/` and `pipeline/`. `reid/` supplies segmentation, MiewID, enrollment, and SQLite implementations. Executable evaluation tooling lives separately in `benchmarks/reid/`.
+- `reid/` contains the optional tracked identity stage, controlled observation-zone policy, checksum-verified MiewID adapter, and the shared SQLite schema.
 
 Live observations and completed events are sent through the same generic `Sink.send()` contract. Validation and every event sink have small bounded queues. When an external service falls behind, only its oldest pending event is replaced so inference continues. `tests/test_architecture.py` enforces the dependency direction.
 
@@ -177,64 +179,47 @@ This is the fast first-pass AI that scans every frame. Without a YOLO model, the
 
 ### `identity` — Individual recognition
 
-Identity is an optional enrichment of a normal YOLO detector. MiewID converts segmented animals into normalized embeddings. Five observations from the same YOLO track are averaged, then compared with the best stored view of each identity. By default, an identity is returned only when cosine similarity is at least `0.68` and the lead over the second-best identity is at least `0.05`; ambiguous tracks remain unknown. The pinned model is downloaded from Hugging Face on first use. CUDA builds use its PyTorch checkpoint; ONNX-based builds use the equivalent ONNX export.
+Identity consumes the primary detector's tracked objects. The detector must have
+tracking enabled and its confidence map must include `target_label`. Results are
+attached only to the same source and exact tracker ID; no second localizer or
+geometric reassociation runs.
 
-When the primary detector already tracks the configured identity `label` with segmentation masks, those results are reused. Otherwise, configure `segment_model` as a fallback. The generic identity configuration deliberately does not choose a domain model for you. The [cow identity preset](../config/identity/cow.json) configures YOLO26m segmentation and the filters used for Holstein cattle; the web app exposes it as the **Cow** identity preset.
+Every identity policy field is required. Apply a detector preset and an identity
+preset in Setup, or copy their resolved values into `config.json`. Python reads
+only `config.json`, never the preset files. The included cow presets are an
+example of domain-specific labels and thresholds; the runtime and catalog use
+generic identity names.
 
-For detection-only models such as CowCatcher, the fallback segmentation model runs on the same frame and attaches identified objects inside the event box to detections such as `mounting`.
+Evidence is accepted only for one stable target inside the configured controlled
+zone. The `miewid-dual-crop-v1` encoder uses two frames per query, four explicitly
+selected gallery frames, and the configured similarity and runner-up-margin
+gates. It uses native PyTorch MPS FP16 on Apple silicon and CPU FP32 elsewhere.
+Unknown, ambiguous, low-quality, or stale-gallery observations remain
+unidentified.
 
-```json
-{
-  "yolo": {
-    "model": "cowcatcher.pt",
-    "confidence": 0.8
-  },
-  "identity": {
-    "label": "cow",
-    "segment_model": "yolo26m-seg.pt",
-    "database": "identities/cows.sqlite"
-  }
-}
+The reviewed checkpoint is never downloaded or bundled. Place the exact
+checksum-pinned file at this path relative to the directory containing
+`config.json`:
+
+```text
+models/miewid/miewid_msv3_official_4f1d7f2b.safetensors
 ```
 
-For enrollment, add an `enrollment` object. The detector records averaged tracklets in the same database until enrollment is finalized in the web app. Afterwards it loads the assigned embeddings from SQLite into memory for matching.
+The packaged model manifest records its checksum, architecture, preprocessing,
+device policy, and restricted local non-commercial provenance. Missing or
+changed assets fail closed.
 
-Every animal starts without an identity. `identity_count` is therefore not a list of known identities; it is the optional known herd size. Supplying it turns the first scan into a closed-set assignment and is strongly recommended when every animal is expected to participate. Without it, enrollment is open-set and deliberately conservative: one animal may initially appear as multiple provisional identities, which can be reviewed and merged in the web app. This avoids forcing genuinely new animals into an existing identity.
+On first detector start, Python creates SQLite schema version 2 at the configured
+relative database path. The web app then manages official identities, provisional
+mappings, independent confirmations, corrections, merges, splits, rollbacks,
+and gallery activation directly in that database. A first assignment remains
+provisional; a distinct eligible tracklet must confirm it. Predictions never
+become mapping truth or automatically expand the gallery.
 
-```json
-{
-  "yolo": {
-    "model": "yolo26m-seg.pt",
-    "task": "segment",
-    "tracking": true,
-    "confidence": { "cow": 0.1 },
-    "imgsz": 640
-  },
-  "identity": {
-    "label": "cow",
-    "database": "identities/cows.sqlite",
-    "enrollment": {
-      "identity_count": 46
-    },
-    "match_threshold": 0.68,
-    "match_margin": 0.05
-  }
-}
-```
-
-SQLite is the only persistent identity store. It contains track embeddings, previews, assignments, and animal numbers. At startup and after database changes, the detector builds its normalized NumPy search arrays directly in memory.
-
-Identity databases include the pinned embedding model and dimension. Databases created with an earlier experimental encoder are not compatible with MiewID; the detector reports this at startup and requires a fresh enrollment instead of mixing embeddings from different models.
-
-After enrollment is finalized, reliable matches keep improving existing identities. The detector rechecks the complete track embedding, stores at most one sufficiently distinct sample per track, and retains at most 20 learned samples per identity. Unknown or ambiguous tracks are not assigned automatically and remain available for a later enrollment workflow.
-
-Unknown tracks collected after finalization appear as pending evidence in the web app. Finishing another scan clusters only this pending evidence. A mature cluster is first compared conservatively with the existing gallery: confident matches add evidence to that identity, while unmatched clusters become new identities without changing existing assignments or animal numbers. A cluster needs evidence from at least three tracks; immature clusters remain pending.
-
-All detector pipelines in the same application share a short-lived in-memory identity register. An identity-enabled detector publishes normalized object locations keyed by source, detector, and YOLO track id. Other detectors reading the same source automatically attach those identities by location, so an event detector such as CowCatcher does not need to run a second identity pipeline. Entries expire after five seconds and are never persisted as identity evidence.
-
-Identity support, including both ONNX and PyTorch model loading, is included in every detector installation.
-
-For benchmark commands, also install `--extra identity-benchmark`. Use `benchmark-reid-video` for annotated end-to-end localization, tracking, and identity regression tests. `benchmark-reid-enrollment` evaluates clustering against prepared public identity crops. Benchmarks deliberately use the pinned ONNX export for stable reference results; it is numerically equivalent to the PyTorch checkpoint used by CUDA builds. Manage enrollment databases with `identity-enrollment`.
+JPEG previews and float32 embeddings are stored as BLOBs, so backing up the
+single SQLite file preserves the complete identity catalog. Ordinary detection
+videos remain normal exports. Databases from the removed experimental identity
+implementation are unsupported and must be recreated.
 
 ---
 
