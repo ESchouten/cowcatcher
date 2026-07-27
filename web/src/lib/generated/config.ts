@@ -29,18 +29,26 @@ export type Imgsz = number;
 export type Iou = number;
 export type Tracker = string;
 export type Database = string;
-export type Label = string;
-export type IdentityCount = number | null;
-export type SegmentModel = string | null;
-export type Imgsz1 = number;
-export type Confidence1 = number;
-export type MatchThreshold = number;
-export type MatchMargin = number;
+export type TargetLabel = string;
+export type Singular = string;
+export type Plural = string;
+export type OfficialIdLabel = string;
 export type MinAreaRatio = number;
 export type MaxAreaRatio = number;
-export type Margin = number;
-export type NmsIou = number;
-export type TrackSamples = number;
+export type FrameEdgeMargin = number;
+export type ZoneId = string;
+export type X1 = number;
+export type Y1 = number;
+export type X2 = number;
+export type Y2 = number;
+export type MinimumBoxInsideRatio = number;
+export type MinimumStableFrames = number;
+export type ClearFrames = number;
+export type Encoder = 'miewid-dual-crop-v1';
+export type SimilarityThreshold = number;
+export type SimilarityMargin = number;
+export type QueryFrames = number;
+export type GalleryFrames = number;
 export type TrackMaxAge = number;
 export type Vlm = VLMConfig | VLMConfig[] | null;
 export type Prompt = string;
@@ -51,7 +59,7 @@ export type Strategy = 'IMAGE' | 'VIDEO';
 export type CropPadding = number;
 export type Timeout1 = number;
 export type Disk = DiskConfig | DiskConfig[] | null;
-export type Confidence2 =
+export type Confidence1 =
 	| number
 	| {
 			[k: string]: number;
@@ -62,7 +70,7 @@ export type ExportRejected = boolean;
 export type Directory = string | null;
 export type Strategy1 = 'ALL' | 'BEST';
 export type Telegram = ChatConfig | ChatConfig[] | null;
-export type Confidence3 =
+export type Confidence2 =
 	| number
 	| {
 			[k: string]: number;
@@ -88,7 +96,7 @@ export type Headers = {
 	[k: string]: string;
 } | null;
 export type Body = string | null;
-export type Confidence4 =
+export type Confidence3 =
 	| number
 	| {
 			[k: string]: number;
@@ -106,7 +114,7 @@ export type Token1 = string | null;
 export type DataType = 'binary' | 'base64' | 'none';
 export type DataMax = number | null;
 export type Sse = SSEConfig | SSEConfig[] | null;
-export type Confidence5 =
+export type Confidence4 =
 	| number
 	| {
 			[k: string]: number;
@@ -162,22 +170,36 @@ export interface YoloConfig {
 }
 export interface IdentityConfig {
 	database: Database;
-	label: Label;
-	enrollment?: IdentityEnrollmentConfig | null;
-	segment_model?: SegmentModel;
-	imgsz?: Imgsz1;
-	confidence?: Confidence1;
-	match_threshold?: MatchThreshold;
-	match_margin?: MatchMargin;
-	min_area_ratio?: MinAreaRatio;
-	max_area_ratio?: MaxAreaRatio;
-	margin?: Margin;
-	nms_iou?: NmsIou;
-	track_samples?: TrackSamples;
-	track_max_age?: TrackMaxAge;
+	target_label: TargetLabel;
+	display: IdentityDisplayConfig;
+	candidate_filter: IdentityCandidateFilterConfig;
+	controlled_zone: IdentityControlledZoneConfig;
+	encoder: Encoder;
+	similarity_threshold: SimilarityThreshold;
+	similarity_margin: SimilarityMargin;
+	query_frames: QueryFrames;
+	gallery_frames: GalleryFrames;
+	track_max_age: TrackMaxAge;
 }
-export interface IdentityEnrollmentConfig {
-	identity_count?: IdentityCount;
+export interface IdentityDisplayConfig {
+	singular: Singular;
+	plural: Plural;
+	official_id_label: OfficialIdLabel;
+}
+export interface IdentityCandidateFilterConfig {
+	min_area_ratio: MinAreaRatio;
+	max_area_ratio: MaxAreaRatio;
+	frame_edge_margin: FrameEdgeMargin;
+}
+export interface IdentityControlledZoneConfig {
+	zone_id: ZoneId;
+	x1: X1;
+	y1: Y1;
+	x2: X2;
+	y2: Y2;
+	minimum_box_inside_ratio: MinimumBoxInsideRatio;
+	minimum_stable_frames: MinimumStableFrames;
+	clear_frames: ClearFrames;
 }
 export interface VLMConfig {
 	prompt: Prompt;
@@ -195,14 +217,14 @@ export interface ExportersConfig {
 	sse?: Sse;
 }
 export interface DiskConfig {
-	confidence?: Confidence2;
+	confidence?: Confidence1;
 	crop_padding?: CropPadding1;
 	export_rejected?: ExportRejected;
 	directory?: Directory;
 	strategy?: Strategy1;
 }
 export interface ChatConfig {
-	confidence?: Confidence3;
+	confidence?: Confidence2;
 	crop_padding?: CropPadding2;
 	export_rejected?: ExportRejected1;
 	include_image?: IncludeImage;
@@ -222,7 +244,7 @@ export interface WebhookConfig {
 	timeout?: Timeout3;
 	headers?: Headers;
 	body?: Body;
-	confidence?: Confidence4;
+	confidence?: Confidence3;
 	crop_padding?: CropPadding3;
 	export_rejected?: ExportRejected2;
 	include_image?: IncludeImage1;
@@ -236,7 +258,7 @@ export interface WebhookConfig {
 	data_max?: DataMax;
 }
 export interface SSEConfig {
-	confidence?: Confidence5;
+	confidence?: Confidence4;
 	crop_padding?: CropPadding4;
 	export_rejected?: ExportRejected3;
 	port?: Port;

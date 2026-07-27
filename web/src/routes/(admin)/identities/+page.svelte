@@ -1,331 +1,897 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
+	import * as Alert from '$lib/components/ui/alert';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
+	import * as Card from '$lib/components/ui/card';
+	import * as Dialog from '$lib/components/ui/dialog';
+	import * as Empty from '$lib/components/ui/empty';
 	import { Input } from '$lib/components/ui/input';
-	import * as Select from '$lib/components/ui/select';
+	import * as NativeSelect from '$lib/components/ui/native-select';
+	import * as Sheet from '$lib/components/ui/sheet';
 	import * as Table from '$lib/components/ui/table';
+	import { Textarea } from '$lib/components/ui/textarea';
 	import {
-		finalizeIdentities,
-		getIdentities,
-		getIdentityTracklets,
-		mergeIdentity as mergeIdentityCommand,
-		setAnimalNumber,
-		splitIdentityTracklet
+		addOfficialIdentity,
+		confirmIdentity,
+		correctIdentity,
+		deactivateIdentity,
+		editOfficialIdentity,
+		getIdentityCatalogs,
+		mergeIdentityEvidence,
+		provisionIdentity,
+		rollbackIdentity,
+		splitIdentityEvidence
 	} from '$lib/remote/identity.remote';
-	import type { IdentityTracklet } from '$lib/remote/identity.remote';
-	import CheckCheckIcon from '@lucide/svelte/icons/check-check';
-	import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
-	import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
+	import type { IdentityCatalogView } from '$lib/remote/identity.remote';
+	import ArchiveIcon from '@lucide/svelte/icons/archive';
+	import ArrowRightIcon from '@lucide/svelte/icons/arrow-right';
+	import CheckCircleIcon from '@lucide/svelte/icons/circle-check';
+	import CircleAlertIcon from '@lucide/svelte/icons/circle-alert';
+	import ClockIcon from '@lucide/svelte/icons/clock-3';
+	import DatabaseIcon from '@lucide/svelte/icons/database';
+	import EyeIcon from '@lucide/svelte/icons/eye';
 	import MergeIcon from '@lucide/svelte/icons/merge';
+	import PlusIcon from '@lucide/svelte/icons/plus';
+	import RefreshIcon from '@lucide/svelte/icons/refresh-cw';
 	import ScissorsIcon from '@lucide/svelte/icons/scissors';
+	import SearchIcon from '@lucide/svelte/icons/search';
+	import UndoIcon from '@lucide/svelte/icons/undo-2';
 
-	const identitiesQuery = getIdentities();
-	const databases = $derived(await identitiesQuery);
+	const catalogsQuery = getIdentityCatalogs();
+	const catalogs = $derived(await catalogsQuery);
+	let selectedCatalogId = $state<string | null>(null);
+	const catalog = $derived<IdentityCatalogView | null>(
+		catalogs.find((item) => item.catalogId === selectedCatalogId) ?? catalogs[0] ?? null
+	);
+	const snapshot = $derived(catalog?.snapshot ?? null);
+	const revision = $derived(snapshot?.control.operatorRevision ?? 0);
+	const singular = $derived(catalog?.display.singular ?? 'identity');
+	const plural = $derived(catalog?.display.plural ?? 'identities');
+	const officialIdLabel = $derived(catalog?.display.officialIdLabel ?? 'Official ID');
+
+	let search = $state('');
+	let addOpen = $state(false);
+	let addOfficialId = $state('');
+	let addDisplayName = $state('');
+	let addNotes = $state('');
 	let pending = $state<string | null>(null);
 	let errorMessage = $state<string | null>(null);
-	let expanded = $state<string | null>(null);
-	let loadingTracklets = $state<string | null>(null);
-	let tracklets = $state<Record<string, IdentityTracklet[]>>({});
-	let mergeTargets = $state<Record<string, string>>({});
+	let detailsOpen = $state(false);
+	let selectedOfficialId = $state<string | null>(null);
+	let selectedVisualIdentityId = $state<string | null>(null);
+	let editKey = $state<string | null>(null);
+	let editDisplayName = $state('');
+	let editNotes = $state('');
+	let editStatus = $state<'active' | 'archived'>('active');
+	let assignmentOfficials = $state<Record<string, string>>({});
+	let assignmentTracklets = $state<Record<string, string>>({});
+	let correctionOfficialId = $state('');
+	let correctionTrackletId = $state('');
+	let mergeTargetId = $state('');
+	let splitTracklets = $state<Record<string, boolean>>({});
 
-	function identityKey(database: string, identity: string) {
-		return `${database}:${identity}`;
-	}
-
-	async function loadTracklets(database: string, identity: string, refresh = false) {
-		const key = identityKey(database, identity);
-		loadingTracklets = key;
-		try {
-			const query = getIdentityTracklets({ database, identity });
-			if (refresh) await query.refresh();
-			tracklets[key] = await query;
-		} finally {
-			loadingTracklets = null;
-		}
-	}
-
-	async function toggleIdentity(database: string, identity: string) {
-		const key = identityKey(database, identity);
-		if (expanded === key) {
-			expanded = null;
-			return;
-		}
-		expanded = key;
-		if (!tracklets[key]) await loadTracklets(database, identity);
-	}
-
-	async function finalize(database: string) {
-		pending = `finalize:${database}`;
-		errorMessage = null;
-		try {
-			await finalizeIdentities({ database }).updates(identitiesQuery);
-		} catch (error) {
-			errorMessage = error instanceof Error ? error.message : 'Could not finalize enrollment.';
-		} finally {
-			pending = null;
-		}
-	}
-
-	async function saveAnimalNumber(database: string, identity: string, animalNumber: string) {
-		const key = `${database}:${identity}`;
-		pending = key;
-		errorMessage = null;
-		try {
-			await setAnimalNumber({ database, identity, animalNumber }).updates(identitiesQuery);
-		} catch (error) {
-			errorMessage = error instanceof Error ? error.message : 'Could not save animal number.';
-		} finally {
-			pending = null;
-		}
-	}
-
-	async function mergeIdentity(database: string, source: string) {
-		const identity = identityKey(database, source);
-		const target = mergeTargets[identity];
-		if (!target) return;
-		if (!window.confirm(`Merge ${source} into ${target}?`)) return;
-		pending = `merge:${database}:${source}`;
-		errorMessage = null;
-		try {
-			await mergeIdentityCommand({ database, source, target }).updates(identitiesQuery);
-			expanded = null;
-			delete tracklets[identityKey(database, source)];
-			delete mergeTargets[identity];
-		} catch (error) {
-			errorMessage = error instanceof Error ? error.message : 'Could not merge identities.';
-		} finally {
-			pending = null;
-		}
-	}
-
-	async function splitTracklet(database: string, identity: string, tracklet: string) {
-		if (!window.confirm(`Split this tracklet from ${identity}?`)) return;
-		const key = `split:${tracklet}`;
-		pending = key;
-		errorMessage = null;
-		try {
-			await splitIdentityTracklet({ database, identity, tracklet }).updates(identitiesQuery);
-			await loadTracklets(database, identity, true);
-		} catch (error) {
-			errorMessage = error instanceof Error ? error.message : 'Could not split tracklet.';
-		} finally {
-			pending = null;
-		}
-	}
+	const activeOfficials = $derived(
+		snapshot?.officialIdentities.filter((identity) => identity.status === 'active') ?? []
+	);
+	const visibleOfficials = $derived(
+		(snapshot?.officialIdentities ?? []).filter((identity) => {
+			const query = search.trim().toLocaleLowerCase();
+			return (
+				!query ||
+				identity.officialId.toLocaleLowerCase().includes(query) ||
+				identity.displayName?.toLocaleLowerCase().includes(query) ||
+				identity.notes.toLocaleLowerCase().includes(query)
+			);
+		})
+	);
+	const reviewVisuals = $derived(
+		(snapshot?.visualIdentities ?? []).filter((identity) => identity.mappingId === null)
+	);
+	const selectedOfficial = $derived(
+		snapshot?.officialIdentities.find((identity) => identity.officialId === selectedOfficialId) ??
+			null
+	);
+	const selectedVisual = $derived(
+		snapshot?.visualIdentities.find(
+			(identity) => identity.visualIdentityId === selectedVisualIdentityId
+		) ?? null
+	);
+	const confirmationTracklets = $derived(
+		selectedVisual?.tracklets.filter(
+			(tracklet) =>
+				tracklet.trackletId !== selectedVisual.provisionalTrackletId &&
+				tracklet.evidenceStatus === 'eligible'
+		) ?? []
+	);
+	const mergeTargets = $derived(
+		(snapshot?.visualIdentities ?? []).filter(
+			(identity) => identity.visualIdentityId !== selectedVisualIdentityId
+		)
+	);
 
 	$effect(() => {
-		if (!databases.some((database) => database.finalizeRequested)) return;
-		const timer = window.setInterval(() => void identitiesQuery.refresh(), 1500);
-		return () => window.clearInterval(timer);
+		if (!selectedOfficial || editKey === selectedOfficial.officialId) return;
+		editKey = selectedOfficial.officialId;
+		editDisplayName = selectedOfficial.displayName ?? '';
+		editNotes = selectedOfficial.notes;
+		editStatus = selectedOfficial.status;
+		correctionOfficialId = '';
+		correctionTrackletId = selectedVisual?.provisionalTrackletId ?? '';
 	});
+
+	function titleCase(value: string): string {
+		return value ? value.charAt(0).toLocaleUpperCase() + value.slice(1) : value;
+	}
+
+	function formatDate(value: string | undefined): string {
+		if (!value) return 'No evidence yet';
+		return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(
+			new Date(value)
+		);
+	}
+
+	function lastSeen(visualIdentityId: string | null): string {
+		const visual = snapshot?.visualIdentities.find(
+			(identity) => identity.visualIdentityId === visualIdentityId
+		);
+		return formatDate(visual?.tracklets[0]?.lastCapturedAt);
+	}
+
+	function mappingLabel(state: 'provisional' | 'confirmed' | null): string {
+		if (state === 'confirmed') return 'Confirmed';
+		if (state === 'provisional') return 'Needs confirmation';
+		return 'Not mapped';
+	}
+
+	async function mutate(key: string, action: () => Promise<unknown>, fallback: string) {
+		pending = key;
+		errorMessage = null;
+		try {
+			await action();
+		} catch (error) {
+			errorMessage = error instanceof Error ? error.message : fallback;
+		} finally {
+			pending = null;
+		}
+	}
+
+	function openOfficial(officialId: string, visualIdentityId: string | null) {
+		selectedOfficialId = officialId;
+		selectedVisualIdentityId = visualIdentityId;
+		editKey = null;
+		splitTracklets = {};
+		mergeTargetId = '';
+		detailsOpen = true;
+	}
+
+	function openVisual(visualIdentityId: string) {
+		const visual = snapshot?.visualIdentities.find(
+			(identity) => identity.visualIdentityId === visualIdentityId
+		);
+		selectedOfficialId = visual?.officialId ?? null;
+		selectedVisualIdentityId = visualIdentityId;
+		editKey = null;
+		splitTracklets = {};
+		mergeTargetId = '';
+		detailsOpen = true;
+	}
+
+	async function createOfficial() {
+		if (!catalog) return;
+		await mutate(
+			'add-official',
+			async () => {
+				await addOfficialIdentity({
+					catalogId: catalog.catalogId,
+					expectedRevision: revision,
+					officialId: addOfficialId,
+					displayName: addDisplayName,
+					notes: addNotes
+				}).updates(catalogsQuery);
+				addOpen = false;
+				addOfficialId = '';
+				addDisplayName = '';
+				addNotes = '';
+			},
+			`Could not add ${singular}.`
+		);
+	}
+
+	async function saveOfficial() {
+		if (!catalog || !selectedOfficial) return;
+		await mutate(
+			'edit-official',
+			() =>
+				editOfficialIdentity({
+					catalogId: catalog.catalogId,
+					expectedRevision: revision,
+					officialId: selectedOfficial.officialId,
+					displayName: editDisplayName,
+					status: editStatus,
+					notes: editNotes
+				}).updates(catalogsQuery),
+			`Could not update ${singular}.`
+		);
+	}
+
+	async function assignVisual(visualIdentityId: string) {
+		if (!catalog) return;
+		const visual = snapshot?.visualIdentities.find(
+			(identity) => identity.visualIdentityId === visualIdentityId
+		);
+		const officialId = assignmentOfficials[visualIdentityId] ?? activeOfficials[0]?.officialId;
+		const trackletId =
+			assignmentTracklets[visualIdentityId] ??
+			visual?.tracklets.find((tracklet) => tracklet.evidenceStatus === 'eligible')?.trackletId;
+		if (!officialId || !trackletId) {
+			errorMessage = `Choose an official ${singular} and eligible evidence first.`;
+			return;
+		}
+		await mutate(
+			`assign:${visualIdentityId}`,
+			() =>
+				provisionIdentity({
+					catalogId: catalog.catalogId,
+					expectedRevision: revision,
+					visualIdentityId,
+					officialId,
+					trackletId
+				}).updates(catalogsQuery),
+			'Could not create the provisional mapping.'
+		);
+	}
+
+	async function confirm(trackletId: string) {
+		if (!catalog || !selectedVisual?.mappingId) return;
+		await mutate(
+			`confirm:${trackletId}`,
+			() =>
+				confirmIdentity({
+					catalogId: catalog.catalogId,
+					expectedRevision: revision,
+					mappingId: selectedVisual.mappingId!,
+					confirmationTrackletId: trackletId
+				}).updates(catalogsQuery),
+			'Could not confirm the mapping.'
+		);
+	}
+
+	async function correct() {
+		if (!catalog || !selectedVisual?.mappingId || !correctionOfficialId || !correctionTrackletId) {
+			return;
+		}
+		await mutate(
+			'correct-mapping',
+			() =>
+				correctIdentity({
+					catalogId: catalog.catalogId,
+					expectedRevision: revision,
+					mappingId: selectedVisual.mappingId!,
+					officialId: correctionOfficialId,
+					provisionalTrackletId: correctionTrackletId,
+					reason: 'Official identity corrected from the details view'
+				}).updates(catalogsQuery),
+			'Could not correct the mapping.'
+		);
+	}
+
+	async function deactivate() {
+		if (!catalog || !selectedVisual?.mappingId) return;
+		if (
+			!window.confirm('Deactivate this identity mapping? Identity output will stop until remapped.')
+		) {
+			return;
+		}
+		await mutate(
+			'deactivate-mapping',
+			() =>
+				deactivateIdentity({
+					catalogId: catalog.catalogId,
+					expectedRevision: revision,
+					mappingId: selectedVisual.mappingId!,
+					reason: 'Mapping deactivated from the details view'
+				}).updates(catalogsQuery),
+			'Could not deactivate the mapping.'
+		);
+	}
+
+	async function rollback() {
+		if (!catalog || !selectedVisual?.mappingId) return;
+		if (!window.confirm('Roll back this mapping change?')) return;
+		await mutate(
+			'rollback-mapping',
+			() =>
+				rollbackIdentity({
+					catalogId: catalog.catalogId,
+					expectedRevision: revision,
+					mappingId: selectedVisual.mappingId!,
+					reason: 'Operator requested rollback'
+				}).updates(catalogsQuery),
+			'Could not roll back the mapping.'
+		);
+	}
+
+	async function merge() {
+		if (!catalog || !selectedVisual || !mergeTargetId) return;
+		if (!window.confirm('Merge this visual evidence into the selected identity?')) return;
+		await mutate(
+			'merge-visual',
+			() =>
+				mergeIdentityEvidence({
+					catalogId: catalog.catalogId,
+					expectedRevision: revision,
+					sourceVisualIdentityId: selectedVisual.visualIdentityId,
+					targetVisualIdentityId: mergeTargetId,
+					reason: 'Operator merged duplicate visual identities'
+				}).updates(catalogsQuery),
+			'Could not merge the visual identities.'
+		);
+	}
+
+	async function split() {
+		if (!catalog || !selectedVisual) return;
+		const trackletIds = Object.entries(splitTracklets)
+			.filter(([, selected]) => selected)
+			.map(([trackletId]) => trackletId);
+		if (!trackletIds.length) return;
+		if (!window.confirm('Split the selected evidence into a new visual identity?')) return;
+		await mutate(
+			'split-visual',
+			() =>
+				splitIdentityEvidence({
+					catalogId: catalog.catalogId,
+					expectedRevision: revision,
+					sourceVisualIdentityId: selectedVisual.visualIdentityId,
+					trackletIds,
+					reason: 'Operator split mixed visual evidence'
+				}).updates(catalogsQuery),
+			'Could not split the visual identity.'
+		);
+	}
 </script>
 
-<section class="space-y-6">
-	<header class="space-y-1">
-		<h1 class="text-2xl font-semibold tracking-tight">Identities</h1>
-		<p class="text-sm text-muted-foreground">Review scanned animals and assign animal numbers.</p>
+<section class="space-y-6" data-testid="identities-page">
+	<header class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+		<div class="space-y-1">
+			<div class="flex flex-wrap items-center gap-2">
+				<h1 class="text-2xl font-semibold tracking-tight">{titleCase(plural)}</h1>
+				{#if catalogs.length > 1}
+					<NativeSelect.Root
+						class="h-8 w-auto text-xs"
+						value={catalog?.catalogId ?? ''}
+						onchange={(event) => (selectedCatalogId = event.currentTarget.value)}
+						aria-label="Identity catalog"
+					>
+						{#each catalogs as item (item.catalogId)}
+							<NativeSelect.Option value={item.catalogId}>{item.label}</NativeSelect.Option>
+						{/each}
+					</NativeSelect.Root>
+				{/if}
+			</div>
+			<p class="max-w-2xl text-sm text-muted-foreground">
+				Review new visual evidence and manage official {singular} records.
+			</p>
+		</div>
+		<Button onclick={() => (addOpen = true)} disabled={catalog?.state !== 'ready'}>
+			<PlusIcon /> Add {singular}
+		</Button>
 	</header>
 
 	{#if errorMessage}
-		<p class="text-sm font-medium text-destructive">{errorMessage}</p>
+		<Alert.Root variant="destructive">
+			<CircleAlertIcon />
+			<Alert.Title>Identity change was not saved</Alert.Title>
+			<Alert.Description>{errorMessage}</Alert.Description>
+		</Alert.Root>
 	{/if}
 
-	{#if databases.length === 0}
-		<p class="text-sm text-muted-foreground">No identity enrollment database is configured.</p>
+	{#if !catalog}
+		<Empty.Root class="border">
+			<Empty.Header>
+				<Empty.Media variant="icon"><DatabaseIcon /></Empty.Media>
+				<Empty.Title>Identity is not configured</Empty.Title>
+				<Empty.Description>
+					Apply an identity preset from Setup before managing official records.
+				</Empty.Description>
+			</Empty.Header>
+			<Empty.Content>
+				<Button href={resolve('/setup')}>Open Setup</Button>
+			</Empty.Content>
+		</Empty.Root>
+	{:else if catalog.state !== 'ready' || !snapshot}
+		<Alert.Root>
+			<CircleAlertIcon />
+			<Alert.Title>
+				{catalog.state === 'not_initialized'
+					? 'Start the detector to initialize identities'
+					: 'Identity database unavailable'}
+			</Alert.Title>
+			<Alert.Description>
+				<p>{catalog.message}</p>
+				<Button variant="outline" size="sm" onclick={() => catalogsQuery.refresh()}>
+					<RefreshIcon /> Check again
+				</Button>
+			</Alert.Description>
+		</Alert.Root>
 	{:else}
-		{#each databases as database (database.database)}
-			<section class="space-y-3">
-				<header class="flex flex-wrap items-center justify-between gap-3">
-					<div class="flex items-center gap-2">
-						<h2 class="text-base font-semibold">{database.label}</h2>
-						{#if database.identities.length > 0}
-							<Badge variant="secondary">{database.identities.length} identities</Badge>
-						{:else}
-							<Badge variant="outline">{database.tracklets} tracklets</Badge>
-						{/if}
-						{#if database.identities.length > 0 && database.pendingTracklets > 0}
-							<Badge variant="outline">{database.pendingTracklets} pending</Badge>
-						{/if}
-						{#if database.finalizeRequested}
-							<Badge variant="outline">Finalizing</Badge>
-						{/if}
-					</div>
-
-					{#if (database.identities.length === 0 && database.tracklets > 0) || (database.identities.length > 0 && database.pendingTracklets > 0)}
-						<Button
-							type="button"
-							size="sm"
-							disabled={database.finalizeRequested || pending === `finalize:${database.database}`}
-							onclick={() => finalize(database.database)}
-						>
-							<CheckCheckIcon />
-							{database.finalizeRequested
-								? 'Finalizing'
-								: database.identities.length > 0
-									? 'Add new identities'
-									: 'Finish scan'}
-						</Button>
-					{/if}
-				</header>
-
-				{#if database.finalizeError}
-					<p class="text-sm font-medium text-destructive">{database.finalizeError}</p>
-				{/if}
-
-				{#if database.identities.length > 0 && database.pending.length > 0}
-					<div class="space-y-2 border p-3">
-						<p class="text-sm font-medium">Pending evidence</p>
-						<div class="flex gap-3 overflow-x-auto pb-1">
-							{#each database.pending as tracklet (tracklet.id)}
-								<figure class="w-28 shrink-0 space-y-1">
-									<img src={tracklet.preview} alt="" class="aspect-square w-full object-cover" />
-									<figcaption class="truncate text-xs text-muted-foreground">
-										{tracklet.observations} observations
-									</figcaption>
-								</figure>
-							{/each}
+		{#if reviewVisuals.length > 0}
+			<Card.Root class="gap-0 overflow-hidden rounded-lg py-0 shadow-none">
+				<Card.Header class="border-b px-4 py-4">
+					<div class="flex items-start justify-between gap-3">
+						<div class="space-y-1">
+							<Card.Title id="review-title">Needs review</Card.Title>
+							<Card.Description>
+								Assign new visual evidence to an official {singular}. The first assignment remains
+								provisional.
+							</Card.Description>
 						</div>
+						<Badge variant="secondary">{reviewVisuals.length} waiting</Badge>
 					</div>
-				{/if}
+				</Card.Header>
+				<Card.Content class="p-0" aria-labelledby="review-title">
+					{#each reviewVisuals as visual (visual.visualIdentityId)}
+						{@const eligibleTracklets = visual.tracklets.filter(
+							(tracklet) => tracklet.evidenceStatus === 'eligible'
+						)}
+						<article
+							class="grid gap-4 border-t p-4 first:border-t-0 sm:grid-cols-[4.5rem_minmax(0,1fr)]"
+						>
+							<button
+								class="size-18 overflow-hidden rounded-md bg-muted"
+								onclick={() => openVisual(visual.visualIdentityId)}
+								aria-label="View visual evidence"
+							>
+								{#if visual.tracklets[0]?.preview}
+									<img
+										src={visual.tracklets[0].preview}
+										alt=""
+										class="h-full w-full object-cover"
+									/>
+								{/if}
+							</button>
+							<div class="min-w-0 space-y-3">
+								<div class="flex flex-wrap items-start justify-between gap-2">
+									<div>
+										<p class="text-sm font-medium">Unassigned {singular}</p>
+										<p class="text-xs text-muted-foreground">
+											{visual.tracklets.length} tracklets ·
+											{visual.tracklets.reduce(
+												(total, tracklet) => total + tracklet.evidenceCount,
+												0
+											)}
+											frames
+										</p>
+									</div>
+									<Button
+										variant="ghost"
+										size="sm"
+										onclick={() => openVisual(visual.visualIdentityId)}
+									>
+										<EyeIcon /> View evidence
+									</Button>
+								</div>
+								{#if activeOfficials.length > 0 && eligibleTracklets.length > 0}
+									<div class="grid gap-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+										<NativeSelect.Root
+											class="w-full"
+											value={assignmentOfficials[visual.visualIdentityId] ??
+												activeOfficials[0]?.officialId}
+											onchange={(event) =>
+												(assignmentOfficials[visual.visualIdentityId] = event.currentTarget.value)}
+											aria-label={`Official ${singular}`}
+										>
+											{#each activeOfficials as official (official.officialId)}
+												<NativeSelect.Option value={official.officialId}>
+													{official.officialId}{official.displayName
+														? ` · ${official.displayName}`
+														: ''}
+												</NativeSelect.Option>
+											{/each}
+										</NativeSelect.Root>
+										<NativeSelect.Root
+											class="w-full"
+											value={assignmentTracklets[visual.visualIdentityId] ??
+												eligibleTracklets[0]?.trackletId}
+											onchange={(event) =>
+												(assignmentTracklets[visual.visualIdentityId] = event.currentTarget.value)}
+											aria-label="First evidence tracklet"
+										>
+											{#each eligibleTracklets as tracklet, index (tracklet.trackletId)}
+												<NativeSelect.Option value={tracklet.trackletId}>
+													Evidence {index + 1} · {tracklet.evidenceCount} frames
+												</NativeSelect.Option>
+											{/each}
+										</NativeSelect.Root>
+										<Button
+											disabled={pending === `assign:${visual.visualIdentityId}`}
+											onclick={() => assignVisual(visual.visualIdentityId)}
+										>
+											Assign provisionally
+										</Button>
+									</div>
+								{:else if activeOfficials.length === 0}
+									<Button variant="outline" size="sm" onclick={() => (addOpen = true)}>
+										<PlusIcon /> Add an official record first
+									</Button>
+								{:else}
+									<p class="text-sm text-muted-foreground">
+										No eligible evidence is available for assignment.
+									</p>
+								{/if}
+							</div>
+						</article>
+					{/each}
+				</Card.Content>
+			</Card.Root>
+		{/if}
 
-				{#if database.identities.length > 0}
-					<div class="overflow-hidden border">
-						<Table.Root>
-							<Table.Header>
+		<Card.Root class="gap-0 overflow-hidden rounded-lg py-0 shadow-none">
+			<Card.Header class="border-b px-4 py-4">
+				<div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+					<div class="space-y-1">
+						<Card.Title id="catalog-title">Official records</Card.Title>
+						<Card.Description>
+							{snapshot.officialIdentities.length} official
+							{snapshot.officialIdentities.length === 1 ? singular : plural}
+						</Card.Description>
+					</div>
+					<div class="relative w-full sm:w-72">
+						<SearchIcon
+							class="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
+						/>
+						<Input bind:value={search} class="pl-9" placeholder={`Search ${plural}`} />
+					</div>
+				</div>
+			</Card.Header>
+			<Card.Content class="p-0" aria-labelledby="catalog-title">
+				<div class="hidden md:block">
+					<Table.Root>
+						<Table.Header>
+							<Table.Row>
+								<Table.Head class="w-20">Evidence</Table.Head>
+								<Table.Head>{officialIdLabel}</Table.Head>
+								<Table.Head>Name</Table.Head>
+								<Table.Head>Identity state</Table.Head>
+								<Table.Head>Last seen</Table.Head>
+								<Table.Head class="w-16"></Table.Head>
+							</Table.Row>
+						</Table.Header>
+						<Table.Body>
+							{#each visibleOfficials as official (official.officialId)}
 								<Table.Row>
-									<Table.Head class="w-12"></Table.Head>
-									<Table.Head class="w-20">Preview</Table.Head>
-									<Table.Head>Identity</Table.Head>
-									<Table.Head class="w-28">Tracklets</Table.Head>
-									<Table.Head class="w-72">Animal number</Table.Head>
-								</Table.Row>
-							</Table.Header>
-							<Table.Body>
-								{#each database.identities as identity (identity.identity)}
-									<Table.Row>
-										<Table.Cell>
-											<Button
-												type="button"
-												variant="ghost"
-												size="icon"
-												title="Review tracklets"
-												onclick={() => toggleIdentity(database.database, identity.identity)}
-											>
-												{#if expanded === identityKey(database.database, identity.identity)}
-													<ChevronDownIcon />
-												{:else}
-													<ChevronRightIcon />
-												{/if}
-											</Button>
-										</Table.Cell>
-										<Table.Cell>
-											{#if identity.preview}
-												<img src={identity.preview} alt="" class="size-12 object-cover" />
-											{:else}
-												<div class="size-12 bg-muted"></div>
-											{/if}
-										</Table.Cell>
-										<Table.Cell class="font-mono text-xs">{identity.identity}</Table.Cell>
-										<Table.Cell>{identity.tracklets}</Table.Cell>
-										<Table.Cell>
-											<Input
-												value={identity.animalNumber ?? ''}
-												placeholder="Unassigned"
-												disabled={pending === `${database.database}:${identity.identity}`}
-												onchange={(event) =>
-													saveAnimalNumber(
-														database.database,
-														identity.identity,
-														event.currentTarget.value
-													)}
+									<Table.Cell>
+										{#if official.preview}
+											<img
+												src={official.preview}
+												alt=""
+												class="size-12 rounded-md bg-muted object-cover"
 											/>
-										</Table.Cell>
-									</Table.Row>
-									{#if expanded === identityKey(database.database, identity.identity)}
-										{@const mergeKey = identityKey(database.database, identity.identity)}
-										<Table.Row>
-											<Table.Cell colspan={5} class="bg-muted/30 p-4">
-												<div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-													<p class="text-sm font-medium">Identity evidence</p>
-													<div class="flex min-w-72 items-center gap-2">
-														<Select.Root
-															type="single"
-															value={mergeTargets[mergeKey] ?? ''}
-															onValueChange={(value) => (mergeTargets[mergeKey] = value)}
-														>
-															<Select.Trigger class="h-8 flex-1">
-																{mergeTargets[mergeKey] ?? 'Merge into...'}
-															</Select.Trigger>
-															<Select.Content>
-																{#each database.identities.filter((item) => item.identity !== identity.identity) as target (target.identity)}
-																	<Select.Item value={target.identity} label={target.identity} />
-																{/each}
-															</Select.Content>
-														</Select.Root>
-														<Button
-															type="button"
-															size="sm"
-															variant="outline"
-															disabled={!mergeTargets[mergeKey] ||
-																pending === `merge:${database.database}:${identity.identity}`}
-															onclick={() => mergeIdentity(database.database, identity.identity)}
-														>
-															<MergeIcon />
-															Merge
-														</Button>
-													</div>
-												</div>
+										{:else}
+											<div class="size-12 rounded-md bg-muted"></div>
+										{/if}
+									</Table.Cell>
+									<Table.Cell class="font-medium">{official.officialId}</Table.Cell>
+									<Table.Cell>{official.displayName ?? '—'}</Table.Cell>
+									<Table.Cell>
+										<Badge
+											variant={official.mappingState === 'confirmed'
+												? 'default'
+												: official.mappingState === 'provisional'
+													? 'secondary'
+													: 'outline'}
+										>
+											{mappingLabel(official.mappingState)}
+										</Badge>
+									</Table.Cell>
+									<Table.Cell class="text-sm text-muted-foreground">
+										{lastSeen(official.visualIdentityId)}
+									</Table.Cell>
+									<Table.Cell>
+										<Button
+											variant="ghost"
+											size="icon-sm"
+											aria-label={`Open ${official.officialId}`}
+											onclick={() => openOfficial(official.officialId, official.visualIdentityId)}
+										>
+											<ArrowRightIcon />
+										</Button>
+									</Table.Cell>
+								</Table.Row>
+							{:else}
+								<Table.Row>
+									<Table.Cell colspan={6} class="h-24 text-center text-muted-foreground">
+										No official {plural} found.
+									</Table.Cell>
+								</Table.Row>
+							{/each}
+						</Table.Body>
+					</Table.Root>
+				</div>
 
-												{#if loadingTracklets === identityKey(database.database, identity.identity)}
-													<p class="text-sm text-muted-foreground">Loading tracklets...</p>
-												{:else}
-													<div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-														{#each tracklets[identityKey(database.database, identity.identity)] ?? [] as tracklet (tracklet.id)}
-															<div class="flex min-w-0 items-center gap-3 border bg-background p-2">
-																<img
-																	src={tracklet.preview}
-																	alt=""
-																	class="size-16 shrink-0 object-cover"
-																/>
-																<div class="min-w-0 flex-1">
-																	<p class="truncate text-xs font-medium" title={tracklet.source}>
-																		{tracklet.source}
-																	</p>
-																	<p class="text-xs text-muted-foreground">
-																		{tracklet.observations} observations
-																	</p>
-																</div>
-																<Button
-																	type="button"
-																	variant="ghost"
-																	size="icon"
-																	title="Split into a new identity"
-																	disabled={identity.tracklets <= 1 ||
-																		pending === `split:${tracklet.id}`}
-																	onclick={() =>
-																		splitTracklet(
-																			database.database,
-																			identity.identity,
-																			tracklet.id
-																		)}
-																>
-																	<ScissorsIcon />
-																</Button>
-															</div>
-														{/each}
-													</div>
-												{/if}
-											</Table.Cell>
-										</Table.Row>
-									{/if}
-								{/each}
-							</Table.Body>
-						</Table.Root>
-					</div>
-				{:else if database.tracklets === 0}
-					<p class="text-sm text-muted-foreground">Waiting for identity tracklets.</p>
-				{/if}
-			</section>
-		{/each}
+				<div class="grid gap-2 border-t p-3 md:hidden">
+					{#each visibleOfficials as official (official.officialId)}
+						<button
+							class="flex w-full items-center gap-3 rounded-md border p-3 text-left transition-colors hover:bg-muted/50"
+							onclick={() => openOfficial(official.officialId, official.visualIdentityId)}
+						>
+							{#if official.preview}
+								<img src={official.preview} alt="" class="size-14 rounded-md object-cover" />
+							{:else}
+								<div class="size-14 rounded-md bg-muted"></div>
+							{/if}
+							<span class="min-w-0 flex-1">
+								<span class="block truncate text-sm font-medium">{official.officialId}</span>
+								<span class="block truncate text-xs text-muted-foreground">
+									{official.displayName ?? `Unnamed ${singular}`}
+								</span>
+								<span class="mt-1 block text-xs">{mappingLabel(official.mappingState)}</span>
+							</span>
+							<ArrowRightIcon class="size-4 text-muted-foreground" />
+						</button>
+					{:else}
+						<p class="py-8 text-center text-sm text-muted-foreground">
+							No official {plural} found.
+						</p>
+					{/each}
+				</div>
+			</Card.Content>
+		</Card.Root>
 	{/if}
 </section>
+
+<Dialog.Root bind:open={addOpen}>
+	<Dialog.Content class="sm:max-w-md">
+		<Dialog.Header>
+			<Dialog.Title>Add {singular}</Dialog.Title>
+			<Dialog.Description>
+				Create the official record first. Visual evidence can then be assigned provisionally.
+			</Dialog.Description>
+		</Dialog.Header>
+		<div class="space-y-4 py-2">
+			<label class="grid gap-1.5 text-sm font-medium">
+				{officialIdLabel}
+				<Input bind:value={addOfficialId} autocomplete="off" placeholder="Required" />
+			</label>
+			<label class="grid gap-1.5 text-sm font-medium">
+				Display name
+				<Input bind:value={addDisplayName} autocomplete="off" placeholder="Optional" />
+			</label>
+			<label class="grid gap-1.5 text-sm font-medium">
+				Notes
+				<Textarea bind:value={addNotes} placeholder="Optional" />
+			</label>
+		</div>
+		<Dialog.Footer>
+			<Dialog.Close>
+				{#snippet child({ props })}
+					<Button variant="outline" {...props}>Cancel</Button>
+				{/snippet}
+			</Dialog.Close>
+			<Button
+				disabled={!addOfficialId.trim() || pending === 'add-official'}
+				onclick={createOfficial}
+			>
+				Add {singular}
+			</Button>
+		</Dialog.Footer>
+	</Dialog.Content>
+</Dialog.Root>
+
+<Sheet.Root bind:open={detailsOpen}>
+	<Sheet.Content
+		class="w-full gap-0 overflow-y-auto max-sm:inset-x-0 max-sm:inset-y-auto max-sm:bottom-0 max-sm:h-[88svh] max-sm:border-t sm:max-w-xl"
+	>
+		<Sheet.Header class="border-b px-4 py-4">
+			<Sheet.Title>
+				{selectedOfficial?.displayName ?? selectedOfficial?.officialId ?? `Visual ${singular}`}
+			</Sheet.Title>
+			<Sheet.Description>
+				{selectedOfficial
+					? `${selectedOfficial.officialId} · ${mappingLabel(selectedOfficial.mappingState)}`
+					: `Unassigned ${singular} evidence`}
+			</Sheet.Description>
+		</Sheet.Header>
+
+		<div class="space-y-6 p-4">
+			{#if selectedVisual}
+				<section class="space-y-3">
+					<div class="flex items-center justify-between">
+						<h3 class="font-semibold">Evidence</h3>
+						<Badge variant="outline">{selectedVisual.tracklets.length} tracklets</Badge>
+					</div>
+					<div class="grid grid-cols-2 gap-2 sm:grid-cols-3">
+						{#each selectedVisual.tracklets as tracklet (tracklet.trackletId)}
+							<figure class="overflow-hidden rounded-md border">
+								<img src={tracklet.preview} alt="" class="aspect-square w-full object-cover" />
+								<figcaption class="space-y-0.5 p-2">
+									<p class="truncate text-xs font-medium">{tracklet.source}</p>
+									<p class="text-[11px] text-muted-foreground">
+										{tracklet.evidenceCount} frames · {tracklet.evidenceStatus}
+									</p>
+								</figcaption>
+							</figure>
+						{/each}
+					</div>
+				</section>
+
+				{#if selectedVisual.mappingState === 'provisional'}
+					<section class="space-y-3">
+						<Alert.Root>
+							<ClockIcon />
+							<Alert.Title>Independent confirmation needed</Alert.Title>
+							<Alert.Description>
+								<p>
+									Confirm with a different eligible tracklet. The first mapping is not used as final
+									gallery truth.
+								</p>
+							</Alert.Description>
+						</Alert.Root>
+						{#if confirmationTracklets.length > 0}
+							<div class="divide-y overflow-hidden rounded-md border">
+								{#each confirmationTracklets as tracklet (tracklet.trackletId)}
+									<div class="flex items-center gap-3 p-2">
+										<img src={tracklet.preview} alt="" class="size-12 rounded-md object-cover" />
+										<div class="min-w-0 flex-1">
+											<p class="truncate text-sm font-medium">{tracklet.source}</p>
+											<p class="text-xs text-muted-foreground">
+												{tracklet.evidenceCount} evidence frames
+											</p>
+										</div>
+										<Button
+											size="sm"
+											disabled={pending === `confirm:${tracklet.trackletId}`}
+											onclick={() => confirm(tracklet.trackletId)}
+										>
+											<CheckCircleIcon /> Confirm
+										</Button>
+									</div>
+								{/each}
+							</div>
+						{:else}
+							<p class="text-sm text-muted-foreground">Waiting for another eligible tracklet.</p>
+						{/if}
+					</section>
+				{:else if selectedVisual.mappingState === 'confirmed'}
+					<Alert.Root>
+						<CheckCircleIcon class="text-emerald-600" />
+						<Alert.Title>Identity confirmed</Alert.Title>
+						<Alert.Description>
+							<p>Two distinct tracklets provide the gallery evidence for this identity.</p>
+						</Alert.Description>
+					</Alert.Root>
+				{/if}
+			{/if}
+
+			{#if selectedOfficial}
+				<Card.Root class="gap-0 rounded-lg py-0 shadow-none">
+					<Card.Header class="border-b px-4 py-3">
+						<Card.Title class="text-base">Official record</Card.Title>
+						<Card.Description>Farmer-facing identity information.</Card.Description>
+					</Card.Header>
+					<Card.Content class="grid gap-3 p-4">
+						<label class="grid gap-1.5 text-sm font-medium">
+							{officialIdLabel}
+							<Input value={selectedOfficial.officialId} disabled />
+						</label>
+						<label class="grid gap-1.5 text-sm font-medium">
+							Display name
+							<Input bind:value={editDisplayName} />
+						</label>
+						<label class="grid gap-1.5 text-sm font-medium">
+							Status
+							<NativeSelect.Root bind:value={editStatus} class="w-full">
+								<NativeSelect.Option value="active">Active</NativeSelect.Option>
+								<NativeSelect.Option value="archived">Archived</NativeSelect.Option>
+							</NativeSelect.Root>
+						</label>
+						<label class="grid gap-1.5 text-sm font-medium">
+							Notes
+							<Textarea bind:value={editNotes} />
+						</label>
+						<Button variant="outline" disabled={pending === 'edit-official'} onclick={saveOfficial}>
+							Save record
+						</Button>
+					</Card.Content>
+				</Card.Root>
+			{/if}
+
+			{#if selectedVisual}
+				<details class="rounded-lg border">
+					<summary class="cursor-pointer px-4 py-3 text-sm font-semibold">
+						Advanced identity details
+					</summary>
+					<div class="space-y-5 border-t p-4">
+						<div class="space-y-1">
+							<p class="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+								Visual identity ID
+							</p>
+							<code class="block overflow-hidden text-xs text-ellipsis">
+								{selectedVisual.visualIdentityId}
+							</code>
+						</div>
+
+						{#if selectedVisual.mappingId}
+							<section class="space-y-2">
+								<h4 class="text-sm font-semibold">Correct mapping</h4>
+								<div class="grid gap-2">
+									<NativeSelect.Root bind:value={correctionOfficialId} class="w-full">
+										<NativeSelect.Option value="">Choose another official ID</NativeSelect.Option>
+										{#each activeOfficials.filter((official) => official.officialId !== selectedVisual?.officialId && !official.mappingId) as official (official.officialId)}
+											<NativeSelect.Option value={official.officialId}>
+												{official.officialId}
+											</NativeSelect.Option>
+										{/each}
+									</NativeSelect.Root>
+									<NativeSelect.Root bind:value={correctionTrackletId} class="w-full">
+										{#each selectedVisual.tracklets.filter((tracklet) => tracklet.evidenceStatus === 'eligible') as tracklet, index (tracklet.trackletId)}
+											<NativeSelect.Option value={tracklet.trackletId}>
+												Evidence {index + 1} · {tracklet.evidenceCount} frames
+											</NativeSelect.Option>
+										{/each}
+									</NativeSelect.Root>
+									<Button
+										variant="outline"
+										disabled={!correctionOfficialId || !correctionTrackletId}
+										onclick={correct}
+									>
+										Correct mapping
+									</Button>
+								</div>
+							</section>
+							<div class="grid grid-cols-2 gap-2">
+								<Button variant="outline" onclick={deactivate}>
+									<ArchiveIcon /> Deactivate
+								</Button>
+								<Button variant="outline" onclick={rollback}>
+									<UndoIcon /> Roll back
+								</Button>
+							</div>
+						{:else}
+							<section class="space-y-2">
+								<h4 class="text-sm font-semibold">Merge visual evidence</h4>
+								<NativeSelect.Root bind:value={mergeTargetId} class="w-full">
+									<NativeSelect.Option value="">Choose target identity</NativeSelect.Option>
+									{#each mergeTargets as target, index (target.visualIdentityId)}
+										<NativeSelect.Option value={target.visualIdentityId}>
+											{target.officialId ?? `Visual identity ${index + 1}`}
+										</NativeSelect.Option>
+									{/each}
+								</NativeSelect.Root>
+								<Button variant="outline" class="w-full" disabled={!mergeTargetId} onclick={merge}>
+									<MergeIcon /> Merge evidence
+								</Button>
+							</section>
+						{/if}
+
+						{#if selectedVisual.tracklets.length > 1}
+							<section class="space-y-2">
+								<h4 class="text-sm font-semibold">Split mixed evidence</h4>
+								{#each selectedVisual.tracklets as tracklet (tracklet.trackletId)}
+									<label class="flex items-center gap-3 rounded-md border p-2 text-sm">
+										<input
+											type="checkbox"
+											checked={splitTracklets[tracklet.trackletId] ?? false}
+											onchange={(event) =>
+												(splitTracklets[tracklet.trackletId] = event.currentTarget.checked)}
+										/>
+										<img src={tracklet.preview} alt="" class="size-9 rounded-md object-cover" />
+										<span class="min-w-0 flex-1 truncate">{tracklet.source}</span>
+									</label>
+								{/each}
+								<Button
+									variant="outline"
+									class="w-full"
+									disabled={!Object.values(splitTracklets).some(Boolean)}
+									onclick={split}
+								>
+									<ScissorsIcon /> Split selected evidence
+								</Button>
+							</section>
+						{/if}
+					</div>
+				</details>
+			{/if}
+		</div>
+	</Sheet.Content>
+</Sheet.Root>

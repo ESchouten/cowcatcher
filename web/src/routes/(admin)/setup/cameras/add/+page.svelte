@@ -4,7 +4,7 @@
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
 	import { tick } from 'svelte';
-	import Stream from '../stream.svelte';
+	import LiveStream from '$lib/components/live-stream.svelte';
 	import { deleteStream, saveStream } from '$lib/remote/stream.remote';
 	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
@@ -66,7 +66,7 @@
 					<Button
 						type="submit"
 						name="next"
-						value="/streams/add?setup=1"
+						value="/setup/cameras/add"
 						variant="outline"
 						class="flex-1">Save and add another</Button
 					>
@@ -79,7 +79,9 @@
 					{#if originalSource}
 						<Button
 							onclick={() =>
-								deleteStream({ source: originalSource }).then(() => goto(resolve('/streams')))}
+								deleteStream({ source: originalSource }).then(() =>
+									goto(resolve('/setup/cameras'))
+								)}
 							variant="destructive"
 							class="flex-1">Delete</Button
 						>
@@ -90,7 +92,7 @@
 		</form>
 		{#if test}
 			<div class="flex max-w-lg">
-				<Stream {label} source={test} showLoading />
+				<LiveStream {label} source={test} />
 			</div>
 		{/if}
 	</div>

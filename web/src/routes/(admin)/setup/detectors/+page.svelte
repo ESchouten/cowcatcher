@@ -13,7 +13,7 @@
 	<header class="space-y-1">
 		<div class="flex items-center justify-between">
 			<h1 class="text-2xl font-semibold tracking-tight">Detectors</h1>
-			<Button href="/detectors/add" variant="outline"><Plus /> Add Detector</Button>
+			<Button href="/setup/detectors/add" variant="outline"><Plus /> Add Detector</Button>
 		</div>
 		<p class="text-sm text-muted-foreground">Configure detectors.</p>
 	</header>
@@ -29,7 +29,8 @@
 		<Table.Body>
 			{#each detectors as { detector, meta } (meta.label)}
 				<Table.Row
-					onclick={() => goto(resolve(`/detectors/add?label=${encodeURIComponent(meta.label)}`))}
+					onclick={() =>
+						goto(resolve(`/setup/detectors/add?label=${encodeURIComponent(meta.label)}`))}
 				>
 					<Table.Cell>{meta.label}</Table.Cell>
 					<Table.Cell>{detector.yolo?.model?.split('/').pop() || ''}</Table.Cell>

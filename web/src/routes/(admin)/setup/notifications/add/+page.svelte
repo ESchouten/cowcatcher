@@ -63,7 +63,7 @@
 					<Button
 						type="submit"
 						name="next"
-						value="/notifications/add?setup=1"
+						value="/setup/notifications/add"
 						variant="outline"
 						class="flex-1">Save and add another</Button
 					>
@@ -77,7 +77,7 @@
 						<Button
 							onclick={() =>
 								deleteTelegram({ label: originalLabel }).then(() =>
-									goto(resolve('/notifications'))
+									goto(resolve('/setup/notifications'))
 								)}
 							variant="destructive"
 							class="flex-1">Delete</Button

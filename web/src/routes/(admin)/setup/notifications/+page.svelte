@@ -14,7 +14,7 @@
 	<header class="space-y-1">
 		<div class="flex items-center justify-between">
 			<h1 class="text-2xl font-semibold tracking-tight">Notifications</h1>
-			<Button href="/notifications/add" variant="outline"><Plus /> Add Telegram</Button>
+			<Button href="/setup/notifications/add" variant="outline"><Plus /> Add Telegram</Button>
 		</div>
 		<p class="text-sm text-muted-foreground">Configure notification channels for detections.</p>
 	</header>
@@ -33,7 +33,7 @@
 					onclick={() =>
 						goto(
 							resolve(
-								`/notifications/add?label=${encodeURIComponent(telegram.label)}&token=${encodeURIComponent(telegram.token)}&chat=${encodeURIComponent(telegram.chat)}`
+								`/setup/notifications/add?label=${encodeURIComponent(telegram.label)}&token=${encodeURIComponent(telegram.token)}&chat=${encodeURIComponent(telegram.chat)}`
 							)
 						)}
 				>

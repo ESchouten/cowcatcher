@@ -25,12 +25,13 @@ describe('tracks SSE proxy', () => {
 			},
 			app: { streams: [], telegrams: [], detectors: [] }
 		});
-		const upstreamFetch = vi.fn(
-			async (_input: RequestInfo | URL, _init?: RequestInit) =>
-				new Response('event: tracks\ndata: {}\n\n', {
-					headers: { 'Content-Type': 'text/event-stream' }
-				})
-		);
+		const upstreamFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+			void input;
+			void init;
+			return new Response('event: tracks\ndata: {}\n\n', {
+				headers: { 'Content-Type': 'text/event-stream' }
+			});
+		});
 
 		const response = await GET({
 			params: { detector: '0' },

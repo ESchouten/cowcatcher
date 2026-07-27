@@ -18,11 +18,13 @@
 	import * as Select from '$lib/components/ui/select';
 	import { getStreams } from '$lib/remote/stream.remote';
 	import { getTelegrams, testTelegram } from '$lib/remote/exporter.remote';
-	import Stream from '../../streams/stream.svelte';
+	import LiveStream from '$lib/components/live-stream.svelte';
 	import { Plus } from '@lucide/svelte';
 	import { Switch } from '$lib/components/ui/switch';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { untrack } from 'svelte';
+	import type { AppliedPreset } from '$lib/schema';
+	import { applyDetectorPreset, type DetectorPresetFragment } from '$lib/preset-fragments';
 
 	type EditableDetector = DetectorConfig & {
 		yolo: NonNullable<DetectorConfig['yolo']> & {
@@ -42,12 +44,6 @@
 		},
 		exporters: { sse: [{}] } as { telegram?: TelegramConfig[]; sse?: SSEConfig[] }
 	};
-	const IDENTITY_FORM_VALUES = {
-		label: '',
-		database: 'identities/identities.sqlite',
-		segment_model: '',
-		enrollment: { identity_count: undefined as number | undefined }
-	};
 	const INLINE_STREAM_PREVIEW_LIMIT = 5;
 
 	function mergeWithEmptyDetector(detector?: Partial<DetectorConfig>) {
@@ -62,16 +58,7 @@
 				...DETECTOR_FORM_VALUES.yolo,
 				...detector?.yolo
 			},
-			identity: detector?.identity
-				? {
-						...IDENTITY_FORM_VALUES,
-						...detector.identity,
-						segment_model: detector.identity.segment_model ?? IDENTITY_FORM_VALUES.segment_model,
-						enrollment: detector.identity.enrollment
-							? { ...IDENTITY_FORM_VALUES.enrollment, ...detector.identity.enrollment }
-							: undefined
-					}
-				: undefined,
+			identity: detector?.identity,
 			exporters: {
 				...DETECTOR_FORM_VALUES.exporters,
 				...detector?.exporters
@@ -94,8 +81,16 @@
 	let detector = $state(untrack(() => initialDetector));
 	let visiblePreviewSources = new SvelteSet<string>();
 	let editorHasErrors = $state(false);
-	let preset = $state<string>('Custom');
-	let identityPreset = $state<string>('Custom');
+	let preset = $state<string>(existingDetector?.meta.presets?.detector?.filename ?? 'Custom');
+	let identityPreset = $state<string>(
+		existingDetector?.meta.presets?.identity?.filename ?? 'Custom'
+	);
+	let appliedDetectorPreset = $state<AppliedPreset | undefined>(
+		existingDetector?.meta.presets?.detector
+	);
+	let appliedIdentityPreset = $state<AppliedPreset | undefined>(
+		existingDetector?.meta.presets?.identity
+	);
 	let advanced = $state(false);
 	const streams = $derived(await getStreams());
 	const telegrams = $derived(await getTelegrams());
@@ -142,45 +137,45 @@
 	}
 
 	async function handlePresetChange(file: string) {
-		if (file === 'Custom') return;
-		const selectedPreset = (await getPreset({ category: 'detector', file })) as DetectorConfig;
-		detector = mergeWithEmptyDetector(selectedPreset);
-		identityPreset = 'Custom';
+		if (file === 'Custom') {
+			appliedDetectorPreset = undefined;
+			return;
+		}
+		const selected = await getPreset({ category: 'detector', file });
+		const fragment = selected.value as DetectorPresetFragment;
+		detector = mergeWithEmptyDetector(applyDetectorPreset(detector, fragment));
+		appliedDetectorPreset = {
+			filename: selected.filename,
+			blob_sha: selected.blobSha
+		};
 	}
 
 	async function handleIdentityPresetChange(file: string) {
-		if (!detector.identity) return;
-		const { database, enrollment } = detector.identity;
-		const selectedPreset =
-			file === 'Custom'
-				? {}
-				: ((await getPreset({ category: 'identity', file })) as Partial<IdentityConfig>);
-		detector.identity = {
-			...IDENTITY_FORM_VALUES,
-			...selectedPreset,
-			database: selectedPreset.database ?? database,
-			enrollment
+		if (file === 'Custom') {
+			appliedIdentityPreset = undefined;
+			return;
+		}
+		const selected = await getPreset({ category: 'identity', file });
+		detector.identity = selected.value as IdentityConfig;
+		appliedIdentityPreset = {
+			filename: selected.filename,
+			blob_sha: selected.blobSha
 		};
 	}
 
 	function setIdentityEnabled(enabled: boolean) {
 		if (enabled) {
-			detector.identity ??= {
-				...IDENTITY_FORM_VALUES,
-				enrollment: { ...IDENTITY_FORM_VALUES.enrollment }
-			};
+			const firstPreset = identityPresets[0];
+			if (!firstPreset) {
+				toast.error('No identity preset is available.');
+				return;
+			}
+			identityPreset = firstPreset;
+			void handleIdentityPresetChange(firstPreset);
 		} else {
 			delete detector.identity;
-		}
-		identityPreset = 'Custom';
-	}
-
-	function setIdentityMode(value: string) {
-		if (!detector.identity) return;
-		if (value === 'enrollment') {
-			detector.identity.enrollment ??= { ...IDENTITY_FORM_VALUES.enrollment };
-		} else {
-			delete detector.identity.enrollment;
+			appliedIdentityPreset = undefined;
+			identityPreset = 'Custom';
 		}
 	}
 
@@ -194,23 +189,25 @@
 				delete telegram.alert_every;
 			}
 		});
-		if (detector.identity?.enrollment && !detector.identity.enrollment.identity_count) {
-			delete detector.identity.enrollment.identity_count;
-		}
-		if (detector.identity && !detector.identity.segment_model) {
-			delete detector.identity.segment_model;
-		}
-
 		await saveDetector({
 			original: originalLabel || undefined,
 			detector,
-			meta: { label }
+			meta: {
+				label,
+				presets:
+					appliedDetectorPreset || appliedIdentityPreset
+						? {
+								detector: appliedDetectorPreset,
+								identity: appliedIdentityPreset
+							}
+						: undefined
+			}
 		});
 		toast.warning(
 			`Detector configuration '${label}' saved. Restart the detector to apply the changes.`,
 			{ duration: Number.POSITIVE_INFINITY, closeButton: true }
 		);
-		await goto(resolve(setupMode ? '/setup?complete=1' : '/detectors'));
+		await goto(resolve(setupMode ? '/setup?complete=1' : '/setup/detectors'));
 	}
 
 	function getPresetLabel(presetFile: string) {
@@ -290,7 +287,7 @@
 								{#if isRtspStream(source.source)}
 									<div use:trackPreviewVisibility={source.source}>
 										{#if activePreviewSources.has(source.source)}
-											<Stream label={source.label} source={source.source} disableLink hideOverlay />
+											<LiveStream label={source.label} source={source.source} />
 										{:else}
 											<div class="relative aspect-video w-full bg-black">
 												<div
@@ -311,11 +308,7 @@
 					{/each}
 				</Select.Content>
 			</Select.Root>
-			<Button
-				target="_blank"
-				href={setupMode ? '/streams/add?setup=1' : '/streams/add'}
-				variant="outline"><Plus /></Button
-			>
+			<Button target="_blank" href="/setup/cameras/add" variant="outline"><Plus /></Button>
 		</div>
 
 		<Label for="telegrams" class="mt-2">Telegram</Label>
@@ -400,11 +393,7 @@
 					{/each}
 				</Select.Content>
 			</Select.Root>
-			<Button
-				target="_blank"
-				href={setupMode ? '/notifications/add?setup=1' : '/notifications/add'}
-				variant="outline"><Plus /></Button
-			>
+			<Button target="_blank" href="/setup/notifications/add" variant="outline"><Plus /></Button>
 		</div>
 
 		<Label for="model" class="mt-2">Model</Label>
@@ -487,77 +476,125 @@
 					</Select.Root>
 				</div>
 				<div class="flex flex-col gap-2">
-					<Label for="identity-mode">Identity setup</Label>
-					<Select.Root
-						type="single"
-						value={detector.identity.enrollment ? 'enrollment' : 'database'}
-						onValueChange={setIdentityMode}
-					>
-						<Select.Trigger id="identity-mode" class="w-full">
-							{detector.identity.enrollment ? 'Scan animals' : 'Use existing identities'}
-						</Select.Trigger>
-						<Select.Content>
-							<Select.Item value="enrollment" label="Scan animals" />
-							<Select.Item value="database" label="Use existing identities" />
-						</Select.Content>
-					</Select.Root>
-				</div>
-				<div class="flex flex-col gap-2">
 					<Label for="identity-database">Identity database</Label>
 					<Input id="identity-database" required bind:value={detector.identity.database} />
 				</div>
 				<div class="flex flex-col gap-2">
-					<Label for="identity-label">Segmentation label</Label>
-					<Input id="identity-label" required bind:value={detector.identity.label} />
+					<Label for="identity-label">Target label</Label>
+					<Input id="identity-label" required bind:value={detector.identity.target_label} />
 				</div>
-				{#if detector.identity.enrollment}
-					<div class="flex flex-col gap-2">
-						<Label for="identity-count">Number of animals</Label>
-						<Input
-							id="identity-count"
-							type="number"
-							min="1"
-							step="1"
-							placeholder="Optional"
-							bind:value={detector.identity.enrollment.identity_count}
-						/>
-					</div>
-				{/if}
 				<div class="flex flex-col gap-2">
-					<Label for="identity-confidence">Segmentation confidence</Label>
+					<Label for="identity-confidence">Identity similarity</Label>
 					<Input
 						id="identity-confidence"
 						type="number"
 						min="0"
 						max="1"
 						step="0.01"
-						bind:value={detector.identity.confidence}
+						bind:value={detector.identity.similarity_threshold}
 					/>
 				</div>
-				<div class="flex flex-col gap-2 sm:col-span-2">
-					<Label for="identity-segment-model">Fallback segmentation model</Label>
-					<Input id="identity-segment-model" bind:value={detector.identity.segment_model} />
-				</div>
 				<div class="flex flex-col gap-2">
-					<Label for="identity-margin">Frame margin</Label>
+					<Label for="identity-margin">Runner-up margin</Label>
 					<Input
 						id="identity-margin"
 						type="number"
 						min="0"
-						max="0.49"
+						max="1"
 						step="0.01"
-						bind:value={detector.identity.margin}
+						bind:value={detector.identity.similarity_margin}
 					/>
 				</div>
-				<div class="flex flex-col gap-2">
-					<Label for="track-samples">Track samples</Label>
-					<Input
-						id="track-samples"
-						type="number"
-						min="1"
-						step="1"
-						bind:value={detector.identity.track_samples}
-					/>
+				<div class="space-y-4 rounded-md border p-4 sm:col-span-2">
+					<div class="space-y-1">
+						<p class="text-sm font-medium">Controlled observation zone</p>
+						<p class="text-xs text-muted-foreground">
+							Only one tracked target inside this normalized rectangle can produce identity
+							evidence. Calibrate it for the selected camera before use.
+						</p>
+					</div>
+					<div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+						<div class="flex flex-col gap-2">
+							<Label for="identity-zone-x1">Left</Label>
+							<Input
+								id="identity-zone-x1"
+								type="number"
+								min="0"
+								max="1"
+								step="0.01"
+								bind:value={detector.identity.controlled_zone.x1}
+							/>
+						</div>
+						<div class="flex flex-col gap-2">
+							<Label for="identity-zone-y1">Top</Label>
+							<Input
+								id="identity-zone-y1"
+								type="number"
+								min="0"
+								max="1"
+								step="0.01"
+								bind:value={detector.identity.controlled_zone.y1}
+							/>
+						</div>
+						<div class="flex flex-col gap-2">
+							<Label for="identity-zone-x2">Right</Label>
+							<Input
+								id="identity-zone-x2"
+								type="number"
+								min="0"
+								max="1"
+								step="0.01"
+								bind:value={detector.identity.controlled_zone.x2}
+							/>
+						</div>
+						<div class="flex flex-col gap-2">
+							<Label for="identity-zone-y2">Bottom</Label>
+							<Input
+								id="identity-zone-y2"
+								type="number"
+								min="0"
+								max="1"
+								step="0.01"
+								bind:value={detector.identity.controlled_zone.y2}
+							/>
+						</div>
+					</div>
+					<div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+						<div class="flex flex-col gap-2">
+							<Label for="identity-zone-containment">Box inside zone</Label>
+							<Input
+								id="identity-zone-containment"
+								type="number"
+								min="0.01"
+								max="1"
+								step="0.01"
+								bind:value={detector.identity.controlled_zone.minimum_box_inside_ratio}
+							/>
+						</div>
+						<div class="flex flex-col gap-2">
+							<Label for="identity-zone-stable">Stable frames</Label>
+							<Input
+								id="identity-zone-stable"
+								type="number"
+								min="1"
+								step="1"
+								bind:value={detector.identity.controlled_zone.minimum_stable_frames}
+							/>
+						</div>
+						<div class="flex flex-col gap-2">
+							<Label for="identity-zone-clear">Clear frames</Label>
+							<Input
+								id="identity-zone-clear"
+								type="number"
+								min="1"
+								step="1"
+								bind:value={detector.identity.controlled_zone.clear_frames}
+							/>
+						</div>
+					</div>
+					<p class="text-xs text-muted-foreground">
+						Use separate detector entries when cameras need different zone geometry.
+					</p>
 				</div>
 			</div>
 		{/if}
@@ -591,7 +628,7 @@
 					type="button"
 					onclick={async () => {
 						await deleteDetector({ label: originalLabel });
-						await goto(resolve('/detectors'));
+						await goto(resolve('/setup/detectors'));
 					}}
 					variant="destructive"
 					class="flex-1">Delete</Button

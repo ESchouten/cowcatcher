@@ -1,0 +1,560 @@
+{
+	"$defs": {
+		"ChatConfig": {
+			"additionalProperties": false,
+			"properties": {
+				"confidence": {
+					"anyOf": [
+						{ "maximum": 1, "minimum": 0, "type": "number" },
+						{
+							"additionalProperties": { "maximum": 1, "minimum": 0, "type": "number" },
+							"type": "object"
+						},
+						{ "type": "null" }
+					],
+					"default": null,
+					"title": "Confidence"
+				},
+				"crop_padding": { "default": 0.1, "minimum": 0, "title": "Crop Padding", "type": "number" },
+				"export_rejected": { "default": false, "title": "Export Rejected", "type": "boolean" },
+				"include_image": { "default": false, "title": "Include Image", "type": "boolean" },
+				"include_plot": { "default": false, "title": "Include Plot", "type": "boolean" },
+				"include_crop": { "default": false, "title": "Include Crop", "type": "boolean" },
+				"include_video": { "default": true, "title": "Include Video", "type": "boolean" },
+				"video_width": {
+					"anyOf": [{ "exclusiveMinimum": 0, "type": "integer" }, { "type": "null" }],
+					"default": 1280,
+					"title": "Video Width"
+				},
+				"video_crf": {
+					"default": 28,
+					"maximum": 51,
+					"minimum": 0,
+					"title": "Video Crf",
+					"type": "integer"
+				},
+				"token": { "minLength": 1, "title": "Token", "type": "string" },
+				"chat": { "minLength": 1, "title": "Chat", "type": "string" },
+				"alert_every": {
+					"default": 1,
+					"exclusiveMinimum": 0,
+					"title": "Alert Every",
+					"type": "integer"
+				},
+				"timeout": { "default": 30, "exclusiveMinimum": 0, "title": "Timeout", "type": "number" }
+			},
+			"required": ["token", "chat"],
+			"title": "ChatConfig",
+			"type": "object"
+		},
+		"DetectionConfig": {
+			"additionalProperties": false,
+			"properties": {
+				"source": {
+					"anyOf": [
+						{ "minLength": 1, "type": "string" },
+						{ "items": { "minLength": 1, "type": "string" }, "minItems": 1, "type": "array" }
+					],
+					"title": "Source"
+				},
+				"interval": { "default": 0, "minimum": 0, "title": "Interval", "type": "number" },
+				"frame_retention": {
+					"default": 15,
+					"exclusiveMinimum": 0,
+					"title": "Frame Retention",
+					"type": "integer"
+				},
+				"frames_width": {
+					"default": 1280,
+					"exclusiveMinimum": 0,
+					"title": "Frames Width",
+					"type": "integer"
+				}
+			},
+			"required": ["source"],
+			"title": "DetectionConfig",
+			"type": "object"
+		},
+		"DetectorConfig": {
+			"additionalProperties": false,
+			"properties": {
+				"detection": { "$ref": "#/$defs/DetectionConfig" },
+				"yolo": {
+					"anyOf": [{ "$ref": "#/$defs/YoloConfig" }, { "type": "null" }],
+					"default": null
+				},
+				"identity": {
+					"anyOf": [{ "$ref": "#/$defs/IdentityConfig" }, { "type": "null" }],
+					"default": null
+				},
+				"vlm": {
+					"anyOf": [
+						{ "$ref": "#/$defs/VLMConfig" },
+						{ "items": { "$ref": "#/$defs/VLMConfig" }, "type": "array" },
+						{ "type": "null" }
+					],
+					"default": null,
+					"title": "Vlm"
+				},
+				"exporters": {
+					"anyOf": [{ "$ref": "#/$defs/ExportersConfig" }, { "type": "null" }],
+					"default": null
+				}
+			},
+			"required": ["detection"],
+			"title": "DetectorConfig",
+			"type": "object"
+		},
+		"DiskConfig": {
+			"additionalProperties": false,
+			"properties": {
+				"confidence": {
+					"anyOf": [
+						{ "maximum": 1, "minimum": 0, "type": "number" },
+						{
+							"additionalProperties": { "maximum": 1, "minimum": 0, "type": "number" },
+							"type": "object"
+						},
+						{ "type": "null" }
+					],
+					"default": null,
+					"title": "Confidence"
+				},
+				"crop_padding": { "default": 0.1, "minimum": 0, "title": "Crop Padding", "type": "number" },
+				"export_rejected": { "default": true, "title": "Export Rejected", "type": "boolean" },
+				"directory": {
+					"anyOf": [{ "format": "path", "type": "string" }, { "type": "null" }],
+					"default": null,
+					"title": "Directory"
+				},
+				"strategy": {
+					"default": "BEST",
+					"enum": ["ALL", "BEST"],
+					"title": "Strategy",
+					"type": "string"
+				}
+			},
+			"title": "DiskConfig",
+			"type": "object"
+		},
+		"ExportersConfig": {
+			"additionalProperties": false,
+			"properties": {
+				"disk": {
+					"anyOf": [
+						{ "$ref": "#/$defs/DiskConfig" },
+						{ "items": { "$ref": "#/$defs/DiskConfig" }, "type": "array" },
+						{ "type": "null" }
+					],
+					"default": null,
+					"title": "Disk"
+				},
+				"telegram": {
+					"anyOf": [
+						{ "$ref": "#/$defs/ChatConfig" },
+						{ "items": { "$ref": "#/$defs/ChatConfig" }, "type": "array" },
+						{ "type": "null" }
+					],
+					"default": null,
+					"title": "Telegram"
+				},
+				"webhook": {
+					"anyOf": [
+						{ "$ref": "#/$defs/WebhookConfig" },
+						{ "items": { "$ref": "#/$defs/WebhookConfig" }, "type": "array" },
+						{ "type": "null" }
+					],
+					"default": null,
+					"title": "Webhook"
+				},
+				"sse": {
+					"anyOf": [
+						{ "$ref": "#/$defs/SSEConfig" },
+						{ "items": { "$ref": "#/$defs/SSEConfig" }, "type": "array" },
+						{ "type": "null" }
+					],
+					"default": null,
+					"title": "Sse"
+				}
+			},
+			"title": "ExportersConfig",
+			"type": "object"
+		},
+		"HealthcheckConfig": {
+			"additionalProperties": false,
+			"properties": {
+				"url": { "minLength": 1, "title": "Url", "type": "string" },
+				"method": {
+					"default": "GET",
+					"enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"],
+					"title": "Method",
+					"type": "string"
+				},
+				"timeout": { "default": 5, "exclusiveMinimum": 0, "title": "Timeout", "type": "number" },
+				"headers": {
+					"anyOf": [
+						{ "additionalProperties": { "type": "string" }, "type": "object" },
+						{ "type": "null" }
+					],
+					"default": null,
+					"title": "Headers"
+				},
+				"body": {
+					"anyOf": [{ "type": "string" }, { "type": "null" }],
+					"default": null,
+					"title": "Body"
+				},
+				"interval": { "default": 60, "exclusiveMinimum": 0, "title": "Interval", "type": "number" }
+			},
+			"required": ["url"],
+			"title": "HealthcheckConfig",
+			"type": "object"
+		},
+		"IdentityCandidateFilterConfig": {
+			"additionalProperties": false,
+			"properties": {
+				"min_area_ratio": {
+					"maximum": 1,
+					"minimum": 0,
+					"title": "Min Area Ratio",
+					"type": "number"
+				},
+				"max_area_ratio": {
+					"maximum": 1,
+					"minimum": 0,
+					"title": "Max Area Ratio",
+					"type": "number"
+				},
+				"frame_edge_margin": {
+					"exclusiveMaximum": 0.5,
+					"minimum": 0,
+					"title": "Frame Edge Margin",
+					"type": "number"
+				}
+			},
+			"required": ["min_area_ratio", "max_area_ratio", "frame_edge_margin"],
+			"title": "IdentityCandidateFilterConfig",
+			"type": "object"
+		},
+		"IdentityConfig": {
+			"additionalProperties": false,
+			"properties": {
+				"database": { "format": "path", "title": "Database", "type": "string" },
+				"target_label": { "minLength": 1, "title": "Target Label", "type": "string" },
+				"display": { "$ref": "#/$defs/IdentityDisplayConfig" },
+				"candidate_filter": { "$ref": "#/$defs/IdentityCandidateFilterConfig" },
+				"controlled_zone": { "$ref": "#/$defs/IdentityControlledZoneConfig" },
+				"encoder": { "const": "miewid-dual-crop-v1", "title": "Encoder", "type": "string" },
+				"similarity_threshold": {
+					"maximum": 1,
+					"minimum": 0,
+					"title": "Similarity Threshold",
+					"type": "number"
+				},
+				"similarity_margin": {
+					"maximum": 1,
+					"minimum": 0,
+					"title": "Similarity Margin",
+					"type": "number"
+				},
+				"query_frames": { "exclusiveMinimum": 0, "title": "Query Frames", "type": "integer" },
+				"gallery_frames": { "exclusiveMinimum": 0, "title": "Gallery Frames", "type": "integer" },
+				"track_max_age": { "exclusiveMinimum": 0, "title": "Track Max Age", "type": "integer" }
+			},
+			"required": [
+				"database",
+				"target_label",
+				"display",
+				"candidate_filter",
+				"controlled_zone",
+				"encoder",
+				"similarity_threshold",
+				"similarity_margin",
+				"query_frames",
+				"gallery_frames",
+				"track_max_age"
+			],
+			"title": "IdentityConfig",
+			"type": "object"
+		},
+		"IdentityControlledZoneConfig": {
+			"additionalProperties": false,
+			"properties": {
+				"zone_id": { "minLength": 1, "title": "Zone Id", "type": "string" },
+				"x1": { "maximum": 1, "minimum": 0, "title": "X1", "type": "number" },
+				"y1": { "maximum": 1, "minimum": 0, "title": "Y1", "type": "number" },
+				"x2": { "maximum": 1, "minimum": 0, "title": "X2", "type": "number" },
+				"y2": { "maximum": 1, "minimum": 0, "title": "Y2", "type": "number" },
+				"minimum_box_inside_ratio": {
+					"exclusiveMinimum": 0,
+					"maximum": 1,
+					"title": "Minimum Box Inside Ratio",
+					"type": "number"
+				},
+				"minimum_stable_frames": {
+					"exclusiveMinimum": 0,
+					"title": "Minimum Stable Frames",
+					"type": "integer"
+				},
+				"clear_frames": { "exclusiveMinimum": 0, "title": "Clear Frames", "type": "integer" }
+			},
+			"required": [
+				"zone_id",
+				"x1",
+				"y1",
+				"x2",
+				"y2",
+				"minimum_box_inside_ratio",
+				"minimum_stable_frames",
+				"clear_frames"
+			],
+			"title": "IdentityControlledZoneConfig",
+			"type": "object"
+		},
+		"IdentityDisplayConfig": {
+			"additionalProperties": false,
+			"properties": {
+				"singular": { "minLength": 1, "title": "Singular", "type": "string" },
+				"plural": { "minLength": 1, "title": "Plural", "type": "string" },
+				"official_id_label": { "minLength": 1, "title": "Official Id Label", "type": "string" }
+			},
+			"required": ["singular", "plural", "official_id_label"],
+			"title": "IdentityDisplayConfig",
+			"type": "object"
+		},
+		"OnnxConfig": {
+			"additionalProperties": false,
+			"properties": {
+				"provider": {
+					"anyOf": [{ "type": "string" }, { "type": "null" }],
+					"default": null,
+					"title": "Provider"
+				},
+				"winml": { "default": true, "title": "Winml", "type": "boolean" },
+				"opset": { "default": 20, "exclusiveMinimum": 0, "title": "Opset", "type": "integer" }
+			},
+			"title": "OnnxConfig",
+			"type": "object"
+		},
+		"SSEConfig": {
+			"additionalProperties": false,
+			"properties": {
+				"confidence": {
+					"anyOf": [
+						{ "maximum": 1, "minimum": 0, "type": "number" },
+						{
+							"additionalProperties": { "maximum": 1, "minimum": 0, "type": "number" },
+							"type": "object"
+						},
+						{ "type": "null" }
+					],
+					"default": null,
+					"title": "Confidence"
+				},
+				"crop_padding": { "default": 0.1, "minimum": 0, "title": "Crop Padding", "type": "number" },
+				"export_rejected": { "default": false, "title": "Export Rejected", "type": "boolean" },
+				"port": {
+					"default": 8765,
+					"maximum": 65535,
+					"minimum": 1,
+					"title": "Port",
+					"type": "integer"
+				},
+				"endpoint": {
+					"anyOf": [{ "type": "string" }, { "type": "null" }],
+					"default": null,
+					"title": "Endpoint"
+				}
+			},
+			"title": "SSEConfig",
+			"type": "object"
+		},
+		"VLMConfig": {
+			"additionalProperties": false,
+			"properties": {
+				"prompt": { "minLength": 1, "title": "Prompt", "type": "string" },
+				"model": {
+					"anyOf": [
+						{ "minLength": 1, "type": "string" },
+						{ "items": { "minLength": 1, "type": "string" }, "minItems": 1, "type": "array" }
+					],
+					"title": "Model"
+				},
+				"key": {
+					"anyOf": [{ "type": "string" }, { "type": "null" }],
+					"default": null,
+					"title": "Key"
+				},
+				"url": {
+					"anyOf": [{ "type": "string" }, { "type": "null" }],
+					"default": null,
+					"title": "Url"
+				},
+				"strategy": {
+					"default": "VIDEO",
+					"enum": ["IMAGE", "VIDEO"],
+					"title": "Strategy",
+					"type": "string"
+				},
+				"crop_padding": { "default": 0.1, "minimum": 0, "title": "Crop Padding", "type": "number" },
+				"timeout": { "default": 30, "exclusiveMinimum": 0, "title": "Timeout", "type": "number" }
+			},
+			"required": ["prompt", "model"],
+			"title": "VLMConfig",
+			"type": "object"
+		},
+		"WebhookConfig": {
+			"additionalProperties": false,
+			"properties": {
+				"url": { "minLength": 1, "title": "Url", "type": "string" },
+				"method": {
+					"default": "POST",
+					"enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"],
+					"title": "Method",
+					"type": "string"
+				},
+				"timeout": {
+					"anyOf": [{ "exclusiveMinimum": 0, "type": "number" }, { "type": "null" }],
+					"default": null,
+					"title": "Timeout"
+				},
+				"headers": {
+					"anyOf": [
+						{ "additionalProperties": { "type": "string" }, "type": "object" },
+						{ "type": "null" }
+					],
+					"default": null,
+					"title": "Headers"
+				},
+				"body": {
+					"anyOf": [{ "type": "string" }, { "type": "null" }],
+					"default": null,
+					"title": "Body"
+				},
+				"confidence": {
+					"anyOf": [
+						{ "maximum": 1, "minimum": 0, "type": "number" },
+						{
+							"additionalProperties": { "maximum": 1, "minimum": 0, "type": "number" },
+							"type": "object"
+						},
+						{ "type": "null" }
+					],
+					"default": null,
+					"title": "Confidence"
+				},
+				"crop_padding": { "default": 0.1, "minimum": 0, "title": "Crop Padding", "type": "number" },
+				"export_rejected": { "default": false, "title": "Export Rejected", "type": "boolean" },
+				"include_image": { "default": false, "title": "Include Image", "type": "boolean" },
+				"include_plot": { "default": false, "title": "Include Plot", "type": "boolean" },
+				"include_crop": { "default": true, "title": "Include Crop", "type": "boolean" },
+				"include_video": { "default": false, "title": "Include Video", "type": "boolean" },
+				"video_width": {
+					"anyOf": [{ "exclusiveMinimum": 0, "type": "integer" }, { "type": "null" }],
+					"default": 1280,
+					"title": "Video Width"
+				},
+				"video_crf": {
+					"default": 28,
+					"maximum": 51,
+					"minimum": 0,
+					"title": "Video Crf",
+					"type": "integer"
+				},
+				"token": {
+					"anyOf": [{ "type": "string" }, { "type": "null" }],
+					"default": null,
+					"title": "Token"
+				},
+				"data_type": {
+					"default": "binary",
+					"enum": ["binary", "base64", "none"],
+					"title": "Data Type",
+					"type": "string"
+				},
+				"data_max": {
+					"anyOf": [{ "exclusiveMinimum": 0, "type": "integer" }, { "type": "null" }],
+					"default": null,
+					"title": "Data Max"
+				}
+			},
+			"required": ["url"],
+			"title": "WebhookConfig",
+			"type": "object"
+		},
+		"YoloConfig": {
+			"additionalProperties": false,
+			"properties": {
+				"model": { "minLength": 1, "title": "Model", "type": "string" },
+				"task": {
+					"default": "detect",
+					"enum": ["detect", "segment"],
+					"title": "Task",
+					"type": "string"
+				},
+				"confidence": {
+					"anyOf": [
+						{ "maximum": 1, "minimum": 0, "type": "number" },
+						{
+							"additionalProperties": { "maximum": 1, "minimum": 0, "type": "number" },
+							"type": "object"
+						}
+					],
+					"default": 0,
+					"title": "Confidence"
+				},
+				"tracking": { "default": false, "title": "Tracking", "type": "boolean" },
+				"time_max": { "default": 60, "minimum": 0, "title": "Time Max", "type": "number" },
+				"timeout": { "default": 5, "minimum": 0, "title": "Timeout", "type": "number" },
+				"cooldown": {
+					"anyOf": [
+						{ "minimum": 0, "type": "number" },
+						{ "additionalProperties": { "minimum": 0, "type": "number" }, "type": "object" }
+					],
+					"default": 0,
+					"title": "Cooldown"
+				},
+				"include_trailing_time": {
+					"default": 1,
+					"minimum": 0,
+					"title": "Include Trailing Time",
+					"type": "number"
+				},
+				"frames_min": {
+					"default": 3,
+					"exclusiveMinimum": 0,
+					"title": "Frames Min",
+					"type": "integer"
+				},
+				"imgsz": { "default": 640, "exclusiveMinimum": 0, "title": "Imgsz", "type": "integer" },
+				"iou": { "default": 0.7, "maximum": 1, "minimum": 0, "title": "Iou", "type": "number" },
+				"tracker": {
+					"default": "bytetrack.yaml",
+					"minLength": 1,
+					"title": "Tracker",
+					"type": "string"
+				}
+			},
+			"required": ["model"],
+			"title": "YoloConfig",
+			"type": "object"
+		}
+	},
+	"additionalProperties": false,
+	"properties": {
+		"detectors": {
+			"items": { "$ref": "#/$defs/DetectorConfig" },
+			"minItems": 1,
+			"title": "Detectors",
+			"type": "array"
+		},
+		"onnx": { "$ref": "#/$defs/OnnxConfig" },
+		"health": {
+			"anyOf": [{ "$ref": "#/$defs/HealthcheckConfig" }, { "type": "null" }],
+			"default": null
+		}
+	},
+	"required": ["detectors"],
+	"title": "Config",
+	"type": "object"
+}
