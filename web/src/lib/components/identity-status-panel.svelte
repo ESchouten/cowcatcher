@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { getDetectorConnection, getIdentityStatus } from '$lib/remote/identity.remote';
 	import DatabaseIcon from '@lucide/svelte/icons/database';
-	import LayersIcon from '@lucide/svelte/icons/layers-3';
 	import RadioIcon from '@lucide/svelte/icons/radio';
 
 	const statusQuery = getIdentityStatus();
@@ -42,7 +41,7 @@
 	aria-label="System status"
 	data-testid="identity-status-panel"
 >
-	<div class="flex min-w-0 items-center gap-2 border-b border-sidebar-border px-2 py-2">
+	<div class="flex min-w-0 items-center gap-2 px-2 py-2">
 		<RadioIcon class="size-3.5 shrink-0 text-muted-foreground" />
 		<span
 			class:bg-emerald-500={detectorConnection === 'connected'}
@@ -69,14 +68,6 @@
 			data-testid="database-state"
 		>
 			{databaseLabel}
-		</span>
-	</div>
-
-	<div class="flex min-w-0 items-center gap-2 px-2 py-2">
-		<LayersIcon class="size-3.5 shrink-0 text-muted-foreground" />
-		<span class="min-w-0 flex-1 truncate text-xs text-muted-foreground">Gallery</span>
-		<span class="truncate text-xs font-medium" data-testid="gallery-version">
-			{catalog?.activeGalleryVersion ? `v${catalog.activeGalleryVersion}` : 'Not active'}
 		</span>
 	</div>
 </section>

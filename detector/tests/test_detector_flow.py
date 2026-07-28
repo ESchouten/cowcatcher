@@ -392,6 +392,28 @@ def test_identity_stage_runs_once_on_each_primary_tracking_result():
     assert identity_stage.calls == [("camera-1", mapped[-1])]
 
 
+def test_identity_failure_does_not_stop_detection():
+    now = datetime.now()
+    observations = [make_observation(now, {"cow": 0.9})]
+    live = RecordingSink()
+
+    class FailingIdentityStage:
+        def enrich(self, _source, _observation):
+            raise RuntimeError("identity failed")
+
+    pipeline, dispatcher = build_test_pipeline(
+        runner=RecordingRunner(mapped=observations),
+        live_sink=live,
+        identity_stage=FailingIdentityStage(),
+    )
+    frame = Frame(now, np.zeros((80, 120, 3), dtype=np.uint8))
+
+    pipeline.processor._handle_model_result("camera-1", object(), [frame])
+
+    assert live.messages[0].observation is observations[-1]
+    assert dispatcher.events[0].best is observations[-1]
+
+
 def test_pipeline_publishes_live_observation_and_completed_event():
     now = datetime.now()
     observations = [make_observation(now)]

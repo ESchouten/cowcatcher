@@ -1,7 +1,7 @@
 from aidetector.domain.detections import DetectedObject
 from aidetector.reid.zone import ZoneGate
 
-BOUNDS = (0.2, 0.2, 0.8, 0.8)
+MARGIN = 0.2
 
 
 def cow(
@@ -21,7 +21,7 @@ def evaluate(gate: ZoneGate, *targets: tuple[int, DetectedObject]):
 
 
 def test_zone_requires_stability_and_clearance_between_visits():
-    gate = ZoneGate(BOUNDS)
+    gate = ZoneGate(MARGIN)
 
     assert evaluate(gate, (0, cow())).target_states == {0: "locking"}
     first = evaluate(gate, (0, cow()))
@@ -36,7 +36,7 @@ def test_zone_requires_stability_and_clearance_between_visits():
 
 
 def test_zone_allows_tracker_warmup_and_ignores_targets_outside_it():
-    gate = ZoneGate(BOUNDS)
+    gate = ZoneGate(MARGIN)
     queued = cow(8, (0, 0, 10, 10))
 
     assert evaluate(gate, (0, cow(None)), (1, queued)).target_states == {
@@ -48,7 +48,7 @@ def test_zone_allows_tracker_warmup_and_ignores_targets_outside_it():
 
 
 def test_zone_marks_multiple_or_replaced_tracks_as_switch_risk():
-    gate = ZoneGate(BOUNDS)
+    gate = ZoneGate(MARGIN)
     evaluate(gate, (0, cow(7)))
     evaluate(gate, (0, cow(7)))
 
@@ -67,7 +67,7 @@ def test_zone_marks_multiple_or_replaced_tracks_as_switch_risk():
 
 
 def test_duplicate_track_id_is_ambiguous_even_outside_the_zone():
-    gate = ZoneGate(BOUNDS)
+    gate = ZoneGate(MARGIN)
 
     result = evaluate(
         gate,

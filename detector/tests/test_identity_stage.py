@@ -40,7 +40,7 @@ def make_stage(
     fake = encoder or FakeEncoder()
     stage = IdentityStage(
         target_label="cow",
-        zone=(0.2, 0.2, 0.8, 0.8),
+        margin=0.2,
         encoder=fake,  # type: ignore[arg-type]
         catalog=catalog,
     )
@@ -77,37 +77,35 @@ def seed_confirmed_identity(
     embedding: np.ndarray,
     seed: int,
 ) -> str:
-    stored = []
-    for offset, track_id in enumerate((seed, seed + 1)):
+    tracklets = []
+    visual_identities = []
+    for offset in range(2):
+        tracklet_id = f"trk_gallery_{seed}_{offset}"
+        tracklets.append(tracklet_id)
         for frame_index in range(2):
-            stored.append(
-                catalog.record_evidence(
-                    run_id=f"gallery-{seed}-{offset}",
-                    source=f"gallery-camera-{seed}",
-                    track_id=track_id,
-                    frame_index=frame_index,
-                    captured_at=datetime(
-                        2026,
-                        7,
-                        20 + offset,
-                        frame_index,
-                        tzinfo=timezone.utc,
-                    ),
-                    preview_jpeg=b"\xff\xd8gallery\xff\xd9",
-                    embedding=embedding,
-                    observation_count=frame_index + 1,
-                )
+            visual_identity_id = catalog.record_evidence(
+                tracklet_id=tracklet_id,
+                source=f"gallery-camera-{seed}",
+                frame_index=frame_index,
+                captured_at=datetime(
+                    2026,
+                    7,
+                    20 + offset,
+                    frame_index,
+                    tzinfo=timezone.utc,
+                ),
+                preview_jpeg=b"\xff\xd8gallery\xff\xd9",
+                embedding=embedding,
             )
-    first_tracklet = stored[0].tracklet_id
-    second_tracklet = stored[2].tracklet_id
-    visual_identity_id = stored[0].visual_identity_id
-    second_visual_identity_id = stored[2].visual_identity_id
-    now = "2026-07-24T00:00:00Z"
+        visual_identities.append(visual_identity_id)
+        catalog.finalize_tracklet(tracklet_id, evidence_status="eligible")
+    visual_identity_id, second_visual_identity_id = visual_identities
+    first_tracklet, second_tracklet = tracklets
     with catalog.transaction():
         catalog.connection.execute(
             """
             UPDATE visual_identity_tracklets
-            SET visual_identity_id = ?, assignment_kind = 'human_merge'
+            SET visual_identity_id = ?
             WHERE tracklet_id = ?
             """,
             (visual_identity_id, second_tracklet),
@@ -115,52 +113,39 @@ def seed_confirmed_identity(
         catalog.connection.execute(
             """
             UPDATE visual_identities
-            SET status = 'active', updated_at = ?
+            SET merged_into_visual_identity_id = ?
             WHERE visual_identity_id = ?
             """,
-            (now, visual_identity_id),
-        )
-        catalog.connection.execute(
-            """
-            UPDATE visual_identities
-            SET status = 'merged', merged_into_visual_identity_id = ?, updated_at = ?
-            WHERE visual_identity_id = ?
-            """,
-            (visual_identity_id, now, second_visual_identity_id),
+            (visual_identity_id, second_visual_identity_id),
         )
         catalog.connection.execute(
             """
             INSERT INTO official_identities (
-                official_id, display_name, status, notes, created_at, updated_at
-            ) VALUES (?, NULL, 'active', '', ?, ?)
+                official_id, display_name, status, notes
+            ) VALUES (?, NULL, 'active', '')
             """,
-            (official_id, now, now),
+            (official_id,),
         )
         catalog.connection.execute(
             """
             INSERT INTO mappings (
-                mapping_id, visual_identity_id, official_id, state,
-                provisional_tracklet_id, confirmation_tracklet_id, version,
-                created_at, updated_at
-            ) VALUES (?, ?, ?, 'confirmed', ?, ?, 1, ?, ?)
+                visual_identity_id, official_id, state,
+                provisional_tracklet_id, confirmation_tracklet_id
+            ) VALUES (?, ?, 'confirmed', ?, ?)
             """,
             (
-                f"map_{seed}",
                 visual_identity_id,
                 official_id,
                 first_tracklet,
                 second_tracklet,
-                now,
-                now,
             ),
         )
         catalog.connection.execute(
             """
             UPDATE control
-            SET operator_revision = operator_revision + 1, updated_at = ?
+            SET operator_revision = operator_revision + 1
             WHERE singleton = 1
-            """,
-            (now,),
+            """
         )
     return visual_identity_id
 
@@ -198,13 +183,11 @@ def test_stage_uses_raw_rgb_primary_boxes_and_two_frame_consensus(tmp_path: Path
 
     row = catalog.connection.execute(
         """
-        SELECT observation_count, evidence_status,
-               typeof(preview_jpeg) AS preview_type
+        SELECT evidence_status, typeof(preview_jpeg) AS preview_type
         FROM tracklets
         """
     ).fetchone()
     assert dict(row) == {
-        "observation_count": 2,
         "evidence_status": "eligible",
         "preview_type": "blob",
     }
@@ -229,7 +212,7 @@ def test_stage_taints_a_track_id_replaced_before_zone_clearance(tmp_path: Path):
         """
         SELECT evidence_status
         FROM tracklets
-        WHERE source = 'camera' AND track_id = 7
+        WHERE source = 'camera'
         """
     ).fetchone()
     assert row["evidence_status"] == "switch_risk"
@@ -297,7 +280,6 @@ def test_stage_matches_gallery_but_never_assigns_prediction_as_truth(tmp_path: P
     assert result.official_id == "NL-123"
     assert result.similarity == 1.0
     assert result.margin == 2.0
-    assert result.gallery_version is not None
 
     runtime_assignment = catalog.connection.execute(
         """
@@ -390,6 +372,17 @@ def test_conflicting_confirmed_matches_mark_the_track_as_switch_risk(tmp_path: P
         ).fetchone()[0]
         == "switch_risk"
     )
+    assert (
+        catalog.connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM evidence_frames ef
+            JOIN tracklets t USING (tracklet_id)
+            WHERE t.source = 'camera'
+            """
+        ).fetchone()[0]
+        == 2
+    )
     stage.close()
 
 
@@ -429,7 +422,7 @@ def test_track_id_reuse_after_max_age_creates_a_new_tracklet(tmp_path: Path):
     )
     assert (
         catalog.connection.execute(
-            "SELECT COUNT(*) FROM tracklets WHERE source = 'camera' AND track_id = 7"
+            "SELECT COUNT(*) FROM tracklets WHERE source = 'camera'"
         ).fetchone()[0]
         == 2
     )

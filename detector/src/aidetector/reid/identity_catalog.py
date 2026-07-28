@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import hashlib
-import json
 import sqlite3
 import uuid
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -12,27 +10,25 @@ from pathlib import Path
 from typing import Literal
 
 import numpy as np
-from aidetector.domain.vectors import normalize_rows
+from aidetector.domain.vectors import normalized_mean
 from numpy import ndarray
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 EVIDENCE_FRAMES = 2
 
 
 class IdentityCatalogError(RuntimeError):
-    """Base error for the shared identity catalog."""
+    """The identity catalog is invalid or incompatible with this runtime."""
 
 
 class UnsupportedIdentitySchemaError(IdentityCatalogError):
-    """Raised instead of attempting to migrate an old identity database."""
+    """The identity database needs to be recreated."""
 
 
 @dataclass(frozen=True, slots=True)
 class CatalogControl:
     operator_revision: int
-    active_gallery_version: int | None
-    configuration_sha256: str | None
-    encoder_key: str | None
+    encoder_signature: str | None
     embedding_dimension: int | None
 
 
@@ -45,15 +41,8 @@ class GalleryIdentity:
 
 @dataclass(frozen=True, slots=True)
 class GallerySnapshot:
-    gallery_version: int
     operator_revision: int
     identities: tuple[GalleryIdentity, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class StoredEvidence:
-    tracklet_id: str
-    visual_identity_id: str
 
 
 class IdentityCatalog:
@@ -103,8 +92,7 @@ class IdentityCatalog:
     def control(self) -> CatalogControl:
         row = self.connection.execute(
             """
-            SELECT operator_revision, active_gallery_version,
-                   configuration_sha256, encoder_key, embedding_dimension
+            SELECT operator_revision, encoder_signature, embedding_dimension
             FROM control
             WHERE singleton = 1
             """
@@ -113,13 +101,7 @@ class IdentityCatalog:
             raise UnsupportedIdentitySchemaError("Identity control record is missing")
         return CatalogControl(
             operator_revision=int(row["operator_revision"]),
-            active_gallery_version=(
-                int(row["active_gallery_version"])
-                if row["active_gallery_version"] is not None
-                else None
-            ),
-            configuration_sha256=row["configuration_sha256"],
-            encoder_key=row["encoder_key"],
+            encoder_signature=row["encoder_signature"],
             embedding_dimension=(
                 int(row["embedding_dimension"])
                 if row["embedding_dimension"] is not None
@@ -130,58 +112,50 @@ class IdentityCatalog:
     def configure_runtime(
         self,
         *,
-        encoder_key: str,
+        encoder_signature: str,
         embedding_dimension: int,
-        configuration_sha256: str,
     ) -> CatalogControl:
         with self.transaction():
-            before = self.control()
-            if self._has_evidence() and (
-                before.encoder_key not in (None, encoder_key)
-                or before.embedding_dimension not in (None, embedding_dimension)
-            ):
+            control = self.control()
+            has_evidence = (
+                self.connection.execute(
+                    "SELECT 1 FROM evidence_frames LIMIT 1"
+                ).fetchone()
+                is not None
+            )
+            incompatible = control.encoder_signature not in (
+                None,
+                encoder_signature,
+            ) or control.embedding_dimension not in (None, embedding_dimension)
+            if has_evidence and incompatible:
                 raise IdentityCatalogError(
                     "Identity catalog contains embeddings from another encoder"
                 )
-            changed = (
-                before.encoder_key != encoder_key
-                or before.embedding_dimension != embedding_dimension
-                or before.configuration_sha256 != configuration_sha256
-            )
-            if changed:
-                now = _utc_now()
+            if (
+                control.encoder_signature != encoder_signature
+                or control.embedding_dimension != embedding_dimension
+            ):
                 self.connection.execute(
                     """
                     UPDATE control
-                    SET encoder_key = ?,
-                        embedding_dimension = ?,
-                        configuration_sha256 = ?,
-                        active_gallery_version = NULL,
-                        updated_at = ?
+                    SET encoder_signature = ?, embedding_dimension = ?
                     WHERE singleton = 1
                     """,
-                    (
-                        encoder_key,
-                        embedding_dimension,
-                        configuration_sha256,
-                        now,
-                    ),
+                    (encoder_signature, embedding_dimension),
                 )
         return self.control()
 
     def record_evidence(
         self,
         *,
-        run_id: str,
+        tracklet_id: str,
         source: str,
-        track_id: int,
         frame_index: int,
         captured_at: datetime,
         preview_jpeg: bytes,
         embedding: ndarray,
-        observation_count: int,
-        evidence_status: str = "eligible",
-    ) -> StoredEvidence:
+        evidence_status: str = "insufficient",
+    ) -> str:
         vector = np.ascontiguousarray(embedding, dtype=np.float32)
         control = self.control()
         if control.embedding_dimension != vector.size:
@@ -189,10 +163,6 @@ class IdentityCatalog:
                 "Evidence embedding dimension does not match the configured encoder"
             )
 
-        tracklet_id = _stable_id("trk", run_id, source, str(track_id))
-        captured = _format_time(captured_at)
-        image_sha256 = hashlib.sha256(preview_jpeg).hexdigest()
-        now = _utc_now()
         with self.transaction():
             assignment = self.connection.execute(
                 """
@@ -202,90 +172,66 @@ class IdentityCatalog:
                 """,
                 (tracklet_id,),
             ).fetchone()
+            visual_identity_id = (
+                str(assignment["visual_identity_id"])
+                if assignment is not None
+                else f"vid_{uuid.uuid4().hex}"
+            )
             if assignment is None:
-                visual_identity_id = f"vid_{uuid.uuid4().hex}"
                 self.connection.execute(
                     """
-                    INSERT INTO visual_identities (
-                        visual_identity_id, status, created_at, updated_at
-                    ) VALUES (?, 'pending', ?, ?)
+                    INSERT INTO visual_identities (visual_identity_id)
+                    VALUES (?)
                     """,
-                    (visual_identity_id, now, now),
+                    (visual_identity_id,),
                 )
-            else:
-                visual_identity_id = str(assignment["visual_identity_id"])
 
             self.connection.execute(
                 """
                 INSERT INTO tracklets (
-                    tracklet_id, run_id, source, track_id,
-                    first_captured_at, last_captured_at, observation_count,
-                    evidence_status, preview_jpeg, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    tracklet_id, source, last_captured_at,
+                    evidence_status, preview_jpeg
+                ) VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(tracklet_id) DO UPDATE SET
                     last_captured_at = excluded.last_captured_at,
-                    observation_count = excluded.observation_count,
                     evidence_status = excluded.evidence_status,
-                    preview_jpeg = excluded.preview_jpeg,
-                    updated_at = excluded.updated_at
+                    preview_jpeg = excluded.preview_jpeg
                 """,
                 (
                     tracklet_id,
-                    run_id,
                     source,
-                    track_id,
-                    captured,
-                    captured,
-                    observation_count,
+                    _format_time(captured_at),
                     evidence_status,
                     preview_jpeg,
-                    now,
-                    now,
                 ),
             )
-
             self.connection.execute(
                 """
-                INSERT INTO evidence_frames (
-                    evidence_id, tracklet_id, frame_index, captured_at,
-                    image_sha256, preview_jpeg, embedding,
-                    embedding_dimension, quality, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1.0, ?)
-                ON CONFLICT(tracklet_id, frame_index) DO NOTHING
+                INSERT OR IGNORE INTO evidence_frames (
+                    tracklet_id, frame_index, embedding
+                ) VALUES (?, ?, ?)
                 """,
-                (
-                    f"evd_{uuid.uuid4().hex}",
-                    tracklet_id,
-                    frame_index,
-                    captured,
-                    image_sha256,
-                    preview_jpeg,
-                    vector.tobytes(),
-                    vector.size,
-                    now,
-                ),
+                (tracklet_id, frame_index, vector.tobytes()),
             )
-
             if assignment is None:
                 self.connection.execute(
                     """
                     INSERT INTO visual_identity_tracklets (
-                        tracklet_id, visual_identity_id, assignment_kind,
-                        assigned_at
-                    ) VALUES (?, ?, 'initial', ?)
+                        tracklet_id, visual_identity_id
+                    ) VALUES (?, ?)
                     """,
-                    (tracklet_id, visual_identity_id, now),
+                    (tracklet_id, visual_identity_id),
                 )
-        return StoredEvidence(tracklet_id, visual_identity_id)
+        return visual_identity_id
 
     def mark_tracklet_switch_risk(self, tracklet_id: str) -> None:
         self.connection.execute(
             """
             UPDATE tracklets
-            SET evidence_status = 'switch_risk', updated_at = ?
+            SET evidence_status = 'switch_risk'
             WHERE tracklet_id = ?
             """,
-            (_utc_now(), tracklet_id),
+            (tracklet_id,),
         )
 
     def finalize_tracklet(
@@ -294,14 +240,9 @@ class IdentityCatalog:
         *,
         evidence_status: Literal["eligible", "insufficient"],
     ) -> None:
-        now = _utc_now()
         with self.transaction():
             row = self.connection.execute(
-                """
-                SELECT evidence_status
-                FROM tracklets
-                WHERE tracklet_id = ?
-                """,
+                "SELECT evidence_status FROM tracklets WHERE tracklet_id = ?",
                 (tracklet_id,),
             ).fetchone()
             if row is None:
@@ -309,219 +250,93 @@ class IdentityCatalog:
                     f"Cannot finalize missing tracklet: {tracklet_id}"
                 )
             before = str(row["evidence_status"])
-            frame_count = int(
-                self.connection.execute(
-                    """
-                    SELECT COUNT(*)
-                    FROM evidence_frames
-                    WHERE tracklet_id = ?
-                    """,
-                    (tracklet_id,),
-                ).fetchone()[0]
-            )
             if evidence_status == "eligible":
                 if before == "switch_risk":
                     raise IdentityCatalogError(
                         "Switch-risk evidence cannot become eligible"
                     )
-                if frame_count < EVIDENCE_FRAMES:
+                frames = int(
+                    self.connection.execute(
+                        """
+                        SELECT COUNT(*) FROM evidence_frames
+                        WHERE tracklet_id = ?
+                        """,
+                        (tracklet_id,),
+                    ).fetchone()[0]
+                )
+                if frames != EVIDENCE_FRAMES:
                     raise IdentityCatalogError(
-                        "Eligible tracklet does not contain enough evidence frames"
+                        f"Eligible tracklets need {EVIDENCE_FRAMES} evidence frames"
                     )
-            after = "switch_risk" if before == "switch_risk" else evidence_status
             self.connection.execute(
                 """
                 UPDATE tracklets
-                SET evidence_status = ?, updated_at = ?
+                SET evidence_status = ?
                 WHERE tracklet_id = ?
                 """,
-                (after, now, tracklet_id),
+                (
+                    "switch_risk" if before == "switch_risk" else evidence_status,
+                    tracklet_id,
+                ),
             )
 
     def gallery(self) -> GallerySnapshot:
         control = self.control()
-        if control.active_gallery_version is None:
-            return self.rebuild_gallery()
-        version = self.connection.execute(
-            """
-            SELECT gallery_version, operator_revision, encoder_key,
-                   configuration_sha256, embedding_dimension, state
-            FROM gallery_versions
-            WHERE gallery_version = ?
-            """,
-            (control.active_gallery_version,),
-        ).fetchone()
-        if (
-            version is None
-            or version["state"] != "active"
-            or int(version["operator_revision"]) != control.operator_revision
-            or version["encoder_key"] != control.encoder_key
-            or version["configuration_sha256"] != control.configuration_sha256
-            or int(version["embedding_dimension"]) != control.embedding_dimension
-        ):
-            return self.rebuild_gallery()
-        identities = tuple(
-            GalleryIdentity(
-                visual_identity_id=str(row["visual_identity_id"]),
-                official_id=str(row["official_id"]),
-                prototype=_embedding_from_blob(row["prototype"]),
-            )
-            for row in self.connection.execute(
-                """
-                SELECT visual_identity_id, official_id, prototype
-                FROM gallery_items
-                WHERE gallery_version = ?
-                ORDER BY visual_identity_id
-                """,
-                (control.active_gallery_version,),
-            )
-        )
-        return GallerySnapshot(
-            int(version["gallery_version"]),
-            control.operator_revision,
-            identities,
-        )
+        if control.encoder_signature is None or control.embedding_dimension is None:
+            raise IdentityCatalogError("Identity encoder is not configured")
 
-    def rebuild_gallery(self) -> GallerySnapshot:
-        with self.transaction():
-            control = self.control()
-            if (
-                control.encoder_key is None
-                or control.configuration_sha256 is None
-                or control.embedding_dimension is None
+        identities = []
+        for mapping in self.connection.execute(
+            """
+            SELECT visual_identity_id, official_id,
+                   provisional_tracklet_id, confirmation_tracklet_id
+            FROM mappings
+            WHERE state = 'confirmed'
+            ORDER BY visual_identity_id
+            """
+        ):
+            embeddings = []
+            for tracklet_id in (
+                str(mapping["provisional_tracklet_id"]),
+                str(mapping["confirmation_tracklet_id"]),
             ):
-                raise IdentityCatalogError("Identity encoder is not configured")
-            gallery_rows: list[tuple[str, str, ndarray, tuple[str, ...]]] = []
-            for mapping in self.connection.execute(
-                """
-                SELECT visual_identity_id, official_id,
-                       provisional_tracklet_id, confirmation_tracklet_id
-                FROM mappings
-                WHERE state = 'confirmed'
-                ORDER BY visual_identity_id
-                """
-            ):
-                selected: list[sqlite3.Row] = []
-                for tracklet_id in (
-                    str(mapping["provisional_tracklet_id"]),
-                    str(mapping["confirmation_tracklet_id"]),
-                ):
-                    assignment = self.connection.execute(
+                rows = list(
+                    self.connection.execute(
                         """
-                        SELECT t.evidence_status, vit.visual_identity_id
+                        SELECT ef.embedding
                         FROM tracklets t
                         JOIN visual_identity_tracklets vit
                           ON vit.tracklet_id = t.tracklet_id
+                        JOIN evidence_frames ef
+                          ON ef.tracklet_id = t.tracklet_id
                         WHERE t.tracklet_id = ?
+                          AND t.evidence_status = 'eligible'
+                          AND vit.visual_identity_id = ?
+                        ORDER BY ef.frame_index
                         """,
-                        (tracklet_id,),
-                    ).fetchone()
-                    if (
-                        assignment is None
-                        or assignment["evidence_status"] != "eligible"
-                        or assignment["visual_identity_id"]
-                        != mapping["visual_identity_id"]
-                    ):
-                        raise IdentityCatalogError(
-                            "Confirmed mapping references ineligible evidence"
-                        )
-                    frames = list(
-                        self.connection.execute(
-                            """
-                            SELECT evidence_id, embedding
-                            FROM evidence_frames
-                            WHERE tracklet_id = ?
-                            ORDER BY frame_index
-                            LIMIT ?
-                            """,
-                            (tracklet_id, EVIDENCE_FRAMES),
-                        )
-                    )
-                    if len(frames) != EVIDENCE_FRAMES:
-                        raise IdentityCatalogError(
-                            f"Gallery identities need {EVIDENCE_FRAMES} frames "
-                            "from both visits"
-                        )
-                    selected.extend(frames)
-                prototype = _normalized_mean(
-                    [_embedding_from_blob(row["embedding"]) for row in selected]
-                )
-                gallery_rows.append(
-                    (
-                        str(mapping["visual_identity_id"]),
-                        str(mapping["official_id"]),
-                        prototype,
-                        tuple(str(row["evidence_id"]) for row in selected),
+                        (tracklet_id, mapping["visual_identity_id"]),
                     )
                 )
-
-            content_sha256 = _gallery_content_sha256(gallery_rows)
-            now = _utc_now()
-            self.connection.execute(
-                """
-                UPDATE gallery_versions
-                SET state = 'superseded'
-                WHERE state = 'active'
-                """
-            )
-            cursor = self.connection.execute(
-                """
-                INSERT INTO gallery_versions (
-                    operator_revision, encoder_key, configuration_sha256,
-                    content_sha256, embedding_dimension, state, created_at
-                ) VALUES (?, ?, ?, ?, ?, 'active', ?)
-                """,
-                (
-                    control.operator_revision,
-                    control.encoder_key,
-                    control.configuration_sha256,
-                    content_sha256,
-                    control.embedding_dimension,
-                    now,
-                ),
-            )
-            gallery_version = cursor.lastrowid
-            assert gallery_version is not None
-            self.connection.executemany(
-                """
-                INSERT INTO gallery_items (
-                    gallery_version, visual_identity_id, official_id,
-                    prototype, embedding_dimension, evidence_ids_json
-                ) VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                [
-                    (
-                        gallery_version,
-                        visual_identity_id,
-                        official_id,
-                        prototype.tobytes(),
+                if len(rows) != EVIDENCE_FRAMES:
+                    raise IdentityCatalogError(
+                        f"Gallery identities need {EVIDENCE_FRAMES} frames "
+                        "from both visits"
+                    )
+                embeddings.extend(
+                    _embedding_from_blob(
+                        row["embedding"],
                         control.embedding_dimension,
-                        json.dumps(evidence_ids, separators=(",", ":")),
                     )
-                    for (
-                        visual_identity_id,
-                        official_id,
-                        prototype,
-                        evidence_ids,
-                    ) in gallery_rows
-                ],
+                    for row in rows
+                )
+            identities.append(
+                GalleryIdentity(
+                    visual_identity_id=str(mapping["visual_identity_id"]),
+                    official_id=str(mapping["official_id"]),
+                    prototype=normalized_mean(np.stack(embeddings)),
+                )
             )
-            self.connection.execute(
-                """
-                UPDATE control
-                SET active_gallery_version = ?, updated_at = ?
-                WHERE singleton = 1
-                """,
-                (gallery_version, now),
-            )
-        return GallerySnapshot(
-            gallery_version,
-            control.operator_revision,
-            tuple(
-                GalleryIdentity(visual_identity_id, official_id, prototype)
-                for visual_identity_id, official_id, prototype, _ in gallery_rows
-            ),
-        )
+        return GallerySnapshot(control.operator_revision, tuple(identities))
 
     def close(self) -> None:
         self.connection.close()
@@ -537,12 +352,6 @@ class IdentityCatalog:
         else:
             self.connection.commit()
 
-    def _has_evidence(self) -> bool:
-        return (
-            self.connection.execute("SELECT 1 FROM evidence_frames LIMIT 1").fetchone()
-            is not None
-        )
-
     def __enter__(self) -> IdentityCatalog:
         return self
 
@@ -554,38 +363,12 @@ def _schema_sql() -> str:
     return Path(__file__).with_name("schema.sql").read_text(encoding="utf-8")
 
 
-def _embedding_from_blob(blob: bytes) -> ndarray:
-    return np.frombuffer(blob, dtype=np.float32).copy()
-
-
-def _normalized_mean(vectors: Sequence[ndarray]) -> ndarray:
-    return normalize_rows(np.mean(np.stack(vectors), axis=0, keepdims=True))[0]
-
-
-def _gallery_content_sha256(
-    rows: Sequence[tuple[str, str, ndarray, tuple[str, ...]]],
-) -> str:
-    digest = hashlib.sha256()
-    for visual_identity_id, official_id, prototype, evidence_ids in rows:
-        digest.update(visual_identity_id.encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(official_id.encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(prototype.tobytes())
-        digest.update(b"\0")
-        digest.update(json.dumps(evidence_ids, separators=(",", ":")).encode())
-        digest.update(b"\0")
-    return digest.hexdigest()
-
-
-def _stable_id(prefix: str, *parts: str) -> str:
-    digest = hashlib.sha256("\0".join(parts).encode("utf-8")).hexdigest()
-    return f"{prefix}_{digest[:32]}"
+def _embedding_from_blob(blob: bytes, dimension: int) -> ndarray:
+    vector = np.frombuffer(blob, dtype=np.float32).copy()
+    if vector.size != dimension:
+        raise IdentityCatalogError("Identity evidence has an invalid embedding size")
+    return vector
 
 
 def _format_time(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")

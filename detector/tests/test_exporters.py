@@ -237,7 +237,6 @@ def test_metadata_and_tracks_include_identity_results():
                     official_id="NL-123",
                     similarity=0.94,
                     margin=0.12,
-                    gallery_version=3,
                 ),
             ),
         ),
@@ -253,7 +252,6 @@ def test_metadata_and_tracks_include_identity_results():
         "official_id": "NL-123",
         "similarity": 0.94,
         "margin": 0.12,
-        "gallery_version": 3,
     }
     assert tracks["objects"][0]["crop"]["identity"] == identity
     assert metadata["identity_results"] == [identity]

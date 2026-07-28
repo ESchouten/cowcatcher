@@ -13,7 +13,7 @@ MODEL_KEY = "miewid-dual-crop-v1"
 MODEL_REPOSITORY = "conservationxlabs/miewid-msv3"
 MODEL_REVISION = "4f1d7f2b521149e5fe34bb85f377248ce9971a7d"
 MODEL_FILENAME = "model.safetensors"
-MODEL_VERSION = f"{MODEL_REPOSITORY}@{MODEL_REVISION}"
+MODEL_SIGNATURE = f"{MODEL_KEY}:{MODEL_REPOSITORY}@{MODEL_REVISION}:dual-crop"
 IMAGE_SIZE = 440
 FEATURE_DIM = 2_152
 MEAN = np.asarray((0.485, 0.456, 0.406), dtype=np.float32)
@@ -59,15 +59,6 @@ class MiewIdEncoder:
         fused = canonical.astype(np.float64) + letterboxed.astype(np.float64)
         fused /= np.linalg.norm(fused, axis=1, keepdims=True)
         return fused.astype(np.float32)
-
-
-def build_miewid_encoder() -> MiewIdEncoder:
-    return MiewIdEncoder()
-
-
-def normalized_prototype(embeddings: ndarray) -> ndarray:
-    mean = np.mean(embeddings.astype(np.float64), axis=0, keepdims=True)
-    return normalize_rows(mean.astype(np.float32))[0]
 
 
 def _load_model() -> Any:

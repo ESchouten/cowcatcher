@@ -10,7 +10,6 @@ export type VisualIdentityId = string | null;
 export type OfficialId = string | null;
 export type Similarity = number | null;
 export type Margin = number | null;
-export type GalleryVersion = number | null;
 export type IdentityResults = IdentityMetadata[];
 export type Observations = number;
 export type Start = string;
@@ -49,7 +48,6 @@ export interface IdentityMetadata {
 	official_id: OfficialId;
 	similarity: Similarity;
 	margin: Margin;
-	gallery_version: GalleryVersion;
 }
 export interface CropMetadata {
 	x1: X1;

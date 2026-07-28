@@ -180,20 +180,20 @@ This is the fast first-pass AI that scans every frame. Without a YOLO model, the
 
 Identity needs a tracked YOLO detector whose confidence map includes
 `target_label`. Configure the SQLite `database` and the normalized observation
-`zone`; the model, crop rules, thresholds, and evidence counts are fixed runtime
-defaults.
+`margin`; the model, crop rules, thresholds, and evidence counts are fixed
+runtime defaults. A margin of `0.2` excludes 20% from every frame edge.
 
 The detector accepts evidence from one stable target in the zone. MiewID runs
 with PyTorch MPS FP16 on Apple silicon and CPU FP32 elsewhere. Its pinned
 `model.safetensors` checkpoint is downloaded and cached by Hugging Face on first
 use.
 
-On first detector start, Python creates SQLite schema version 2 at the configured
+On first detector start, Python creates SQLite schema version 3 at the configured
 relative database path. The web app then manages official identities, provisional
-mappings, independent confirmations, corrections, merges, splits, rollbacks,
-and gallery activation directly in that database. A first assignment remains
-provisional; a distinct eligible tracklet must confirm it. Predictions never
-become mapping truth or automatically expand the gallery.
+mappings, independent confirmations, corrections, merges, and splits directly in
+that database. A first assignment remains provisional; a distinct eligible
+tracklet must confirm it. Confirmed mappings form the in-memory gallery.
+Predictions never become mapping truth or automatically expand it.
 
 Back up the SQLite file to preserve the catalog, previews, and embeddings.
 

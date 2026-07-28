@@ -9,12 +9,15 @@ import {
 	mergeVisualIdentities,
 	readIdentityCatalog,
 	readCatalogControl,
-	rollbackMapping,
 	splitVisualIdentity,
 	updateOfficialIdentity,
 	type IdentityCatalogSnapshot
 } from '$lib/server/identity-catalog';
-import { getIdentityDatabases, openIdentityDatabase } from '$lib/server/identity-databases';
+import {
+	getIdentityDatabases,
+	openConfiguredIdentityDatabase,
+	openIdentityDatabase
+} from '$lib/server/identity-databases';
 import { readConfigState } from '$lib/server/config-store';
 
 export interface IdentityCatalogView {
@@ -31,7 +34,6 @@ export interface IdentityStatusView {
 	label: string;
 	state: IdentityCatalogView['state'];
 	message: string | null;
-	activeGalleryVersion: number | null;
 }
 
 function unavailableState(error: unknown): Pick<IdentityCatalogView, 'state' | 'message'> {
@@ -49,7 +51,7 @@ export const getIdentityCatalogs = query(async (): Promise<IdentityCatalogView[]
 	return Promise.all(
 		configured.map(async (catalog) => {
 			try {
-				const database = await openIdentityDatabase(catalog.id);
+				const database = await openConfiguredIdentityDatabase(catalog);
 				try {
 					return {
 						catalogId: catalog.id,
@@ -80,14 +82,14 @@ export const getIdentityStatus = query(async (): Promise<IdentityStatusView[]> =
 	return Promise.all(
 		configured.map(async (catalog) => {
 			try {
-				const database = await openIdentityDatabase(catalog.id);
+				const database = await openConfiguredIdentityDatabase(catalog);
 				try {
+					readCatalogControl(database);
 					return {
 						catalogId: catalog.id,
 						label: catalog.label,
 						state: 'ready' as const,
-						message: null,
-						activeGalleryVersion: readCatalogControl(database).activeGalleryVersion
+						message: null
 					};
 				} finally {
 					database.close();
@@ -96,8 +98,7 @@ export const getIdentityStatus = query(async (): Promise<IdentityStatusView[]> =
 				return {
 					catalogId: catalog.id,
 					label: catalog.label,
-					...unavailableState(error),
-					activeGalleryVersion: null
+					...unavailableState(error)
 				};
 			}
 		})
@@ -196,27 +197,27 @@ export const provisionIdentity = command(
 export const confirmIdentity = command(
 	v.object({
 		...catalogInput,
-		mappingId: v.pipe(v.string(), v.regex(/^map_/)),
+		visualIdentityId: v.pipe(v.string(), v.regex(/^vid_/)),
 		confirmationTrackletId: v.pipe(v.string(), v.regex(/^trk_/))
 	}),
-	async ({ catalogId, expectedRevision, mappingId, confirmationTrackletId }) =>
+	async ({ catalogId, expectedRevision, visualIdentityId, confirmationTrackletId }) =>
 		withCatalog(catalogId, (database) =>
-			confirmMapping(database, { mappingId, confirmationTrackletId }, { expectedRevision })
+			confirmMapping(database, { visualIdentityId, confirmationTrackletId }, { expectedRevision })
 		)
 );
 
 export const correctIdentity = command(
 	v.object({
 		...catalogInput,
-		mappingId: v.pipe(v.string(), v.regex(/^map_/)),
+		visualIdentityId: v.pipe(v.string(), v.regex(/^vid_/)),
 		officialId: v.pipe(v.string(), v.trim(), v.minLength(1)),
 		provisionalTrackletId: v.pipe(v.string(), v.regex(/^trk_/))
 	}),
-	async ({ catalogId, expectedRevision, mappingId, officialId, provisionalTrackletId }) =>
+	async ({ catalogId, expectedRevision, visualIdentityId, officialId, provisionalTrackletId }) =>
 		withCatalog(catalogId, (database) =>
 			correctMapping(
 				database,
-				{ mappingId, officialId, provisionalTrackletId },
+				{ visualIdentityId, officialId, provisionalTrackletId },
 				{ expectedRevision }
 			)
 		)
@@ -225,21 +226,12 @@ export const correctIdentity = command(
 export const deactivateIdentity = command(
 	v.object({
 		...catalogInput,
-		mappingId: v.pipe(v.string(), v.regex(/^map_/))
+		visualIdentityId: v.pipe(v.string(), v.regex(/^vid_/))
 	}),
-	async ({ catalogId, expectedRevision, mappingId }) =>
+	async ({ catalogId, expectedRevision, visualIdentityId }) =>
 		withCatalog(catalogId, (database) =>
-			deactivateMapping(database, mappingId, { expectedRevision })
+			deactivateMapping(database, visualIdentityId, { expectedRevision })
 		)
-);
-
-export const rollbackIdentity = command(
-	v.object({
-		...catalogInput,
-		mappingId: v.pipe(v.string(), v.regex(/^map_/))
-	}),
-	async ({ catalogId, expectedRevision, mappingId }) =>
-		withCatalog(catalogId, (database) => rollbackMapping(database, mappingId, { expectedRevision }))
 );
 
 export const mergeIdentityEvidence = command(

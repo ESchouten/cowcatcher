@@ -133,17 +133,6 @@
             }
           ],
           "title": "Margin"
-        },
-        "gallery_version": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "title": "Gallery Version"
         }
       },
       "required": [
@@ -151,8 +140,7 @@
         "visual_identity_id",
         "official_id",
         "similarity",
-        "margin",
-        "gallery_version"
+        "margin"
       ],
       "title": "IdentityMetadata",
       "type": "object"

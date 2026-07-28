@@ -8,7 +8,6 @@
 		official_id: string | null;
 		similarity: number | null;
 		margin: number | null;
-		gallery_version: number | null;
 	};
 
 	type TrackCrop = {

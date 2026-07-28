@@ -37,8 +37,8 @@ class _State:
 class ZoneGate:
     """Allow identity evidence from one tracked target in a calibrated zone."""
 
-    def __init__(self, bounds: tuple[float, float, float, float]) -> None:
-        self.bounds = bounds
+    def __init__(self, margin: float) -> None:
+        self.margin = margin
         self._sources: dict[str, _State] = {}
 
     def evaluate(
@@ -59,7 +59,7 @@ class ZoneGate:
             if (
                 ratio := _inside_ratio(
                     target,
-                    self.bounds,
+                    self.margin,
                     frame_width,
                     frame_height,
                 )
@@ -166,7 +166,7 @@ class ZoneGate:
 
 def _inside_ratio(
     target: DetectedObject,
-    bounds: tuple[float, float, float, float],
+    margin: float,
     frame_width: int,
     frame_height: int,
 ) -> float:
@@ -174,13 +174,14 @@ def _inside_ratio(
     height = target.y2 - target.y1
     if width <= 0 or height <= 0:
         return 0
-    x1, y1, x2, y2 = bounds
     intersection_width = max(
         0,
-        min(target.x2, x2 * frame_width) - max(target.x1, x1 * frame_width),
+        min(target.x2, (1 - margin) * frame_width)
+        - max(target.x1, margin * frame_width),
     )
     intersection_height = max(
         0,
-        min(target.y2, y2 * frame_height) - max(target.y1, y1 * frame_height),
+        min(target.y2, (1 - margin) * frame_height)
+        - max(target.y1, margin * frame_height),
     )
     return intersection_width * intersection_height / (width * height)

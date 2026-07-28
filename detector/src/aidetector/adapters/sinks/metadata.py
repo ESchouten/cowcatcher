@@ -17,7 +17,6 @@ class IdentityMetadata:
     official_id: str | None
     similarity: float | None
     margin: float | None
-    gallery_version: int | None
 
     @classmethod
     def from_result(cls, result: IdentityResult) -> "IdentityMetadata":
@@ -27,7 +26,6 @@ class IdentityMetadata:
             official_id=result.official_id,
             similarity=result.similarity,
             margin=result.margin,
-            gallery_version=result.gallery_version,
         )
 
 

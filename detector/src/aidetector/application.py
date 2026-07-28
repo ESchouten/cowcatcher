@@ -150,7 +150,7 @@ def build_identity_stage(
     primary_runner: YoloRunner,
 ) -> IdentityStage:
     from aidetector.reid.identity_catalog import IdentityCatalog
-    from aidetector.reid.miewid import build_miewid_encoder
+    from aidetector.reid.miewid import MiewIdEncoder
     from aidetector.reid.stage import IdentityStage
 
     available_labels = {
@@ -164,12 +164,7 @@ def build_identity_stage(
 
     return IdentityStage(
         target_label=config.target_label,
-        zone=(
-            config.zone.x1,
-            config.zone.y1,
-            config.zone.x2,
-            config.zone.y2,
-        ),
-        encoder=build_miewid_encoder(),
+        margin=config.margin,
+        encoder=MiewIdEncoder(),
         catalog=IdentityCatalog(config.database),
     )

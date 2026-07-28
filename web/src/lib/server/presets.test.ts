@@ -5,12 +5,7 @@ import { decodePresetBlob, validatePreset, validateResolvedDetector } from './pr
 const identity = {
 	target_label: 'cow',
 	database: 'identities/cows.sqlite',
-	zone: {
-		x1: 0.2,
-		y1: 0.2,
-		x2: 0.8,
-		y2: 0.8
-	}
+	margin: 0.2
 };
 
 describe('remote preset validation', () => {
@@ -41,9 +36,9 @@ describe('remote preset validation', () => {
 		expect(() =>
 			validatePreset('identity', {
 				...identity,
-				zone: { ...identity.zone, x2: 0.2 }
+				margin: 0.5
 			})
-		).toThrow('positive extent');
+		).toThrow('must be < 0.5');
 	});
 
 	it('decodes a GitHub preset', () => {
@@ -78,9 +73,9 @@ describe('remote preset validation', () => {
 				},
 				identity: {
 					...identity,
-					zone: { ...identity.zone, y2: 0.2 }
+					margin: -0.1
 				}
 			})
-		).toThrow('positive extent');
+		).toThrow('must be >= 0');
 	});
 });

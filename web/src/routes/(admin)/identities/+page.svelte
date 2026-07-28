@@ -9,7 +9,6 @@
 	import { Input } from '$lib/components/ui/input';
 	import * as NativeSelect from '$lib/components/ui/native-select';
 	import * as Sheet from '$lib/components/ui/sheet';
-	import * as Table from '$lib/components/ui/table';
 	import { Textarea } from '$lib/components/ui/textarea';
 	import {
 		addOfficialIdentity,
@@ -20,7 +19,6 @@
 		getIdentityCatalogs,
 		mergeIdentityEvidence,
 		provisionIdentity,
-		rollbackIdentity,
 		splitIdentityEvidence
 	} from '$lib/remote/identity.remote';
 	import type { IdentityCatalogView } from '$lib/remote/identity.remote';
@@ -36,7 +34,6 @@
 	import RefreshIcon from '@lucide/svelte/icons/refresh-cw';
 	import ScissorsIcon from '@lucide/svelte/icons/scissors';
 	import SearchIcon from '@lucide/svelte/icons/search';
-	import UndoIcon from '@lucide/svelte/icons/undo-2';
 
 	const catalogsQuery = getIdentityCatalogs();
 	const catalogs = $derived(await catalogsQuery);
@@ -86,7 +83,7 @@
 		})
 	);
 	const reviewVisuals = $derived(
-		(snapshot?.visualIdentities ?? []).filter((identity) => identity.mappingId === null)
+		(snapshot?.visualIdentities ?? []).filter((identity) => identity.mappingState === null)
 	);
 	const selectedOfficial = $derived(
 		snapshot?.officialIdentities.find((identity) => identity.officialId === selectedOfficialId) ??
@@ -243,14 +240,14 @@
 	}
 
 	async function confirm(trackletId: string) {
-		if (!catalog || !selectedVisual?.mappingId) return;
+		if (!catalog || selectedVisual?.mappingState !== 'provisional') return;
 		await mutate(
 			`confirm:${trackletId}`,
 			() =>
 				confirmIdentity({
 					catalogId: catalog.catalogId,
 					expectedRevision: revision,
-					mappingId: selectedVisual.mappingId!,
+					visualIdentityId: selectedVisual.visualIdentityId,
 					confirmationTrackletId: trackletId
 				}).updates(catalogsQuery),
 			'Could not confirm the mapping.'
@@ -258,7 +255,12 @@
 	}
 
 	async function correct() {
-		if (!catalog || !selectedVisual?.mappingId || !correctionOfficialId || !correctionTrackletId) {
+		if (
+			!catalog ||
+			!selectedVisual?.mappingState ||
+			!correctionOfficialId ||
+			!correctionTrackletId
+		) {
 			return;
 		}
 		await mutate(
@@ -267,7 +269,7 @@
 				correctIdentity({
 					catalogId: catalog.catalogId,
 					expectedRevision: revision,
-					mappingId: selectedVisual.mappingId!,
+					visualIdentityId: selectedVisual.visualIdentityId,
 					officialId: correctionOfficialId,
 					provisionalTrackletId: correctionTrackletId
 				}).updates(catalogsQuery),
@@ -276,7 +278,7 @@
 	}
 
 	async function deactivate() {
-		if (!catalog || !selectedVisual?.mappingId) return;
+		if (!catalog || !selectedVisual?.mappingState) return;
 		if (
 			!window.confirm('Deactivate this identity mapping? Identity output will stop until remapped.')
 		) {
@@ -288,24 +290,9 @@
 				deactivateIdentity({
 					catalogId: catalog.catalogId,
 					expectedRevision: revision,
-					mappingId: selectedVisual.mappingId!
+					visualIdentityId: selectedVisual.visualIdentityId
 				}).updates(catalogsQuery),
 			'Could not deactivate the mapping.'
-		);
-	}
-
-	async function rollback() {
-		if (!catalog || !selectedVisual?.mappingId) return;
-		if (!window.confirm('Roll back this mapping change?')) return;
-		await mutate(
-			'rollback-mapping',
-			() =>
-				rollbackIdentity({
-					catalogId: catalog.catalogId,
-					expectedRevision: revision,
-					mappingId: selectedVisual.mappingId!
-				}).updates(catalogsQuery),
-			'Could not roll back the mapping.'
 		);
 	}
 
@@ -539,97 +526,43 @@
 					</div>
 				</div>
 			</Card.Header>
-			<Card.Content class="p-0" aria-labelledby="catalog-title">
-				<div class="hidden md:block">
-					<Table.Root>
-						<Table.Header>
-							<Table.Row>
-								<Table.Head class="w-20">Evidence</Table.Head>
-								<Table.Head>{officialIdLabel}</Table.Head>
-								<Table.Head>Name</Table.Head>
-								<Table.Head>Identity state</Table.Head>
-								<Table.Head>Last seen</Table.Head>
-								<Table.Head class="w-16"></Table.Head>
-							</Table.Row>
-						</Table.Header>
-						<Table.Body>
-							{#each visibleOfficials as official (official.officialId)}
-								<Table.Row>
-									<Table.Cell>
-										{#if official.preview}
-											<img
-												src={official.preview}
-												alt=""
-												class="size-12 rounded-md bg-muted object-cover"
-											/>
-										{:else}
-											<div class="size-12 rounded-md bg-muted"></div>
-										{/if}
-									</Table.Cell>
-									<Table.Cell class="font-medium">{official.officialId}</Table.Cell>
-									<Table.Cell>{official.displayName ?? '—'}</Table.Cell>
-									<Table.Cell>
-										<Badge
-											variant={official.mappingState === 'confirmed'
-												? 'default'
-												: official.mappingState === 'provisional'
-													? 'secondary'
-													: 'outline'}
-										>
-											{mappingLabel(official.mappingState)}
-										</Badge>
-									</Table.Cell>
-									<Table.Cell class="text-sm text-muted-foreground">
-										{lastSeen(official.visualIdentityId)}
-									</Table.Cell>
-									<Table.Cell>
-										<Button
-											variant="ghost"
-											size="icon-sm"
-											aria-label={`Open ${official.officialId}`}
-											onclick={() => openOfficial(official.officialId, official.visualIdentityId)}
-										>
-											<ArrowRightIcon />
-										</Button>
-									</Table.Cell>
-								</Table.Row>
-							{:else}
-								<Table.Row>
-									<Table.Cell colspan={6} class="h-24 text-center text-muted-foreground">
-										No official {plural} found.
-									</Table.Cell>
-								</Table.Row>
-							{/each}
-						</Table.Body>
-					</Table.Root>
-				</div>
-
-				<div class="grid gap-2 border-t p-3 md:hidden">
-					{#each visibleOfficials as official (official.officialId)}
-						<button
-							class="flex w-full items-center gap-3 rounded-md border p-3 text-left transition-colors hover:bg-muted/50"
-							onclick={() => openOfficial(official.officialId, official.visualIdentityId)}
-						>
-							{#if official.preview}
-								<img src={official.preview} alt="" class="size-14 rounded-md object-cover" />
-							{:else}
-								<div class="size-14 rounded-md bg-muted"></div>
-							{/if}
-							<span class="min-w-0 flex-1">
-								<span class="block truncate text-sm font-medium">{official.officialId}</span>
-								<span class="block truncate text-xs text-muted-foreground">
-									{official.displayName ?? `Unnamed ${singular}`}
-								</span>
-								<span class="mt-1 block text-xs">{mappingLabel(official.mappingState)}</span>
+			<Card.Content class="divide-y p-0" aria-labelledby="catalog-title">
+				{#each visibleOfficials as official (official.officialId)}
+					<button
+						class="grid w-full grid-cols-[3.5rem_minmax(0,1fr)_auto] items-center gap-3 p-3 text-left transition-colors hover:bg-muted/50 sm:grid-cols-[3.5rem_minmax(0,1fr)_minmax(10rem,auto)_auto]"
+						onclick={() => openOfficial(official.officialId, official.visualIdentityId)}
+					>
+						{#if official.preview}
+							<img src={official.preview} alt="" class="size-14 rounded-md object-cover" />
+						{:else}
+							<span class="size-14 rounded-md bg-muted"></span>
+						{/if}
+						<span class="min-w-0">
+							<span class="block truncate text-sm font-medium">{official.officialId}</span>
+							<span class="block truncate text-xs text-muted-foreground">
+								{official.displayName ?? `Unnamed ${singular}`}
 							</span>
-							<ArrowRightIcon class="size-4 text-muted-foreground" />
-						</button>
-					{:else}
-						<p class="py-8 text-center text-sm text-muted-foreground">
-							No official {plural} found.
-						</p>
-					{/each}
-				</div>
+							<Badge
+								class="mt-1"
+								variant={official.mappingState === 'confirmed'
+									? 'default'
+									: official.mappingState === 'provisional'
+										? 'secondary'
+										: 'outline'}
+							>
+								{mappingLabel(official.mappingState)}
+							</Badge>
+						</span>
+						<span class="hidden text-xs text-muted-foreground sm:block">
+							{lastSeen(official.visualIdentityId)}
+						</span>
+						<ArrowRightIcon class="size-4 text-muted-foreground" />
+					</button>
+				{:else}
+					<p class="py-8 text-center text-sm text-muted-foreground">
+						No official {plural} found.
+					</p>
+				{/each}
 			</Card.Content>
 		</Card.Root>
 	{/if}
@@ -806,13 +739,13 @@
 							</code>
 						</div>
 
-						{#if selectedVisual.mappingId}
+						{#if selectedVisual.mappingState}
 							<section class="space-y-2">
 								<h4 class="text-sm font-semibold">Correct mapping</h4>
 								<div class="grid gap-2">
 									<NativeSelect.Root bind:value={correctionOfficialId} class="w-full">
 										<NativeSelect.Option value="">Choose another official ID</NativeSelect.Option>
-										{#each activeOfficials.filter((official) => official.officialId !== selectedVisual?.officialId && !official.mappingId) as official (official.officialId)}
+										{#each activeOfficials.filter((official) => official.officialId !== selectedVisual?.officialId && !official.mappingState) as official (official.officialId)}
 											<NativeSelect.Option value={official.officialId}>
 												{official.officialId}
 											</NativeSelect.Option>
@@ -834,14 +767,9 @@
 									</Button>
 								</div>
 							</section>
-							<div class="grid grid-cols-2 gap-2">
-								<Button variant="outline" onclick={deactivate}>
-									<ArchiveIcon /> Deactivate
-								</Button>
-								<Button variant="outline" onclick={rollback}>
-									<UndoIcon /> Roll back
-								</Button>
-							</div>
+							<Button variant="outline" class="w-full" onclick={deactivate}>
+								<ArchiveIcon /> Deactivate
+							</Button>
 						{:else}
 							<section class="space-y-2">
 								<h4 class="text-sm font-semibold">Merge visual evidence</h4>

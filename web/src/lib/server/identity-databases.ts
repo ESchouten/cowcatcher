@@ -4,7 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import type { AppConfig, Config } from '$lib/schema';
 import { APP_CONFIG_PATH, CONFIG_PATH, resolveWithinDirectory } from './shared-paths';
 
-export const IDENTITY_SCHEMA_VERSION = 2;
+export const IDENTITY_SCHEMA_VERSION = 3;
 export const IDENTITY_BUSY_TIMEOUT_MS = 5_000;
 
 export interface IdentityDatabaseConfig {

@@ -12,12 +12,7 @@ def identity_fragment() -> dict:
     return {
         "target_label": "cow",
         "database": "identities/cows.sqlite",
-        "zone": {
-            "x1": 0.2,
-            "y1": 0.2,
-            "x2": 0.8,
-            "y2": 0.8,
-        },
+        "margin": 0.2,
     }
 
 
@@ -46,12 +41,7 @@ def test_cow_identity_preset_is_minimal():
     assert preset == identity_fragment()
     assert config.target_label == "cow"
     assert config.database == Path("identities/cows.sqlite")
-    assert (config.zone.x1, config.zone.y1, config.zone.x2, config.zone.y2) == (
-        0.2,
-        0.2,
-        0.8,
-        0.8,
-    )
+    assert config.margin == 0.2
 
 
 def test_cow_detector_preset_only_contains_detector_defaults():
@@ -134,9 +124,9 @@ def test_identity_requires_tracking_and_enabled_target_label():
         )
 
 
-def test_identity_zone_must_have_positive_extent() -> None:
+def test_identity_margin_must_leave_a_zone() -> None:
     fragment = identity_fragment()
-    fragment["zone"]["x2"] = 0.2
+    fragment["margin"] = 0.5
 
     with pytest.raises(ValidationError):
         IdentityConfig(**fragment)

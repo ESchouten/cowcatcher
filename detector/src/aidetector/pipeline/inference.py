@@ -121,18 +121,22 @@ class FrameProcessor:
         observations = self.inference.runner.observations_from_result(result, frames)
         source_id = self.source_ids[source]
         if observations:
-            observations[-1] = self.identity_stage.enrich(
-                source,
-                observations[-1],
-            )
+            observations[-1] = self._enrich(source, observations[-1])
             self._publish(LiveObservation(source_id, observations[-1]))
             self._submit(self.inference.events.add(source_id, observations))
             return
 
         trailing = [Observation(frame) for frame in frames]
-        trailing[-1] = self.identity_stage.enrich(source, trailing[-1])
+        trailing[-1] = self._enrich(source, trailing[-1])
         self._publish(LiveObservation(source_id, trailing[-1]))
         self._submit(self.inference.events.add_trailing(source_id, trailing))
+
+    def _enrich(self, source: str, observation: Observation) -> Observation:
+        try:
+            return self.identity_stage.enrich(source, observation)
+        except Exception:
+            self.logger.exception("Identity enrichment failed for %s", source)
+            return observation
 
     def _publish(self, message: LiveObservation) -> None:
         for sink in self.live_sinks:

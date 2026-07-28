@@ -8,9 +8,9 @@ import {
 	correctMapping,
 	createOfficialIdentity,
 	createProvisionalMapping,
+	deactivateMapping,
 	mergeVisualIdentities,
 	readIdentityCatalog,
-	rollbackMapping,
 	splitVisualIdentity
 } from './identity-catalog';
 
@@ -32,57 +32,32 @@ function visualIdentity(
 	tracklets: Array<{ id: string; evidence?: number }>
 ): void {
 	database
-		.prepare(
-			`INSERT INTO visual_identities (
-				visual_identity_id, status, created_at, updated_at
-			) VALUES (?, 'pending', ?, ?)`
-		)
-		.run(visualIdentityId, TIMESTAMP, TIMESTAMP);
+		.prepare('INSERT INTO visual_identities (visual_identity_id) VALUES (?)')
+		.run(visualIdentityId);
 	for (const [index, tracklet] of tracklets.entries()) {
 		database
 			.prepare(
 				`INSERT INTO tracklets (
-					tracklet_id, run_id, source, track_id,
-					first_captured_at, last_captured_at, observation_count,
-					evidence_status, preview_jpeg, created_at, updated_at
-				) VALUES (?, ?, 'camera', ?, ?, ?, 4, 'eligible', ?, ?, ?)`
+					tracklet_id, source, last_captured_at,
+					evidence_status, preview_jpeg
+				) VALUES (?, 'camera', ?, 'eligible', ?)`
 			)
-			.run(
-				tracklet.id,
-				visualIdentityId,
-				index + 1,
-				TIMESTAMP,
-				TIMESTAMP,
-				Buffer.from([0xff, 0xd8, index, 0xff, 0xd9]),
-				TIMESTAMP,
-				TIMESTAMP
-			);
+			.run(tracklet.id, TIMESTAMP, Buffer.from([0xff, 0xd8, index, 0xff, 0xd9]));
 		database
 			.prepare(
 				`INSERT INTO visual_identity_tracklets (
-					tracklet_id, visual_identity_id, assignment_kind, assigned_at
-				) VALUES (?, ?, 'initial', ?)`
+					tracklet_id, visual_identity_id
+				) VALUES (?, ?)`
 			)
-			.run(tracklet.id, visualIdentityId, TIMESTAMP);
+			.run(tracklet.id, visualIdentityId);
 		for (let frame = 0; frame < (tracklet.evidence ?? 2); frame += 1) {
 			database
 				.prepare(
 					`INSERT INTO evidence_frames (
-						evidence_id, tracklet_id, frame_index, captured_at,
-						image_sha256, preview_jpeg, embedding,
-						embedding_dimension, quality, created_at
-					) VALUES (?, ?, ?, ?, ?, ?, ?, 2, 1.0, ?)`
+						tracklet_id, frame_index, embedding
+					) VALUES (?, ?, ?)`
 				)
-				.run(
-					`evd_${tracklet.id.slice(4)}_${frame}`,
-					tracklet.id,
-					frame,
-					TIMESTAMP,
-					'0'.repeat(64),
-					Buffer.from([0xff, 0xd8, frame, 0xff, 0xd9]),
-					Buffer.alloc(8),
-					TIMESTAMP
-				);
+				.run(tracklet.id, frame, Buffer.alloc(8));
 		}
 	}
 }
@@ -91,7 +66,7 @@ afterEach(() => {
 	while (openDatabases.length) openDatabases.pop()?.close();
 });
 
-describe('generic identity catalog operator transactions', () => {
+describe('identity catalog operator transactions', () => {
 	it('keeps the first mapping provisional', () => {
 		const database = databaseFixture();
 		visualIdentity(database, 'vid_alpha', [{ id: 'trk_alpha_1' }]);
@@ -101,7 +76,7 @@ describe('generic identity catalog operator transactions', () => {
 			{ expectedRevision: 0 }
 		);
 
-		const mappingId = createProvisionalMapping(
+		createProvisionalMapping(
 			database,
 			{
 				visualIdentityId: 'vid_alpha',
@@ -113,11 +88,9 @@ describe('generic identity catalog operator transactions', () => {
 
 		const catalog = readIdentityCatalog(database);
 		expect(catalog.control.operatorRevision).toBe(2);
-		expect(catalog.control.activeGalleryVersion).toBeNull();
 		expect(catalog.officialIdentities[0]).toMatchObject({
 			officialId: 'NL-001',
 			displayName: 'Ada',
-			mappingId,
 			mappingState: 'provisional'
 		});
 	});
@@ -126,7 +99,7 @@ describe('generic identity catalog operator transactions', () => {
 		const database = databaseFixture();
 		visualIdentity(database, 'vid_beta', [{ id: 'trk_beta_1' }, { id: 'trk_beta_2', evidence: 1 }]);
 		createOfficialIdentity(database, { officialId: 'NL-002' }, { expectedRevision: 0 });
-		const mappingId = createProvisionalMapping(
+		createProvisionalMapping(
 			database,
 			{ visualIdentityId: 'vid_beta', officialId: 'NL-002', trackletId: 'trk_beta_1' },
 			{ expectedRevision: 1 }
@@ -135,19 +108,15 @@ describe('generic identity catalog operator transactions', () => {
 		expect(() =>
 			confirmMapping(
 				database,
-				{ mappingId, confirmationTrackletId: 'trk_beta_1' },
-				{
-					expectedRevision: 2
-				}
+				{ visualIdentityId: 'vid_beta', confirmationTrackletId: 'trk_beta_1' },
+				{ expectedRevision: 2 }
 			)
 		).toThrow('distinct tracklet');
 		expect(() =>
 			confirmMapping(
 				database,
-				{ mappingId, confirmationTrackletId: 'trk_beta_2' },
-				{
-					expectedRevision: 2
-				}
+				{ visualIdentityId: 'vid_beta', confirmationTrackletId: 'trk_beta_2' },
+				{ expectedRevision: 2 }
 			)
 		).toThrow('needs 2 eligible evidence frames');
 		expect(readIdentityCatalog(database).control.operatorRevision).toBe(2);
@@ -155,37 +124,33 @@ describe('generic identity catalog operator transactions', () => {
 		database
 			.prepare(
 				`INSERT INTO evidence_frames (
-					evidence_id, tracklet_id, frame_index, captured_at,
-					image_sha256, preview_jpeg, embedding,
-					embedding_dimension, quality, created_at
-				) VALUES ('evd_beta_2_1', 'trk_beta_2', 1, ?, ?, ?, ?, 2, 1.0, ?)`
+					tracklet_id, frame_index, embedding
+				) VALUES ('trk_beta_2', 1, ?)`
 			)
-			.run(TIMESTAMP, '1'.repeat(64), Buffer.from([0xff]), Buffer.alloc(8), TIMESTAMP);
+			.run(Buffer.alloc(8));
 		confirmMapping(
 			database,
-			{ mappingId, confirmationTrackletId: 'trk_beta_2' },
-			{
-				expectedRevision: 2
-			}
+			{ visualIdentityId: 'vid_beta', confirmationTrackletId: 'trk_beta_2' },
+			{ expectedRevision: 2 }
 		);
 
 		expect(readIdentityCatalog(database).officialIdentities[0].mappingState).toBe('confirmed');
 	});
 
-	it('corrects to a provisional mapping and rolls back to the prior mapping', () => {
+	it('corrects the current mapping and can deactivate it', () => {
 		const database = databaseFixture();
 		visualIdentity(database, 'vid_gamma', [{ id: 'trk_gamma_1' }]);
 		createOfficialIdentity(database, { officialId: 'NL-003' }, { expectedRevision: 0 });
 		createOfficialIdentity(database, { officialId: 'NL-004' }, { expectedRevision: 1 });
-		const firstMapping = createProvisionalMapping(
+		createProvisionalMapping(
 			database,
 			{ visualIdentityId: 'vid_gamma', officialId: 'NL-003', trackletId: 'trk_gamma_1' },
 			{ expectedRevision: 2 }
 		);
-		const correction = correctMapping(
+		correctMapping(
 			database,
 			{
-				mappingId: firstMapping,
+				visualIdentityId: 'vid_gamma',
 				officialId: 'NL-004',
 				provisionalTrackletId: 'trk_gamma_1'
 			},
@@ -197,11 +162,12 @@ describe('generic identity catalog operator transactions', () => {
 				expect.objectContaining({ officialId: 'NL-004', mappingState: 'provisional' })
 			])
 		);
-		expect(rollbackMapping(database, correction, { expectedRevision: 4 })).toBe(firstMapping);
-		const restored = database
-			.prepare(`SELECT state FROM mappings WHERE mapping_id = ?`)
-			.get(firstMapping) as { state: string };
-		expect(restored.state).toBe('provisional');
+		expect(
+			(database.prepare('SELECT COUNT(*) AS count FROM mappings').get() as { count: number }).count
+		).toBe(1);
+
+		deactivateMapping(database, 'vid_gamma', { expectedRevision: 4 });
+		expect(readIdentityCatalog(database).visualIdentities[0].mappingState).toBeNull();
 	});
 
 	it('fails a stale concurrent operator revision without partial writes', () => {
@@ -213,7 +179,7 @@ describe('generic identity catalog operator transactions', () => {
 		).toThrow('changed');
 		expect(
 			(
-				database.prepare(`SELECT COUNT(*) AS count FROM official_identities`).get() as {
+				database.prepare('SELECT COUNT(*) AS count FROM official_identities').get() as {
 					count: number;
 				}
 			).count
@@ -238,22 +204,12 @@ describe('generic identity catalog operator transactions', () => {
 			(
 				database
 					.prepare(
-						`SELECT status, merged_into_visual_identity_id
+						`SELECT merged_into_visual_identity_id
 						 FROM visual_identities WHERE visual_identity_id = 'vid_merge_source'`
 					)
-					.get() as { status: string; merged_into_visual_identity_id: string }
-			).status
-		).toBe('merged');
-		expect(
-			(
-				database
-					.prepare(
-						`SELECT COUNT(*) AS count FROM visual_identity_tracklets
-						 WHERE visual_identity_id = 'vid_merge_target'`
-					)
-					.get() as { count: number }
-			).count
-		).toBe(3);
+					.get() as { merged_into_visual_identity_id: string }
+			).merged_into_visual_identity_id
+		).toBe('vid_merge_target');
 
 		const split = splitVisualIdentity(
 			database,
@@ -262,13 +218,15 @@ describe('generic identity catalog operator transactions', () => {
 		);
 		expect(split).toMatch(/^vid_/);
 		expect(
-			database
-				.prepare(
-					`SELECT assignment_kind
+			(
+				database
+					.prepare(
+						`SELECT visual_identity_id
 						 FROM visual_identity_tracklets WHERE tracklet_id = 'trk_merge_2'`
-				)
-				.get() as { assignment_kind: string }
-		).toMatchObject({ assignment_kind: 'human_split' });
+					)
+					.get() as { visual_identity_id: string }
+			).visual_identity_id
+		).toBe(split);
 		expect(readIdentityCatalog(database).control.operatorRevision).toBe(2);
 	});
 });

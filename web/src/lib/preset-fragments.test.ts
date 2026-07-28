@@ -11,12 +11,7 @@ describe('detector preset fragments', () => {
 			identity: {
 				target_label: 'cow',
 				database: 'identities/cows.sqlite',
-				zone: {
-					x1: 0.2,
-					y1: 0.2,
-					x2: 0.8,
-					y2: 0.8
-				}
+				margin: 0.2
 			},
 			exporters: { sse: [{ port: 8765 }] }
 		} satisfies DetectorConfig;

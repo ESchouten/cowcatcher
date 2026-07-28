@@ -436,53 +436,19 @@
           "title": "Target Label",
           "type": "string"
         },
-        "zone": {
-          "$ref": "#/$defs/IdentityZoneConfig"
+        "margin": {
+          "exclusiveMaximum": 0.5,
+          "minimum": 0,
+          "title": "Margin",
+          "type": "number"
         }
       },
       "required": [
         "database",
         "target_label",
-        "zone"
+        "margin"
       ],
       "title": "IdentityConfig",
-      "type": "object"
-    },
-    "IdentityZoneConfig": {
-      "additionalProperties": false,
-      "properties": {
-        "x1": {
-          "maximum": 1,
-          "minimum": 0,
-          "title": "X1",
-          "type": "number"
-        },
-        "y1": {
-          "maximum": 1,
-          "minimum": 0,
-          "title": "Y1",
-          "type": "number"
-        },
-        "x2": {
-          "maximum": 1,
-          "minimum": 0,
-          "title": "X2",
-          "type": "number"
-        },
-        "y2": {
-          "maximum": 1,
-          "minimum": 0,
-          "title": "Y2",
-          "type": "number"
-        }
-      },
-      "required": [
-        "x1",
-        "y1",
-        "x2",
-        "y2"
-      ],
-      "title": "IdentityZoneConfig",
       "type": "object"
     },
     "OnnxConfig": {

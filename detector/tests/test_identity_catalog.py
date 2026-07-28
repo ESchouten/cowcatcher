@@ -15,22 +15,19 @@ from aidetector.reid.identity_catalog import (
 
 def configure(catalog: IdentityCatalog) -> None:
     catalog.configure_runtime(
-        encoder_key="miewid-dual-crop-v1",
+        encoder_signature="miewid-test",
         embedding_dimension=2,
-        configuration_sha256="a" * 64,
     )
 
 
 def record(catalog: IdentityCatalog, frame_index: int = 0):
     return catalog.record_evidence(
-        run_id="visit-1",
+        tracklet_id="trk_visit_1",
         source="camera-1",
-        track_id=7,
         frame_index=frame_index,
         captured_at=datetime(2026, 7, 24, frame_index, tzinfo=timezone.utc),
         preview_jpeg=b"\xff\xd8preview\xff\xd9",
         embedding=np.asarray((1.0, 0.0), dtype=np.float32),
-        observation_count=frame_index + 1,
         evidence_status="insufficient",
     )
 
@@ -59,23 +56,22 @@ def test_evidence_is_blob_backed_and_becomes_eligible_after_two_frames(
 ):
     with IdentityCatalog(tmp_path / "catalog.sqlite") as catalog:
         configure(catalog)
-        stored = record(catalog)
-        stored = record(catalog, 1)
+        record(catalog)
+        record(catalog, 1)
 
         evidence = catalog.connection.execute(
             """
-            SELECT typeof(preview_jpeg), typeof(embedding), length(embedding)
+            SELECT typeof(embedding), length(embedding)
             FROM evidence_frames
-            WHERE tracklet_id = ? AND frame_index = 1
+            WHERE tracklet_id = 'trk_visit_1' AND frame_index = 1
             """,
-            (stored.tracklet_id,),
         ).fetchone()
-        assert tuple(evidence) == ("blob", "blob", 8)
+        assert tuple(evidence) == ("blob", 8)
 
-        catalog.finalize_tracklet(stored.tracklet_id, evidence_status="eligible")
+        catalog.finalize_tracklet("trk_visit_1", evidence_status="eligible")
         status = catalog.connection.execute(
             "SELECT evidence_status FROM tracklets WHERE tracklet_id = ?",
-            (stored.tracklet_id,),
+            ("trk_visit_1",),
         ).fetchone()[0]
         assert status == "eligible"
 
@@ -83,9 +79,9 @@ def test_evidence_is_blob_backed_and_becomes_eligible_after_two_frames(
 def test_switch_risk_evidence_cannot_be_promoted(tmp_path: Path):
     with IdentityCatalog(tmp_path / "catalog.sqlite") as catalog:
         configure(catalog)
-        stored = record(catalog)
+        record(catalog)
         record(catalog, 1)
-        catalog.mark_tracklet_switch_risk(stored.tracklet_id)
+        catalog.mark_tracklet_switch_risk("trk_visit_1")
 
         with pytest.raises(IdentityCatalogError, match="Switch-risk"):
-            catalog.finalize_tracklet(stored.tracklet_id, evidence_status="eligible")
+            catalog.finalize_tracklet("trk_visit_1", evidence_status="eligible")

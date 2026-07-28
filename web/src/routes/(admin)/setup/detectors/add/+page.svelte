@@ -483,62 +483,19 @@
 					<Label for="identity-label">Target label</Label>
 					<Input id="identity-label" required bind:value={detector.identity.target_label} />
 				</div>
-				<div class="space-y-4 rounded-md border p-4 sm:col-span-2">
-					<div class="space-y-1">
-						<p class="text-sm font-medium">Controlled observation zone</p>
-						<p class="text-xs text-muted-foreground">
-							Only one tracked target inside this normalized rectangle can produce identity
-							evidence. Calibrate it for the selected camera before use.
-						</p>
-					</div>
-					<div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
-						<div class="flex flex-col gap-2">
-							<Label for="identity-zone-x1">Left</Label>
-							<Input
-								id="identity-zone-x1"
-								type="number"
-								min="0"
-								max="1"
-								step="0.01"
-								bind:value={detector.identity.zone.x1}
-							/>
-						</div>
-						<div class="flex flex-col gap-2">
-							<Label for="identity-zone-y1">Top</Label>
-							<Input
-								id="identity-zone-y1"
-								type="number"
-								min="0"
-								max="1"
-								step="0.01"
-								bind:value={detector.identity.zone.y1}
-							/>
-						</div>
-						<div class="flex flex-col gap-2">
-							<Label for="identity-zone-x2">Right</Label>
-							<Input
-								id="identity-zone-x2"
-								type="number"
-								min="0"
-								max="1"
-								step="0.01"
-								bind:value={detector.identity.zone.x2}
-							/>
-						</div>
-						<div class="flex flex-col gap-2">
-							<Label for="identity-zone-y2">Bottom</Label>
-							<Input
-								id="identity-zone-y2"
-								type="number"
-								min="0"
-								max="1"
-								step="0.01"
-								bind:value={detector.identity.zone.y2}
-							/>
-						</div>
-					</div>
+				<div class="flex flex-col gap-2">
+					<Label for="identity-margin">Observation margin</Label>
+					<Input
+						id="identity-margin"
+						type="number"
+						min="0"
+						max="0.49"
+						step="0.01"
+						bind:value={detector.identity.margin}
+					/>
 					<p class="text-xs text-muted-foreground">
-						Use separate detector entries when cameras need different zone geometry.
+						Fraction excluded from every frame edge. Only one tracked target inside can produce
+						identity evidence.
 					</p>
 				</div>
 			</div>

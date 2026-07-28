@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import uuid
 from collections import defaultdict
 from collections.abc import Sequence
@@ -12,37 +11,31 @@ from numpy import ndarray
 
 from aidetector.domain.detections import DetectedObject, Observation
 from aidetector.domain.identity import IdentityResult
+from aidetector.domain.vectors import normalized_mean
 from aidetector.reid.identity_catalog import (
     GalleryIdentity,
     GallerySnapshot,
     IdentityCatalog,
 )
 from aidetector.reid.miewid import (
-    MODEL_KEY,
-    MODEL_VERSION,
+    MODEL_SIGNATURE,
     MiewIdEncoder,
-    normalized_prototype,
 )
 from aidetector.reid.zone import ZoneGate, ZoneVisit
 
 PREVIEW_JPEG_QUALITY = 90
 MIN_AREA_RATIO = 0.005
 MAX_AREA_RATIO = 0.3
-FRAME_EDGE_MARGIN = 0.2
 SIMILARITY_THRESHOLD = 0.75
 SIMILARITY_MARGIN = 0.05
 QUERY_FRAMES = 2
 TRACK_MAX_AGE = 10
-CONFIGURATION_SHA256 = hashlib.sha256(
-    f"{MODEL_VERSION}|dual-crop|gallery={QUERY_FRAMES * 2}".encode()
-).hexdigest()
 
 
 @dataclass(slots=True)
 class _TrackState:
-    tracklet_run_id: str
+    tracklet_id: str
     last_frame: int
-    catalog_tracklet_id: str | None = None
     observation_count: int = 0
     query_embeddings: list[ndarray] = field(default_factory=list)
     visual_identity_id: str | None = None
@@ -66,28 +59,22 @@ class IdentityStage:
         self,
         *,
         target_label: str,
-        zone: tuple[float, float, float, float],
+        margin: float,
         encoder: MiewIdEncoder,
         catalog: IdentityCatalog,
     ):
         self.target_label = target_label
         self.encoder = encoder
         self.catalog = catalog
-        self._run_id = uuid.uuid4().hex
-        self._zone_gate = ZoneGate(zone)
+        self._zone_gate = ZoneGate(margin)
         self._gallery: GallerySnapshot | None = None
         self._frame_by_source: defaultdict[str, int] = defaultdict(int)
         self._tracks: defaultdict[str, dict[int, _TrackState]] = defaultdict(dict)
 
-    @property
-    def gallery_version(self) -> int | None:
-        return self._gallery.gallery_version if self._gallery is not None else None
-
     def start(self) -> None:
         self.catalog.configure_runtime(
-            encoder_key=MODEL_KEY,
+            encoder_signature=MODEL_SIGNATURE,
             embedding_dimension=self.encoder.feature_dim,
-            configuration_sha256=CONFIGURATION_SHA256,
         )
         self._reload_gallery()
 
@@ -147,7 +134,6 @@ class IdentityStage:
                         visual_identity_id=(
                             state.visual_identity_id if state is not None else None
                         ),
-                        gallery_version=self.gallery_version,
                     ),
                 )
                 continue
@@ -156,7 +142,6 @@ class IdentityStage:
                     item,
                     identity=IdentityResult(
                         status="insufficient_evidence",
-                        gallery_version=self.gallery_version,
                     ),
                 )
                 continue
@@ -166,7 +151,6 @@ class IdentityStage:
                     item,
                     identity=IdentityResult(
                         status="insufficient_evidence",
-                        gallery_version=self.gallery_version,
                     ),
                 )
                 continue
@@ -183,7 +167,7 @@ class IdentityStage:
             state = tracks.get(item.track_id)
             if state is None:
                 state = _TrackState(
-                    tracklet_run_id=f"{self._run_id}-{uuid.uuid4().hex[:12]}",
+                    tracklet_id=f"trk_{uuid.uuid4().hex}",
                     last_frame=frame_number,
                 )
                 tracks[item.track_id] = state
@@ -194,50 +178,41 @@ class IdentityStage:
             )
             score: GalleryScore | None = None
             if len(state.query_embeddings) == QUERY_FRAMES:
-                query = normalized_prototype(np.stack(state.query_embeddings))
+                query = normalized_mean(np.stack(state.query_embeddings))
                 state.query_embeddings.clear()
                 score = score_identity_query(query, self._gallery_identities())
-                state.result = decide_identity_score(score, self.gallery_version)
+                state.result = decide_identity_score(score)
                 if state.result.status == "matched":
                     matched = state.result.visual_identity_id
                     if (
                         state.last_matched_visual_identity_id is not None
                         and state.last_matched_visual_identity_id != matched
                     ):
-                        state.switch_risk = True
+                        self._mark_track_switch_risk(state)
                     state.last_matched_visual_identity_id = matched
-            preview = _encode_preview(bgr)
-            stored = self.catalog.record_evidence(
-                run_id=state.tracklet_run_id,
-                source=source,
-                track_id=item.track_id,
-                frame_index=min(
-                    state.observation_count - 1,
-                    QUERY_FRAMES - 1,
-                ),
-                captured_at=observation.frame.captured_at,
-                preview_jpeg=preview,
-                embedding=embedding,
-                observation_count=state.observation_count,
-                evidence_status=(
-                    "switch_risk" if state.switch_risk else "insufficient"
-                ),
-            )
-            state.catalog_tracklet_id = stored.tracklet_id
-            state.visual_identity_id = stored.visual_identity_id
+            if state.observation_count <= QUERY_FRAMES:
+                state.visual_identity_id = self.catalog.record_evidence(
+                    tracklet_id=state.tracklet_id,
+                    source=source,
+                    frame_index=state.observation_count - 1,
+                    captured_at=observation.frame.captured_at,
+                    preview_jpeg=_encode_preview(bgr),
+                    embedding=embedding,
+                    evidence_status=(
+                        "switch_risk" if state.switch_risk else "insufficient"
+                    ),
+                )
             if state.switch_risk:
                 result = IdentityResult(
                     status="switch_risk",
                     visual_identity_id=state.visual_identity_id,
                     similarity=(score.similarity if score is not None else None),
                     margin=score.margin if score is not None else None,
-                    gallery_version=self.gallery_version,
                 )
             elif state.result is None:
                 result = IdentityResult(
                     status="insufficient_evidence",
                     visual_identity_id=state.visual_identity_id,
-                    gallery_version=self.gallery_version,
                 )
             elif state.result.status in {"unknown", "ambiguous"}:
                 result = replace(
@@ -256,8 +231,8 @@ class IdentityStage:
         if state is None:
             return
         state.switch_risk = True
-        if state.catalog_tracklet_id is not None:
-            self.catalog.mark_tracklet_switch_risk(state.catalog_tracklet_id)
+        if state.visual_identity_id is not None:
+            self.catalog.mark_tracklet_switch_risk(state.tracklet_id)
 
     def _finalize_zone_visit(
         self,
@@ -269,14 +244,14 @@ class IdentityStage:
             return
         if visit.switch_risk:
             self._mark_track_switch_risk(state)
-        if state.catalog_tracklet_id is not None:
+        if state.visual_identity_id is not None:
             eligible = (
                 not visit.switch_risk
                 and not state.switch_risk
                 and state.observation_count >= QUERY_FRAMES
             )
             self.catalog.finalize_tracklet(
-                state.catalog_tracklet_id,
+                state.tracklet_id,
                 evidence_status="eligible" if eligible else "insufficient",
             )
         del tracks[visit.track_id]
@@ -285,10 +260,10 @@ class IdentityStage:
         self,
         state: _TrackState,
     ) -> None:
-        if state.catalog_tracklet_id is None:
+        if state.visual_identity_id is None:
             return
         self.catalog.finalize_tracklet(
-            state.catalog_tracklet_id,
+            state.tracklet_id,
             evidence_status="insufficient",
         )
 
@@ -300,7 +275,6 @@ class IdentityStage:
         if (
             self._gallery is None
             or self._gallery.operator_revision != control.operator_revision
-            or self._gallery.gallery_version != control.active_gallery_version
         ):
             self._reload_gallery()
 
@@ -308,7 +282,7 @@ class IdentityStage:
         gallery = self.catalog.gallery()
         changed = (
             self._gallery is None
-            or self._gallery.gallery_version != gallery.gallery_version
+            or self._gallery.operator_revision != gallery.operator_revision
         )
         self._gallery = gallery
         if changed:
@@ -343,13 +317,9 @@ def score_identity_query(
 
 def decide_identity_score(
     score: GalleryScore | None,
-    gallery_version: int | None,
 ) -> IdentityResult:
     if score is None:
-        return IdentityResult(
-            status="unknown",
-            gallery_version=gallery_version,
-        )
+        return IdentityResult(status="unknown")
     if score.similarity < SIMILARITY_THRESHOLD:
         status = "unknown"
     elif score.margin < SIMILARITY_MARGIN:
@@ -362,7 +332,6 @@ def decide_identity_score(
         official_id=score.official_id if status == "matched" else None,
         similarity=score.similarity,
         margin=score.margin,
-        gallery_version=gallery_version,
     )
 
 
@@ -378,13 +347,7 @@ def _candidate_crop(
     if x2 <= x1 or y2 <= y1:
         return None
     area_ratio = (x2 - x1) * (y2 - y1) / (width * height)
-    center_x = (x1 + x2) / 2
-    center_y = (y1 + y2) / 2
-    if not (
-        MIN_AREA_RATIO <= area_ratio <= MAX_AREA_RATIO
-        and width * FRAME_EDGE_MARGIN <= center_x <= width * (1 - FRAME_EDGE_MARGIN)
-        and height * FRAME_EDGE_MARGIN <= center_y <= height * (1 - FRAME_EDGE_MARGIN)
-    ):
+    if not MIN_AREA_RATIO <= area_ratio <= MAX_AREA_RATIO:
         return None
     bgr = np.ascontiguousarray(frame[y1:y2, x1:x2])
     rgb = np.ascontiguousarray(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))

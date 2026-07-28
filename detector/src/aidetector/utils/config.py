@@ -54,23 +54,11 @@ class YoloConfig:
     tracker: NonEmptyString = "bytetrack.yaml"
 
 
-@dataclass(config=STRICT_CONFIG, frozen=True, kw_only=True)
-class IdentityZoneConfig:
-    x1: Probability
-    y1: Probability
-    x2: Probability
-    y2: Probability
-
-    def __post_init__(self) -> None:
-        if self.x1 >= self.x2 or self.y1 >= self.y2:
-            raise ValueError("Identity zone must have positive extent")
-
-
 @dataclass(config=STRICT_CONFIG, kw_only=True)
 class IdentityConfig:
     database: Path
     target_label: NonEmptyString
-    zone: IdentityZoneConfig
+    margin: Annotated[float, Field(ge=0, lt=0.5)]
 
     def __post_init__(self) -> None:
         if self.database.is_absolute():

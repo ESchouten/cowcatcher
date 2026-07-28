@@ -30,10 +30,7 @@ export type Iou = number;
 export type Tracker = string;
 export type Database = string;
 export type TargetLabel = string;
-export type X1 = number;
-export type Y1 = number;
-export type X2 = number;
-export type Y2 = number;
+export type Margin = number;
 export type Vlm = VLMConfig | VLMConfig[] | null;
 export type Prompt = string;
 export type Model1 = string | [string, ...string[]];
@@ -155,13 +152,7 @@ export interface YoloConfig {
 export interface IdentityConfig {
 	database: Database;
 	target_label: TargetLabel;
-	zone: IdentityZoneConfig;
-}
-export interface IdentityZoneConfig {
-	x1: X1;
-	y1: Y1;
-	x2: X2;
-	y2: Y2;
+	margin: Margin;
 }
 export interface VLMConfig {
 	prompt: Prompt;

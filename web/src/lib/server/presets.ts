@@ -79,14 +79,7 @@ function validate(validator: ValidateFunction, value: unknown, label: string): v
 }
 
 function validateIdentity(value: unknown): void {
-	const identity = value as {
-		database?: string;
-		zone?: { x1: number; y1: number; x2: number; y2: number };
-	};
-	const zone = identity.zone;
-	if (zone && (zone.x1 >= zone.x2 || zone.y1 >= zone.y2)) {
-		throw new Error('Invalid identity preset: zone must have positive extent');
-	}
+	const identity = value as { database?: string };
 	if (identity.database && isAbsolutePath(identity.database)) {
 		throw new Error('Invalid identity preset: database path must be relative to config.json');
 	}

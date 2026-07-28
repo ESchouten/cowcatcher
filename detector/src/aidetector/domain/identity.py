@@ -19,4 +19,3 @@ class IdentityResult:
     official_id: str | None = None
     similarity: float | None = None
     margin: float | None = None
-    gallery_version: int | None = None
