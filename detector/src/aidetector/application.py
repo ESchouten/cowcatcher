@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from time import sleep
 from typing import TYPE_CHECKING
 
@@ -63,8 +64,10 @@ class Application:
             self.stop()
             raise
 
-    def wait(self) -> None:
+    def wait(self, stop_requested: Callable[[], bool] | None = None) -> bool:
         while True:
+            if stop_requested is not None and stop_requested():
+                return True
             failed = next(
                 (pipeline for pipeline in self.pipelines if pipeline.error is not None),
                 None,
@@ -74,7 +77,7 @@ class Application:
                     failed.error
                 )
             if not any(pipeline.is_alive for pipeline in self.pipelines):
-                return
+                return False
             sleep(0.1)
 
     def stop(self) -> None:

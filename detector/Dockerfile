@@ -1,6 +1,7 @@
 ARG TARGETARCH
 ARG ULTRALYTICS_TAG_AMD64=latest
 ARG ULTRALYTICS_TAG_ARM64=latest-nvidia-arm64
+ARG RUNTIME_TYPE=cuda
 
 FROM ultralytics/ultralytics:${ULTRALYTICS_TAG_AMD64} AS runtime-amd64
 FROM ultralytics/ultralytics:${ULTRALYTICS_TAG_ARM64} AS runtime-arm64
@@ -16,7 +17,8 @@ COPY . /app
 
 # Write version file with REF_NAME (defaults to "main" if not provided)
 ARG REF_NAME=main
-RUN echo "TYPE = \"cuda\"" > /app/src/aidetector/utils/version.py
+ARG RUNTIME_TYPE
+RUN echo "TYPE = \"${RUNTIME_TYPE}\"" > /app/src/aidetector/utils/version.py
 RUN echo "REF_NAME = \"${REF_NAME}\"" >> /app/src/aidetector/utils/version.py
 
 # Lock torch versions to prevent replacement by system packages

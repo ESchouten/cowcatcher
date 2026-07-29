@@ -11,6 +11,7 @@
 	import CircleCheckIcon from '@lucide/svelte/icons/circle-check';
 	import CircleIcon from '@lucide/svelte/icons/circle';
 	import PlusIcon from '@lucide/svelte/icons/plus';
+	import SparklesIcon from '@lucide/svelte/icons/sparkles';
 	import TvIcon from '@lucide/svelte/icons/tv';
 	import WrenchIcon from '@lucide/svelte/icons/wrench';
 	import type { Component } from 'svelte';
@@ -36,7 +37,6 @@
 	const hasTelegrams = $derived(telegrams.length > 0);
 	const hasDetectors = $derived(detectors.length > 0);
 	const setupDone = $derived(hasStreams && hasDetectors);
-	const nextStep = $derived(!hasStreams ? 'streams' : !hasDetectors ? 'detector' : 'done');
 	const steps = $derived<Step[]>([
 		{
 			title: 'Streams',
@@ -75,25 +75,10 @@
 			action: hasDetectors ? 'Add another' : 'Add detector'
 		}
 	]);
-	const current = $derived(steps.find((step) => step.status === 'recommended') ?? steps[2]);
-	const primaryHref = $derived(
-		nextStep === 'done'
-			? '/setup/detectors'
-			: nextStep === 'streams'
-				? '/setup/cameras/add'
-				: '/setup/detectors/add?setup=1'
-	);
-	const primaryLabel = $derived(
-		nextStep === 'done'
-			? 'View detectors'
-			: nextStep === 'streams'
-				? 'Add first stream'
-				: 'Add detector'
-	);
-	const primaryIcon = $derived(
-		nextStep === 'done' ? CheckIcon : nextStep === 'streams' ? TvIcon : WrenchIcon
-	);
-	const CurrentIcon = $derived(setupDone ? CircleCheckIcon : current.icon);
+	const primaryHref = $derived(setupDone ? '/setup/detectors' : '/setup/wizard');
+	const primaryLabel = $derived(setupDone ? 'View detectors' : 'Start guided setup');
+	const primaryIcon = $derived(setupDone ? CheckIcon : SparklesIcon);
+	const CurrentIcon = $derived(setupDone ? CircleCheckIcon : SparklesIcon);
 	const PrimaryIcon = $derived(primaryIcon);
 </script>
 
@@ -102,7 +87,7 @@
 		<div class="space-y-1">
 			<h1 class="text-2xl font-semibold tracking-tight">Setup</h1>
 			<p class="text-sm text-muted-foreground">
-				Open the existing setup screens from one place and complete them in the order you need.
+				Use guided setup for a new installation, or manage individual parts below.
 			</p>
 		</div>
 		<div class="flex flex-wrap gap-2">
@@ -118,7 +103,7 @@
 			<div class="space-y-1">
 				<h2 class="font-medium">Setup saved</h2>
 				<p class="text-sm text-muted-foreground">
-					Restart the detector service for the new configuration to take effect.
+					The detector will reload the new configuration automatically.
 				</p>
 			</div>
 		</div>
@@ -135,7 +120,7 @@
 				<div class="min-w-0 space-y-1">
 					<div class="flex flex-wrap items-center gap-2">
 						<h2 class="text-lg font-medium">
-							{setupDone ? 'Configuration is ready' : `Recommended: ${current.title}`}
+							{setupDone ? 'Configuration is ready' : 'Guided setup'}
 						</h2>
 						<Badge variant={setupDone ? 'default' : 'outline'}>
 							{setupDone ? 'Ready' : 'Recommended'}
@@ -144,7 +129,7 @@
 					<p class="text-sm text-muted-foreground">
 						{setupDone
 							? 'Review the detector or add more cameras, Telegram channels, and detectors as needed.'
-							: current.description}
+							: 'Find ONVIF cameras, choose detection settings, and start the application in a few steps.'}
 					</p>
 				</div>
 			</div>

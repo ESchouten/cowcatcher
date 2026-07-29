@@ -12,8 +12,7 @@
 
 	$effect(() => {
 		const timer = window.setInterval(() => {
-			void statusQuery.refresh();
-			void detectorQuery.refresh();
+			void Promise.allSettled([statusQuery.refresh(), detectorQuery.refresh()]);
 		}, 5_000);
 		return () => window.clearInterval(timer);
 	});

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { DatabaseSync } from 'node:sqlite';
+import type { SqliteDatabase } from './sqlite';
 
 export type OfficialIdentityStatus = 'active' | 'archived';
 export type MappingState = 'provisional' | 'confirmed';
@@ -65,7 +65,7 @@ function jpegDataUrl(value: Uint8Array | null): string | null {
 	return value ? `data:image/jpeg;base64,${Buffer.from(value).toString('base64')}` : null;
 }
 
-function transaction<T>(database: DatabaseSync, options: MutationOptions, action: () => T): T {
+function transaction<T>(database: SqliteDatabase, options: MutationOptions, action: () => T): T {
 	database.exec('BEGIN IMMEDIATE');
 	try {
 		const control = database
@@ -92,7 +92,7 @@ function transaction<T>(database: DatabaseSync, options: MutationOptions, action
 	}
 }
 
-export function readCatalogControl(database: DatabaseSync): CatalogControl {
+export function readCatalogControl(database: SqliteDatabase): CatalogControl {
 	const row = database
 		.prepare('SELECT operator_revision FROM control WHERE singleton = 1')
 		.get() as { operator_revision: number } | undefined;
@@ -100,7 +100,7 @@ export function readCatalogControl(database: DatabaseSync): CatalogControl {
 	return { operatorRevision: Number(row.operator_revision) };
 }
 
-export function readIdentityCatalog(database: DatabaseSync): IdentityCatalogSnapshot {
+export function readIdentityCatalog(database: SqliteDatabase): IdentityCatalogSnapshot {
 	const officials = database
 		.prepare(
 			`SELECT oi.official_id, oi.display_name, oi.status, oi.notes,
@@ -198,7 +198,7 @@ export function readIdentityCatalog(database: DatabaseSync): IdentityCatalogSnap
 }
 
 function officialIdentity(
-	database: DatabaseSync,
+	database: SqliteDatabase,
 	officialId: string
 ): { status: OfficialIdentityStatus } {
 	const row = database
@@ -208,7 +208,7 @@ function officialIdentity(
 	return row;
 }
 
-function mappingForVisual(database: DatabaseSync, visualIdentityId: string): MappingRow | null {
+function mappingForVisual(database: SqliteDatabase, visualIdentityId: string): MappingRow | null {
 	return (
 		(database
 			.prepare(
@@ -221,7 +221,7 @@ function mappingForVisual(database: DatabaseSync, visualIdentityId: string): Map
 	);
 }
 
-function mappingForOfficial(database: DatabaseSync, officialId: string): MappingRow | null {
+function mappingForOfficial(database: SqliteDatabase, officialId: string): MappingRow | null {
 	return (
 		(database
 			.prepare(
@@ -235,7 +235,7 @@ function mappingForOfficial(database: DatabaseSync, officialId: string): Mapping
 }
 
 function eligibleTracklet(
-	database: DatabaseSync,
+	database: SqliteDatabase,
 	visualIdentityId: string,
 	trackletId: string
 ): void {
@@ -268,7 +268,7 @@ function eligibleTracklet(
 }
 
 export function createOfficialIdentity(
-	database: DatabaseSync,
+	database: SqliteDatabase,
 	record: {
 		officialId: string;
 		displayName?: string;
@@ -291,7 +291,7 @@ export function createOfficialIdentity(
 }
 
 export function updateOfficialIdentity(
-	database: DatabaseSync,
+	database: SqliteDatabase,
 	record: {
 		officialId: string;
 		displayName?: string;
@@ -321,7 +321,7 @@ export function updateOfficialIdentity(
 }
 
 export function createProvisionalMapping(
-	database: DatabaseSync,
+	database: SqliteDatabase,
 	input: {
 		visualIdentityId: string;
 		officialId: string;
@@ -351,7 +351,7 @@ export function createProvisionalMapping(
 }
 
 export function confirmMapping(
-	database: DatabaseSync,
+	database: SqliteDatabase,
 	input: { visualIdentityId: string; confirmationTrackletId: string },
 	options: MutationOptions
 ): void {
@@ -376,7 +376,7 @@ export function confirmMapping(
 }
 
 export function correctMapping(
-	database: DatabaseSync,
+	database: SqliteDatabase,
 	input: {
 		visualIdentityId: string;
 		officialId: string;
@@ -408,7 +408,7 @@ export function correctMapping(
 }
 
 export function deactivateMapping(
-	database: DatabaseSync,
+	database: SqliteDatabase,
 	visualIdentityId: string,
 	options: MutationOptions
 ): void {
@@ -421,7 +421,7 @@ export function deactivateMapping(
 }
 
 export function mergeVisualIdentities(
-	database: DatabaseSync,
+	database: SqliteDatabase,
 	input: { sourceVisualIdentityId: string; targetVisualIdentityId: string },
 	options: MutationOptions
 ): void {
@@ -470,7 +470,7 @@ export function mergeVisualIdentities(
 }
 
 export function splitVisualIdentity(
-	database: DatabaseSync,
+	database: SqliteDatabase,
 	input: { sourceVisualIdentityId: string; trackletIds: string[] },
 	options: MutationOptions
 ): string {

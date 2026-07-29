@@ -27,6 +27,7 @@ export const getPresets = query(v.object({ category }), async ({ category }) => 
 	const response = await fetch(`${repository}/${category}?ref=main`, {
 		headers: githubHeaders
 	});
+	if (response.status === 404 && category === 'identity') return [];
 	if (!response.ok) throw new Error(`Failed to load ${category} presets: ${response.status}`);
 
 	const items = v.parse(listingSchema, await response.json());

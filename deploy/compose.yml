@@ -1,0 +1,30 @@
+services:
+  aidetector:
+    image: "${AI_DETECTOR_IMAGE:-ghcr.io/eschouten/ai-detector:latest-cpu}"
+    restart: unless-stopped
+    network_mode: host
+    ipc: host
+    user: "${AI_DETECTOR_UID:-1000}:${AI_DETECTOR_GID:-1000}"
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    environment:
+      SSE_HOST: 0.0.0.0
+    volumes:
+      - ./data:/data
+
+  web:
+    image: "${AI_DETECTOR_WEB_IMAGE:-ghcr.io/eschouten/ai-detector-web:latest}"
+    restart: unless-stopped
+    network_mode: host
+    user: "${AI_DETECTOR_UID:-1000}:${AI_DETECTOR_GID:-1000}"
+    cap_add:
+      - NET_BIND_SERVICE
+    depends_on:
+      - aidetector
+    environment:
+      HOST: 0.0.0.0
+      PORT: 80
+      DETECTOR_HOST: 127.0.0.1
+    volumes:
+      - ./data:/data

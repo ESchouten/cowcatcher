@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import platform
+from pathlib import Path
 from typing import Any
 
 import cv2
@@ -13,6 +14,7 @@ MODEL_KEY = "miewid-dual-crop-v1"
 MODEL_REPOSITORY = "conservationxlabs/miewid-msv3"
 MODEL_REVISION = "4f1d7f2b521149e5fe34bb85f377248ce9971a7d"
 MODEL_FILENAME = "model.safetensors"
+MODEL_DIRECTORY = Path("models/miewid")
 MODEL_SIGNATURE = f"{MODEL_KEY}:{MODEL_REPOSITORY}@{MODEL_REVISION}:dual-crop"
 IMAGE_SIZE = 440
 FEATURE_DIM = 2_152
@@ -94,14 +96,21 @@ def _load_model() -> Any:
         def forward(self, values: Any) -> Any:
             return self.bn(self.backbone(values).flatten(1))
 
-    checkpoint = hf_hub_download(
-        repo_id=MODEL_REPOSITORY,
-        filename=MODEL_FILENAME,
-        revision=MODEL_REVISION,
-    )
+    checkpoint = _download_checkpoint()
     model = Model()
     model.load_state_dict(load_file(checkpoint), strict=True)
     return model
+
+
+def _download_checkpoint() -> Path:
+    return Path(
+        hf_hub_download(
+            repo_id=MODEL_REPOSITORY,
+            filename=MODEL_FILENAME,
+            revision=MODEL_REVISION,
+            local_dir=MODEL_DIRECTORY,
+        )
+    )
 
 
 def _device() -> str:

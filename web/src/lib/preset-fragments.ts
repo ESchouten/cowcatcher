@@ -8,26 +8,35 @@ export type DetectorPresetFragment = Omit<
 	yolo?: Partial<NonNullable<DetectorConfig['yolo']>>;
 };
 
+export function createDetectorFromPreset(fragment: DetectorPresetFragment): DetectorConfig {
+	return applyDetectorPreset(
+		{
+			detection: { source: [] },
+			yolo: { model: '', confidence: 0.8 },
+			exporters: {
+				disk: [{}],
+				sse: [{}]
+			}
+		},
+		fragment
+	);
+}
+
 export function applyDetectorPreset(
 	detector: DetectorConfig,
 	fragment: DetectorPresetFragment
 ): DetectorConfig {
-	const mergedYolo = {
-		...detector.yolo,
-		...fragment.yolo
-	};
 	const yolo =
-		typeof mergedYolo.model === 'string'
+		typeof fragment.yolo?.model === 'string'
 			? {
-					...mergedYolo,
-					model: mergedYolo.model
+					...fragment.yolo,
+					model: fragment.yolo.model
 				}
 			: undefined;
 	return {
 		...detector,
 		...fragment,
 		detection: {
-			...detector.detection,
 			...fragment.detection,
 			source: detector.detection.source
 		},

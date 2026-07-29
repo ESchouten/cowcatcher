@@ -1,8 +1,8 @@
 import { access, readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import type { AppConfig, Config } from '$lib/schema';
 import { APP_CONFIG_PATH, CONFIG_PATH, resolveWithinDirectory } from './shared-paths';
+import { openSqliteDatabase, type SqliteDatabase } from './sqlite';
 
 export const IDENTITY_SCHEMA_VERSION = 3;
 export const IDENTITY_BUSY_TIMEOUT_MS = 5_000;
@@ -44,7 +44,7 @@ export async function getIdentityDatabases(): Promise<IdentityDatabaseConfig[]> 
 	return [...databases.values()];
 }
 
-export async function openIdentityDatabase(catalogId: string): Promise<DatabaseSync> {
+export async function openIdentityDatabase(catalogId: string): Promise<SqliteDatabase> {
 	const configured = (await getIdentityDatabases()).find((item) => item.id === catalogId);
 	if (!configured) {
 		throw new Error('Identity catalog is not configured');
@@ -54,7 +54,7 @@ export async function openIdentityDatabase(catalogId: string): Promise<DatabaseS
 
 export async function openConfiguredIdentityDatabase(
 	configured: Pick<IdentityDatabaseConfig, 'path'>
-): Promise<DatabaseSync> {
+): Promise<SqliteDatabase> {
 	try {
 		await access(configured.path);
 	} catch (error) {
@@ -63,7 +63,7 @@ export async function openConfiguredIdentityDatabase(
 		}
 		throw error;
 	}
-	const connection = new DatabaseSync(configured.path);
+	const connection = await openSqliteDatabase(configured.path);
 	try {
 		connection.exec(`
 			PRAGMA foreign_keys = ON;
@@ -78,7 +78,7 @@ export async function openConfiguredIdentityDatabase(
 	}
 }
 
-export function validateIdentityDatabase(connection: DatabaseSync): void {
+export function validateIdentityDatabase(connection: SqliteDatabase): void {
 	const version = connection.prepare('PRAGMA user_version').get() as
 		| { user_version: number }
 		| undefined;

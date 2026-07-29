@@ -1,11 +1,14 @@
 import json
 from datetime import datetime
+from pathlib import Path
+from typing import cast
 
 import cv2
 import numpy as np
 
 from aidetector.application import Application
 from aidetector.domain.detections import DetectedObject, Observation
+from aidetector.pipeline.processor import DetectionPipeline
 from aidetector.utils.config import (
     Config,
     DetectionConfig,
@@ -71,7 +74,7 @@ def test_application_processes_source_and_writes_detection(tmp_path, monkeypatch
                     frames_min=1,
                     time_max=0,
                 ),
-                exporters=ExportersConfig(disk=DiskConfig(directory="smoke")),
+                exporters=ExportersConfig(disk=DiskConfig(directory=Path("smoke"))),
             )
         ]
     )
@@ -96,3 +99,15 @@ def test_application_processes_source_and_writes_detection(tmp_path, monkeypatch
     assert metadata["confidence"] == 0.9
     assert metadata["confidences"] == {"cow": 0.9}
     assert datetime.fromisoformat(metadata["start"])
+
+
+def test_application_wait_can_stop_for_configuration_reload():
+    class RunningPipeline:
+        error = None
+        is_alive = True
+
+    application = Application(
+        [cast(DetectionPipeline, RunningPipeline())],
+        None,
+    )
+    assert application.wait(lambda: True) is True

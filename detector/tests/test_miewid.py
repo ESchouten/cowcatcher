@@ -1,7 +1,16 @@
 import numpy as np
 import torch
 
-from aidetector.reid.miewid import FEATURE_DIM, MiewIdEncoder, _device
+from aidetector.reid.miewid import (
+    FEATURE_DIM,
+    MODEL_DIRECTORY,
+    MODEL_FILENAME,
+    MODEL_REPOSITORY,
+    MODEL_REVISION,
+    MiewIdEncoder,
+    _device,
+    _download_checkpoint,
+)
 
 
 class FakeModel(torch.nn.Module):
@@ -39,3 +48,24 @@ def test_device_selection_uses_mps_only_on_apple_silicon(monkeypatch):
     monkeypatch.setattr("aidetector.reid.miewid.platform.machine", lambda: "arm64")
     monkeypatch.setattr(torch.backends.mps, "is_available", lambda: True)
     assert _device() == "mps"
+
+
+def test_checkpoint_downloads_into_the_local_models_directory(monkeypatch, tmp_path):
+    checkpoint = tmp_path / MODEL_FILENAME
+    calls = []
+
+    def fake_download(**kwargs):
+        calls.append(kwargs)
+        return checkpoint
+
+    monkeypatch.setattr("aidetector.reid.miewid.hf_hub_download", fake_download)
+
+    assert _download_checkpoint() == checkpoint
+    assert calls == [
+        {
+            "repo_id": MODEL_REPOSITORY,
+            "filename": MODEL_FILENAME,
+            "revision": MODEL_REVISION,
+            "local_dir": MODEL_DIRECTORY,
+        }
+    ]
