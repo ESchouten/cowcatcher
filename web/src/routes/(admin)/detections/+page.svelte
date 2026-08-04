@@ -2,8 +2,9 @@
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
 	import { getDetectionPage, getTypes } from '$lib/remote/detections.remote';
-	import { STAGES, type Metadata, type Stage } from '$lib/schema';
+	import { STAGES, type DetectionMetadata, type Stage } from '$lib/schema';
 	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import type { Action } from 'svelte/action';
 	import DetectionCard from './detection-card.svelte';
@@ -16,7 +17,7 @@
 	const stage = $derived((page.url.searchParams.get('stage') as Stage | null) || undefined);
 	const types = $derived(await getTypes());
 
-	let entries = $state<Metadata[]>([]);
+	let entries = $state<DetectionMetadata[]>([]);
 	let isLoading = $state(false);
 	let hasMore = $state(true);
 	let nextOffset = $state(0);
@@ -24,7 +25,7 @@
 	let requestVersion = 0;
 
 	const detectionsByDay = $derived.by(() => {
-		const dayDetections = new SvelteMap<string, Array<Metadata>>();
+		const dayDetections = new SvelteMap<string, Array<DetectionMetadata>>();
 		for (const detection of entries) {
 			const day = String(detection.timestamp).split('T')[0];
 			if (!dayDetections.has(day)) {
@@ -101,7 +102,9 @@
 		const currentUrl = `${page.url.pathname}${page.url.search}`;
 
 		if (nextUrl !== currentUrl) {
-			await goto(nextUrl, {
+			// The base route is resolved; only locally constructed search parameters are appended.
+			// eslint-disable-next-line svelte/no-navigation-without-resolve
+			await goto(`${resolve('/detections')}${search ? `?${search}` : ''}`, {
 				replaceState: true,
 				noScroll: true,
 				keepFocus: true,
@@ -133,8 +136,10 @@
 	};
 
 	$effect(() => {
-		type;
-		stage;
+		const selectedType = type;
+		const selectedStage = stage;
+		void selectedType;
+		void selectedStage;
 		void loadNextPage(true);
 	});
 </script>
@@ -182,28 +187,26 @@
 
 	{#if entries.length === 0 && isLoading}
 		<h2 class="text-sm font-semibold text-muted-foreground">Loading detections...</h2>
+	{:else if detectionsByDay.length === 0}
+		<p class="text-sm font-semibold text-muted-foreground">No detections found.</p>
 	{:else}
-		{#if detectionsByDay.length === 0}
-			<p class="text-sm font-semibold text-muted-foreground">No detections found.</p>
-		{:else}
-			<div class="space-y-8">
-				{#each detectionsByDay as dayGroup (dayGroup[0])}
-					<section class="space-y-3">
-						<div class="flex items-center gap-2">
-							<h2 class="text-sm font-semibold text-muted-foreground">
-								{dayFormatter.format(new Date(dayGroup[0]))}
-							</h2>
-							<Badge variant="outline">{dayGroup[1].length}</Badge>
-						</div>
-						<div class="grid gap-2 lg:grid-cols-2 2xl:grid-cols-3">
-							{#each dayGroup[1] as entry (String(entry.timestamp))}
-								<DetectionCard {entry} />
-							{/each}
-						</div>
-					</section>
-				{/each}
-			</div>
-		{/if}
+		<div class="space-y-8">
+			{#each detectionsByDay as dayGroup (dayGroup[0])}
+				<section class="space-y-3">
+					<div class="flex items-center gap-2">
+						<h2 class="text-sm font-semibold text-muted-foreground">
+							{dayFormatter.format(new Date(dayGroup[0]))}
+						</h2>
+						<Badge variant="outline">{dayGroup[1].length}</Badge>
+					</div>
+					<div class="grid gap-2 lg:grid-cols-2 2xl:grid-cols-3">
+						{#each dayGroup[1] as entry (`${entry.type}:${entry.stage}:${entry.locator}`)}
+							<DetectionCard {entry} />
+						{/each}
+					</div>
+				</section>
+			{/each}
+		</div>
 	{/if}
 
 	{#if errorMessage}

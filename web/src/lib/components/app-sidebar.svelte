@@ -1,67 +1,67 @@
 <script lang="ts">
-	import NavUser from './nav-user.svelte';
+	import IdentityStatusPanel from '$lib/components/identity-status-panel.svelte';
 	import * as Sidebar from '$lib/components/ui/sidebar/index.js';
-	import CCTV from '@lucide/svelte/icons/cctv';
-	import type { ComponentProps } from 'svelte';
+	import CCTVIcon from '@lucide/svelte/icons/cctv';
 	import NavMain from './nav-main.svelte';
-	import type { NavMenu, NavItem } from './types';
+	import type { NavMenu } from './types';
 
 	let {
 		title,
 		subtitle,
-		user,
+		homeUrl,
 		menu,
-		secondaryMenu,
-		ref = $bindable(null),
-		...restProps
+		secondaryMenu = []
 	}: {
 		title: string;
 		subtitle: string;
+		homeUrl: string;
 		menu: NavMenu[];
 		secondaryMenu?: NavMenu[];
-		user?: {
-			name?: string;
-			email?: string;
-			avatar?: string;
-			items: NavItem[];
-			logout: () => void;
-		};
-	} & ComponentProps<typeof Sidebar.Root> = $props();
+	} = $props();
 </script>
 
-<Sidebar.Root bind:ref variant="inset" {...restProps}>
+<Sidebar.Root variant="inset" collapsible="icon">
 	<Sidebar.Header>
 		<Sidebar.Menu>
 			<Sidebar.MenuItem>
-				<Sidebar.MenuButton size="lg">
+				<Sidebar.MenuButton size="lg" tooltipContent={title}>
 					{#snippet child({ props })}
-						<a href="##" {...props}>
-							<div
+						<!-- `homeUrl` is resolved by the route-aware layout before it reaches this component. -->
+						<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
+						<a href={homeUrl} {...props}>
+							<span
 								class="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground"
 							>
-								<CCTV class="size-4" />
-							</div>
-							<div class="grid flex-1 text-start text-sm leading-tight">
+								<CCTVIcon class="size-4" />
+							</span>
+							<span class="grid min-w-0 flex-1 text-start text-sm leading-tight">
 								<span class="truncate font-medium">{title}</span>
 								<span class="truncate text-xs">{subtitle}</span>
-							</div>
+							</span>
 						</a>
 					{/snippet}
 				</Sidebar.MenuButton>
 			</Sidebar.MenuItem>
 		</Sidebar.Menu>
 	</Sidebar.Header>
+
 	<Sidebar.Content>
-		{#each menu as item (item.title)}
-			<NavMain title={item.title} items={item.items} />
+		{#each menu as group (group.title)}
+			<NavMain title={group.title} items={group.items} />
 		{/each}
-		{#each secondaryMenu || [] as item (item.title)}
-			<NavMain title={item.title} items={item.items} size="sm" class="mt-auto" />
-		{/each}
+
+		<Sidebar.Group class="mt-auto group-data-[collapsible=icon]:hidden">
+			<Sidebar.GroupLabel>Status</Sidebar.GroupLabel>
+			<IdentityStatusPanel />
+		</Sidebar.Group>
 	</Sidebar.Content>
-	{#if user}
+
+	{#if secondaryMenu.length > 0}
 		<Sidebar.Footer>
-			<NavUser {user} items={user.items} logout={user.logout} />
+			{#each secondaryMenu as group (group.title)}
+				<NavMain title={group.title} items={group.items} size="sm" class="p-0" />
+			{/each}
 		</Sidebar.Footer>
 	{/if}
+	<Sidebar.Rail />
 </Sidebar.Root>

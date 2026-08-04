@@ -1,0 +1,144 @@
+import base64
+import json
+import logging
+from collections.abc import Callable
+from time import sleep
+from typing import Any
+
+import litellm
+from litellm.exceptions import ServiceUnavailableError
+
+from aidetector.domain.events import DetectionEvent
+from aidetector.pipeline.ports import ArtifactProvider
+from aidetector.utils.config import VLMConfig, config_list
+
+logger = logging.getLogger(__name__)
+MAX_ATTEMPTS = 5
+RESPONSE_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "detection_result",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "detected": {"type": "boolean"},
+                "confidence": {"type": "number"},
+                "reasoning": {"type": "string"},
+            },
+            "required": ["detected", "confidence", "reasoning"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+
+class VLMValidator:
+    def __init__(
+        self,
+        vlms: list[VLMConfig],
+        *,
+        completion: Callable[..., Any] = litellm.completion,
+        sleeper: Callable[[float], None] = sleep,
+    ):
+        self.vlms = list(vlms)
+        self._completion = completion
+        self._sleep = sleeper
+
+    def validate(
+        self,
+        event: DetectionEvent,
+        artifacts: ArtifactProvider,
+    ) -> bool | None:
+        for config in self.vlms:
+            messages = _messages(config, artifacts)
+            options = {
+                key: value
+                for key, value in {
+                    "api_key": config.key,
+                    "base_url": config.url,
+                    "timeout": config.timeout,
+                }.items()
+                if value is not None
+            }
+            for model in config_list(config.model):
+                result = self._validate_model(model, messages, options)
+                if result is not None:
+                    return result
+        return None
+
+    def _validate_model(
+        self,
+        model: str,
+        messages: list[dict[str, Any]],
+        options: dict[str, Any],
+    ) -> bool | None:
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            try:
+                response = self._completion(
+                    model=model,
+                    messages=messages,
+                    response_format=RESPONSE_FORMAT,
+                    **options,
+                )
+                content = response.choices[0].message.content
+                output = json.loads(content)
+                if not isinstance(output.get("detected"), bool):
+                    raise ValueError("VLM response has no boolean 'detected' field")
+                logger.info("VLM %s returned %s", model, output)
+                return output["detected"]
+            except ServiceUnavailableError:
+                if attempt == MAX_ATTEMPTS:
+                    logger.warning("VLM %s remained unavailable", model)
+                    return None
+                logger.warning(
+                    "VLM %s unavailable; retrying (%d/%d)",
+                    model,
+                    attempt,
+                    MAX_ATTEMPTS,
+                )
+                self._sleep(attempt)
+            except Exception:
+                logger.exception("VLM %s validation failed", model)
+                return None
+        return None
+
+
+def _messages(
+    config: VLMConfig,
+    artifacts: ArtifactProvider,
+) -> list[dict[str, Any]]:
+    content: list[dict[str, Any]] = [{"type": "text", "text": config.prompt}]
+    video = (
+        artifacts.video(
+            width=1280,
+            plot=False,
+            padding=config.crop_padding,
+        )
+        if config.strategy == "VIDEO"
+        else None
+    )
+    if video is not None:
+        encoded = base64.b64encode(video).decode("ascii")
+        content.append(
+            {
+                "type": "file",
+                "file": {"file_data": f"data:video/mp4;base64,{encoded}"},
+            }
+        )
+    else:
+        image = artifacts.image(
+            crop=True,
+            plot=False,
+            padding=config.crop_padding,
+        )
+        image = image or artifacts.image()
+        assert image is not None
+        encoded = base64.b64encode(image).decode("ascii")
+        content.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{encoded}"},
+            }
+        )
+    return [{"role": "user", "content": content}]

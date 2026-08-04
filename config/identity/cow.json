@@ -1,0 +1,5 @@
+{
+    "target_label": "cow",
+    "database": "identities/cows.sqlite",
+    "margin": 0.2
+}

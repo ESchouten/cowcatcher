@@ -6,6 +6,9 @@ Detection works in two stages:
 1. **YOLO** — a fast AI model that scans every frame looking for objects.
 2. **VLM** *(optional)* — a smarter AI (like Gemini or GPT-5) that double-checks the detection by looking at the footage and answering a question you define, e.g. *"Is there really a cow mounting another cow?"*. This dramatically reduces false alerts.
 
+Tracked YOLO detections can optionally be matched to known individuals. SQLite
+stores the identity catalog and its evidence.
+
 Confirmed detections can be sent to **Telegram**, saved to **disk**, or posted to a **webhook**.
 
 ---
@@ -20,12 +23,16 @@ Pick the right file for your hardware:
 
 | File | GPU |
 | :--- | :-- |
-| `aidetector-winml-<version>.exe` | Windows 11 with any GPU |
-| `aidetector-cuda130-<version>.exe` | Windows 10 with NVIDIA RTX 3000 series or newer |
-| `aidetector-cuda126-<version>.exe` | Windows 10 with NVIDIA RTX 2000 series or older |
-| `aidetector-osx-<version>` | macOS (CPU / Apple Silicon) |
+| `aidetector-winml-<version>.exe` | Windows 11 with any GPU but NVIDIA |
+| `aidetector-cuda130-<version>.exe` | Windows 10/11 with NVIDIA RTX 3000 series or newer |
+| `aidetector-cuda126-<version>.exe` | Windows 10/11 with NVIDIA RTX 2000 series or older |
+| `aidetector-osx-<version>` | Apple silicon macOS (PyTorch MPS, FP16) |
 
 > **Not sure which to pick?** Start with `winml` on Windows. Use a `cuda` build only if you know your NVIDIA setup matches that CUDA version.
+
+On Apple silicon macOS, configured `.pt` detector models run directly through
+PyTorch MPS in FP16. They are not exported to ONNX. Explicitly configured
+`.onnx` models and auxiliary ONNX models keep their existing runtime path.
 
 **Setup:**
 1. Create a folder, e.g. `C:\aidetector`, and move the downloaded `.exe` into it.
@@ -61,7 +68,29 @@ uv run --extra default main
 
 # Sync JSON schema with the Pydantic data models
 uv run generate-schema
+
+# Run the quality gates
+uv run ruff check src tests
+uv run ty check src
+uv run pytest
 ```
+
+### Internal architecture
+
+The Python application is organized around a one-way dependency rule:
+
+```text
+domain <- pipeline <- adapters <- application
+```
+
+- `domain/` contains frames, observations, events, and immutable policies. It has no infrastructure dependencies.
+- `pipeline/` performs scheduling, aggregation, cooldown, validation dispatch, filtering, and lifecycle coordination through typed ports.
+- `adapters/` contains Ultralytics, video sources, VLM validation, HTTP/SSE, Telegram, webhook, and disk implementations.
+- `application.py` is the composition root. It is the only module that translates configuration objects into runtime policies and concrete adapters.
+- `media/` renders and caches event artifacts. Equal artifact requests within one event are encoded only once.
+- `reid/` contains tracked identity matching, MiewID inference, and its SQLite catalog.
+
+Live observations and completed events are sent through the same generic `Sink.send()` contract. Validation and every event sink have small bounded queues. When an external service falls behind, only its oldest pending event is replaced so inference continues. `tests/test_architecture.py` enforces the dependency direction.
 
 ---
 
@@ -104,7 +133,8 @@ You can run multiple independent detectors in the same file — useful if you ha
 | :---------------- | :----------- | :---------- |
 | `source`          | **Required** | Path to a video file, or an RTSP/HTTP stream URL. Use a list `[ ]` for multiple sources. |
 | `interval`        | `0`          | How many seconds to wait between processed frames. Set to `0` to process every frame. Useful to reduce load on slow machines. |
-| `frame_retention` | `30`         | How many recent frames to keep in memory per source so detections can include earlier context. |
+| `frame_retention` | `15`         | How many recent frames to keep in memory per source so detections can include earlier context. |
+| `frames_width`    | `1280`       | Maximum width retained for event images. Larger source frames are resized while preserving aspect ratio. |
 
 **Examples:**
 ```json
@@ -123,14 +153,14 @@ This is the fast first-pass AI that scans every frame. Without a YOLO model, the
 | :---------------------- | :----------- | :---------- |
 | `model`                 | **Required** | URL or local path to a YOLO model file (`.pt` or `.onnx`). |
 | `task`                  | `"detect"`   | YOLO task to run: `"detect"` for detection models or `"segment"` for segmentation models. |
+| `tracking`              | `false`      | Keep object track IDs between frames. Sources remain isolated while inference is batched. |
 | `confidence`            | `0`          | How confident YOLO must be (0–1) before counting something as a detection. `0.8` means 80% sure. You can also set different thresholds per class — see tip below. |
 | `time_max`              | `60`         | Maximum duration in seconds to group frames into one event. If a detection runs longer than this, a new event starts. |
 | `timeout`               | `5`          | Seconds of no detections before the current event is considered over. |
 | `cooldown`              | `0`          | Seconds to wait after finishing one event before starting a new one. Prevents repeat alerts for the same ongoing situation. Can be set per class. |
 | `include_trailing_time` | `1`          | Seconds of extra footage to include after the last detected frame so the event does not end too abruptly. |
-| `frames_min`            | `6` / `3`    | How many frames in a row must match before the event counts. Default is `6` when `torch.cuda.is_available()` is true, otherwise `3`. |
+| `frames_min`            | `3`          | How many frames in a row must match before the event counts. |
 | `imgsz`                 | `640`        | The image size fed into the model. Higher values are more accurate but slower. Most models expect `640`. |
-| `strategy`              | `"LATEST"`   | Which frames to evaluate: `"LATEST"` uses only the most recent, `"ALL"` evaluates every frame. |
 
 > **Tip — per-class confidence thresholds:**
 > Instead of a single number, you can give each class its own threshold:
@@ -143,6 +173,29 @@ This is the fast first-pass AI that scans every frame. Without a YOLO model, the
 > ```json
 > "cooldown": { "person": 60, "car": 30 }
 > ```
+
+---
+
+### `identity` — Individual recognition
+
+Identity needs a tracked YOLO detector whose confidence map includes
+`target_label`. Configure the SQLite `database` and the normalized observation
+`margin`; the model, crop rules, thresholds, and evidence counts are fixed
+runtime defaults. A margin of `0.2` excludes 20% from every frame edge.
+
+The detector accepts evidence from one stable target in the zone. MiewID runs
+with PyTorch MPS FP16 on Apple silicon and CPU FP32 elsewhere. Its pinned
+`model.safetensors` checkpoint is downloaded and cached by Hugging Face on first
+use.
+
+On first detector start, Python creates SQLite schema version 3 at the configured
+relative database path. The web app then manages official identities, provisional
+mappings, independent confirmations, corrections, merges, and splits directly in
+that database. A first assignment remains provisional; a distinct eligible
+tracklet must confirm it. Confirmed mappings form the in-memory gallery.
+Predictions never become mapping truth or automatically expand it.
+
+Back up the SQLite file to preserve the catalog, previews, and embeddings.
 
 ---
 
@@ -159,6 +212,7 @@ Can be a single object or a list. If you provide a list, the VLMs are tried in o
 | `key`      |              | API key for the model provider (Gemini, OpenAI, etc.). |
 | `url`      |              | Custom API endpoint, if you're running a local model. |
 | `strategy` | `"VIDEO"`    | `"VIDEO"` — sends the full detection clip to the AI. `"IMAGE"` — sends only a single frame. Video is more accurate but costs more tokens. |
+| `timeout`  | `30`         | Maximum seconds to wait for a model response. |
 
 ---
 
@@ -195,6 +249,7 @@ Sends an alert to a Telegram chat. The bot can include images or a video clip.
 | `chat`            | **Required** | The Telegram chat or user ID to send alerts to. |
 | `confidence`      |              | Minimum confidence required to send. Leave empty to always send. |
 | `alert_every`     | `1`          | Only send a notification sound every Nth detection. `1` = every time, `5` = every 5th. |
+| `timeout`         | `30`         | HTTP request timeout in seconds. |
 | `include_plot`    | `false`      | Include the full frame with a detection box drawn on it. |
 | `include_crop`    | `false`      | Include a cropped image of just the detected object. |
 | `include_video`   | `true`       | Include an MP4 clip of the detection sequence. |
@@ -205,6 +260,8 @@ Sends an alert to a Telegram chat. The bot can include images or a video clip.
 #### 🔗 Webhook (`webhook`)
 
 Posts detection data to an HTTP endpoint. Useful for integrating with other systems.
+Generated payload fields follow `config/metadata.schema.json`. Multipart requests
+JSON-encode nested fields such as `confidences` and `crops`.
 
 | Field             | Default      | Description |
 | :---------------- | :----------- | :---------- |
@@ -212,7 +269,7 @@ Posts detection data to an HTTP endpoint. Useful for integrating with other syst
 | `method`          | `"POST"`     | HTTP method to use: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, or `HEAD`. |
 | `headers`         |              | Optional HTTP headers map. |
 | `body`            |              | Optional raw request body. When set, this is sent instead of the generated detection payload. |
-| `timeout`         |              | Optional request timeout in seconds. |
+| `timeout`         | `30`         | Request timeout in seconds. The runtime uses 30 seconds when omitted. |
 | `token`           |              | Authorization token sent in the request headers. |
 | `confidence`      |              | Minimum confidence required to trigger. Leave empty to always trigger. |
 | `data_type`       | `"binary"`   | How image/video data is sent: `"binary"`, `"base64"`, or `"none"` for no generated body/files. |
@@ -223,6 +280,19 @@ Posts detection data to an HTTP endpoint. Useful for integrating with other syst
 | `video_width`     | `1280`       | Width of the video clip in pixels. |
 | `video_crf`       | `28`         | Video quality (0–51). Lower = better quality, larger file. |
 | `export_rejected` | `false`      | Whether to also POST detections rejected by the VLM. |
+
+#### Live stream (`sse`)
+
+Publishes live object detections and completed event summaries as Server-Sent Events (SSE). The web application uses this feed for its live stream view.
+
+| Field             | Default                  | Description |
+| :---------------- | :----------------------- | :---------- |
+| `port`            | `8765`                   | HTTP port for the SSE server. Exporters using the same port share one server. |
+| `endpoint`        | `/events/<detector index>` | Optional endpoint. When omitted, each detector receives a unique endpoint based on its position in `detectors`. |
+| `confidence`      |                           | Minimum confidence for completed detection events. Live track messages are not event-filtered. |
+| `export_rejected` | `false`                   | Whether to publish completed detections rejected by the VLM. |
+
+The detector binds this internal server to `127.0.0.1` by default. The web application proxies it through the normal web origin. Container deployments should set `SSE_HOST=0.0.0.0` on the detector and `DETECTOR_HOST=aidetector` on the web service; the example Compose files already do this without publishing port `8765` to the host.
 
 ---
 

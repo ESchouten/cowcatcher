@@ -16,7 +16,7 @@ permissions:
 
 env:
   PYTHON_VERSION: "3.11"
-  PYINSTALLER_ARGS: --onefile --hidden-import ultralytics --collect-all litellm --collect-all onnxruntime --collect-all onnx --hidden-import=tiktoken_ext.openai_public --hidden-import=tiktoken_ext --paths src --clean --noconfirm
+  PYINSTALLER_ARGS: --onefile --hidden-import ultralytics --collect-all litellm --collect-all onnxruntime --collect-all onnx --collect-all huggingface_hub --collect-all safetensors --collect-all timm --collect-data aidetector --hidden-import=tiktoken_ext.openai_public --hidden-import=tiktoken_ext --additional-hooks-dir pyinstaller_hooks --paths src --clean --noconfirm
   VERSION_FILE: src/aidetector/utils/version.py
 
 jobs:
@@ -97,6 +97,60 @@ jobs:
           path: /tmp/digests/*
           if-no-files-found: error
           retention-days: 1
+
+  cpu-image:
+    name: CPU Image
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/eschouten/ai-detector
+          flavor: |
+            latest=false
+          tags: |
+            type=semver,pattern={{version}}-cpu,value=${{ github.ref_name }},match=^detector/v(.*)$
+            type=ref,event=branch,suffix=-cpu
+            type=raw,value=latest-cpu,enable=${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/detector/v') && !contains(github.ref_name, '-') }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: detector
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            REF_NAME=${{ github.ref_name }}
+            RUNTIME_TYPE=default
+          cache-from: type=gha,scope=linux-amd64-cpu
+          cache-to: type=gha,mode=max,scope=linux-amd64-cpu,ignore-error=true
 
   jetpack6-image:
     name: Jetpack 6 Image
@@ -292,9 +346,9 @@ jobs:
           make_latest: false
           files: detector/dist/${{ matrix.artifact_prefix }}-${{ steps.version.outputs.version }}.zip
 
-  macos-default-exe:
-    name: MacOS Default Executable
-    runs-on: macos-latest
+  macos-mps-exe:
+    name: macOS MPS Executable
+    runs-on: macos-15
     timeout-minutes: 60
     defaults:
       run:
@@ -320,9 +374,12 @@ jobs:
       - name: Set up Python
         run: uv python install ${{ env.PYTHON_VERSION }}
 
+      - name: Verify Apple silicon
+        run: test "$(uname -m)" = "arm64"
+
       - name: Build Executable
         run: |
-          echo 'TYPE = "default"' > ${{ env.VERSION_FILE }}
+          echo 'TYPE = "mps"' > ${{ env.VERSION_FILE }}
           echo 'REF_NAME = "${{ github.ref_name }}"' >> ${{ env.VERSION_FILE }}
           uv run --extra default pyinstaller src/aidetector/__init__.py --name "${ARTIFACT_NAME}.command" ${{ env.PYINSTALLER_ARGS }}
 

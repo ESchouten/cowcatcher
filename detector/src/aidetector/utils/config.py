@@ -1,249 +1,216 @@
 import json
 import logging
 from dataclasses import field
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal, TypeVar
 
 import requests
 from aidetector.utils.version import REF_NAME
-from numpy import ndarray
-from pydantic import ConfigDict, ValidationError
+from pydantic import ConfigDict, Field, ValidationError
 from pydantic.dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
+STRICT_CONFIG = ConfigDict(extra="forbid")
+T = TypeVar("T")
 
 
-def _default_frames_min() -> int:
-    try:
-        import torch
-
-        if torch.cuda.is_available():
-            return 6
-    except ImportError:
-        pass
-    return 3
+class ConfigurationError(ValueError):
+    pass
 
 
-Confidence = dict[str, float]
+def config_list(value: T | list[T] | None) -> list[T]:
+    if value is None:
+        return []
+    return list(value) if isinstance(value, list) else [value]
+
+
 HttpMethod = Literal["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]
+NonEmptyString = Annotated[str, Field(min_length=1)]
+Probability = Annotated[float, Field(ge=0, le=1)]
+NonNegativeFloat = Annotated[float, Field(ge=0)]
+PositiveFloat = Annotated[float, Field(gt=0)]
+PositiveInt = Annotated[int, Field(gt=0)]
+Crf = Annotated[int, Field(ge=0, le=51)]
+Port = Annotated[int, Field(ge=1, le=65535)]
+Sources = Annotated[list[NonEmptyString], Field(min_length=1)]
+Models = Annotated[list[NonEmptyString], Field(min_length=1)]
+Cooldown = NonNegativeFloat | dict[str, NonNegativeFloat]
+ConfidenceThreshold = Probability | dict[str, Probability]
 
 
-@dataclass
-class Crop:
-    x1: int
-    y1: int
-    x2: int
-    y2: int
-    label: str | None = None
-    confidence: float | None = None
-
-
-@dataclass(config=ConfigDict(arbitrary_types_allowed=True))
-class ImageSet:
-    jpg: ndarray
-    crops: list[Crop] = field(default_factory=list)
-
-    @property
-    def crop_region(self) -> Crop | None:
-        if not self.crops:
-            return None
-        if len(self.crops) == 1:
-            return self.crops[0]
-        return Crop(
-            min(crop.x1 for crop in self.crops),
-            min(crop.y1 for crop in self.crops),
-            max(crop.x2 for crop in self.crops),
-            max(crop.y2 for crop in self.crops),
-        )
-
-
-@dataclass(config=ConfigDict(arbitrary_types_allowed=True))
-class Detection:
-    date: datetime
-    images: ImageSet
-    confidence: Confidence
-
-
-@dataclass(kw_only=True)
+@dataclass(config=STRICT_CONFIG, kw_only=True)
 class YoloConfig:
-    model: str
+    model: NonEmptyString
     task: Literal["detect", "segment"] = "detect"
-    confidence: float | Confidence = 0
+    confidence: ConfidenceThreshold = 0
     tracking: bool = False
-    time_max: int = 60
-    timeout: int = 5
-    cooldown: float | dict[str, float] = 0
-    include_trailing_time: int = 1
-    frames_min: int = field(default_factory=_default_frames_min)
-    imgsz: int = 640
+    time_max: NonNegativeFloat = 60
+    timeout: NonNegativeFloat = 5
+    cooldown: Cooldown = 0
+    include_trailing_time: NonNegativeFloat = 1
+    frames_min: PositiveInt = 3
+    imgsz: PositiveInt = 640
+    iou: Probability = 0.7
+    tracker: NonEmptyString = "bytetrack.yaml"
 
 
-@dataclass(kw_only=True)
+@dataclass(config=STRICT_CONFIG, kw_only=True)
+class IdentityConfig:
+    database: Path
+    target_label: NonEmptyString
+    margin: Annotated[float, Field(ge=0, lt=0.5)]
+
+    def __post_init__(self) -> None:
+        if self.database.is_absolute():
+            raise ValueError("Identity database must be relative to config.json")
+
+    def resolve_paths(self, data_directory: Path) -> None:
+        self.database = (data_directory / self.database).resolve()
+
+
+@dataclass(config=STRICT_CONFIG, kw_only=True)
 class DetectionConfig:
-    source: str | list[str]
-    interval: float = 0
-    frame_retention: int = 15
-    frames_width: int = 1280
+    source: NonEmptyString | Sources
+    interval: NonNegativeFloat = 0
+    frame_retention: PositiveInt = 15
+    frames_width: PositiveInt = 1280
 
 
-@dataclass(kw_only=True)
+@dataclass(config=STRICT_CONFIG, kw_only=True)
 class VLMConfig:
-    prompt: str
-    model: str | list[str]
+    prompt: NonEmptyString
+    model: NonEmptyString | Models
     key: str | None = field(default=None, repr=False)
     url: str | None = None
     strategy: Literal["IMAGE", "VIDEO"] = "VIDEO"
-    crop_padding: float = 0.1
+    crop_padding: NonNegativeFloat = 0.1
+    timeout: PositiveFloat = 30
 
 
-@dataclass(kw_only=True)
+@dataclass(config=STRICT_CONFIG, kw_only=True)
 class ExporterConfig:
-    confidence: float | Confidence | None = None
-    crop_padding: float = 0.1
+    confidence: ConfidenceThreshold | None = None
+    crop_padding: NonNegativeFloat = 0.1
     export_rejected: bool = False
 
 
-@dataclass(kw_only=True)
+@dataclass(config=STRICT_CONFIG, kw_only=True)
 class HttpConfig:
-    url: str
+    url: NonEmptyString
     method: HttpMethod = "GET"
-    timeout: int | None = None
+    timeout: PositiveFloat | None = None
     headers: dict[str, str] | None = field(default=None, repr=False)
     body: str | None = None
 
 
-@dataclass(kw_only=True)
-class ChatConfig(ExporterConfig):
-    token: str = field(repr=False)
-    chat: str
-    alert_every: int = 1
+@dataclass(config=STRICT_CONFIG, kw_only=True)
+class MediaExporterConfig(ExporterConfig):
     include_image: bool = False
     include_plot: bool = False
     include_crop: bool = False
+    include_video: bool = False
+    video_width: PositiveInt | None = 1280
+    video_crf: Crf = 28
+
+
+@dataclass(config=STRICT_CONFIG, kw_only=True)
+class ChatConfig(MediaExporterConfig):
+    token: NonEmptyString = field(repr=False)
+    chat: NonEmptyString
+    alert_every: PositiveInt = 1
+    timeout: PositiveFloat = 30
     include_video: bool = True
-    video_width: int | None = 1280
-    video_crf: int = 28
 
 
-@dataclass(kw_only=True)
-class WebhookConfig(ExporterConfig, HttpConfig):
+@dataclass(config=STRICT_CONFIG, kw_only=True)
+class WebhookConfig(MediaExporterConfig, HttpConfig):
     method: HttpMethod = "POST"
     token: str | None = field(default=None, repr=False)
     data_type: Literal["binary", "base64", "none"] = "binary"
-    data_max: int | None = None
-    include_image: bool = False
-    include_plot: bool = False
+    data_max: PositiveInt | None = None
     include_crop: bool = True
-    include_video: bool = False
-    video_width: int | None = 1280
-    video_crf: int = 28
 
 
-@dataclass(kw_only=True)
+@dataclass(config=STRICT_CONFIG, kw_only=True)
 class DiskConfig(ExporterConfig):
     directory: Path | None = None
     strategy: Literal["ALL", "BEST"] = "BEST"
     export_rejected: bool = True
 
 
-@dataclass
+@dataclass(config=STRICT_CONFIG, kw_only=True)
+class SSEConfig(ExporterConfig):
+    port: Port = 8765
+    endpoint: str | None = None
+
+
+@dataclass(config=STRICT_CONFIG)
 class ExportersConfig:
     disk: DiskConfig | list[DiskConfig] | None = None
     telegram: ChatConfig | list[ChatConfig] | None = None
     webhook: WebhookConfig | list[WebhookConfig] | None = None
+    sse: SSEConfig | list[SSEConfig] | None = None
 
 
-@dataclass(kw_only=True)
+@dataclass(config=STRICT_CONFIG, kw_only=True)
 class HealthcheckConfig(HttpConfig):
-    interval: int = 60
-    timeout: int = 5
+    interval: PositiveFloat = 60
+    timeout: PositiveFloat = 5
 
 
-@dataclass
+@dataclass(config=STRICT_CONFIG)
 class DetectorConfig:
     detection: DetectionConfig
     yolo: YoloConfig | None = None
+    identity: IdentityConfig | None = None
     vlm: VLMConfig | list[VLMConfig] | None = None
     exporters: ExportersConfig | None = None
 
+    def __post_init__(self) -> None:
+        if self.identity is None:
+            return
+        if self.yolo is None:
+            raise ValueError("Identity enrichment requires a YOLO detector")
+        if not self.yolo.tracking:
+            raise ValueError("Identity enrichment requires YOLO tracking")
+        if (
+            isinstance(self.yolo.confidence, dict)
+            and self.identity.target_label not in self.yolo.confidence
+        ):
+            raise ValueError("Identity target label must be enabled in yolo.confidence")
 
-@dataclass(kw_only=True)
+
+@dataclass(config=STRICT_CONFIG, kw_only=True)
 class OnnxConfig:
     provider: str | None = None
     winml: bool = True
-    opset: int = 20
+    opset: PositiveInt = 20
 
 
-@dataclass
+@dataclass(config=STRICT_CONFIG)
 class Config:
-    detectors: list[DetectorConfig]
+    detectors: Annotated[list[DetectorConfig], Field(min_length=1)]
     onnx: OnnxConfig = field(default_factory=OnnxConfig)
     health: HealthcheckConfig | None = None
 
 
-template_url = f"https://raw.githubusercontent.com/ESchouten/ai-detector/{REF_NAME}/config/config.template.json"
-schema_url = f"https://raw.githubusercontent.com/ESchouten/ai-detector/{REF_NAME}/config/config.schema.json"
+TEMPLATE_URL = f"https://raw.githubusercontent.com/ESchouten/ai-detector/{REF_NAME}/config/config.template.json"
+SCHEMA_URL = f"https://raw.githubusercontent.com/ESchouten/ai-detector/{REF_NAME}/config/config.schema.json"
+DEFAULT_CONFIG_PATH = Path("config.json")
 
 
-def get_template() -> Any | None:
+def get_template() -> dict[str, Any] | None:
     try:
-        template = requests.get(template_url).json()
-        template["$schema"] = schema_url
+        response = requests.get(TEMPLATE_URL, timeout=10)
+        response.raise_for_status()
+        template = response.json()
+        if not isinstance(template, dict):
+            raise ValueError("Configuration template must be a JSON object")
+        template["$schema"] = SCHEMA_URL
         return template
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Failed to fetch template from {template_url}: {e}")
+    except (requests.RequestException, ValueError) as error:
+        logger.error("Failed to fetch template from %s: %s", TEMPLATE_URL, error)
         return None
-
-
-def get_timestamped_filename(detection: Detection) -> str:
-    rounded_confidence = round(max_confidence(detection.confidence), 3)
-    timestamp = get_date_path(detection, "milliseconds")
-    return f"{timestamp}_{rounded_confidence}.jpg"
-
-
-def get_date_path(detection: Detection, timespec: Literal["seconds", "milliseconds"]) -> str:
-    return detection.date.isoformat(timespec=timespec).replace(":", "-")
-
-
-def min_confidence(confidence: float | Confidence | None) -> float:
-    if confidence is None or not confidence:
-        return 0
-    if isinstance(confidence, dict):
-        return min(float(value) for value in confidence.values())
-    return float(confidence)
-
-
-def max_confidence(confidence: float | Confidence | None) -> float:
-    if confidence is None or not confidence:
-        return 0
-    if isinstance(confidence, dict):
-        return max(float(value) for value in confidence.values())
-    return float(confidence)
-
-
-def confidence_matches(
-    value: dict[str, float],
-    threshold: float | dict[str, float],
-) -> bool:
-    if isinstance(threshold, dict):
-        return any(
-            class_id in value and float(value[class_id]) >= float(class_threshold)
-            for class_id, class_threshold in threshold.items()
-        )
-    else:
-        return max_confidence(value) >= threshold
-
-
-def matching_confidences(
-    value: dict[str, float],
-    threshold: float | dict[str, float],
-) -> list[str]:
-    return [
-        class_name
-        for class_name, confidence in value.items()
-        if confidence_matches({class_name: confidence}, threshold)
-    ]
 
 
 def format_validation_errors(error: ValidationError) -> str:
@@ -255,44 +222,42 @@ def format_validation_errors(error: ValidationError) -> str:
     return "\n".join(messages)
 
 
-def load_config() -> Config:
-    config_path = Path("config.json")
+def load_config(config_path: Path = DEFAULT_CONFIG_PATH) -> Config:
     if not config_path.exists():
         template = get_template()
         if template:
-            with open(config_path, "w") as f:
-                json.dump(template, f, indent=4)
-            logger.warning(f"Created {config_path} from template. Please edit the configuration before running.")
-            raise FileNotFoundError(f"Configure before running: {config_path}")
-        else:
-            logger.error(f"Configuration file not found: {config_path}")
-            logger.error("Create a config.json file. See: https://github.com/ESchouten/ai-detector")
-            raise FileNotFoundError(f"Configuration file not found: {config_path}")
+            config_path.write_text(json.dumps(template, indent=4) + "\n")
+            logger.warning(
+                "Created %s from template. Please edit it before running.",
+                config_path,
+            )
+            raise ConfigurationError(f"Configure before running: {config_path}")
+        logger.error("Configuration file not found: %s", config_path)
+        raise ConfigurationError(f"Configuration file not found: {config_path}")
 
     try:
-        with open(config_path) as f:
-            config_json = json.load(f)
-    except json.JSONDecodeError as e:
-        logger.error(f"Invalid JSON in {config_path}: {e}")
-        raise ValueError(f"Invalid JSON in {config_path}: {e}")
+        config_json = json.loads(config_path.read_text())
+    except json.JSONDecodeError as error:
+        raise ConfigurationError(f"Invalid JSON in {config_path}: {error}") from error
 
-    if config_json is None:
-        logger.error(f"Config file is empty: {config_path}")
-        raise ValueError(f"Config file is empty: {config_path}")
+    if not isinstance(config_json, dict):
+        raise ConfigurationError(f"Configuration must be a JSON object: {config_path}")
 
-    try:
-        config_json["$schema"] = schema_url
-        with open(config_path, "w") as f:
-            json.dump(config_json, f, indent=4)
-    except Exception as e:
-        logger.warning(f"Failed to update schema in {config_path}: {e}")
+    config_json.pop("$schema", None)
 
     try:
-        return Config(**config_json)
-    except ValidationError as e:
-        logger.error(f"Configuration validation failed for {config_path}:")
-        logger.error(format_validation_errors(e))
-        raise ValueError(f"Configuration validation failed for {config_path}:\n{format_validation_errors(e)}")
+        config = Config(**config_json)
+    except ValidationError as error:
+        details = format_validation_errors(error)
+        raise ConfigurationError(
+            f"Configuration validation failed for {config_path}:\n{details}"
+        ) from error
+    _resolve_identity_paths(config, config_path.resolve().parent)
+    return config
 
 
-config = load_config()
+def _resolve_identity_paths(config: Config, data_directory: Path) -> None:
+    for detector in config.detectors:
+        identity = detector.identity
+        if identity is not None:
+            identity.resolve_paths(data_directory)

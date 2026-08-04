@@ -9,6 +9,8 @@ services:
 
     volumes:
       - .:/data
+    environment:
+      SSE_HOST: 0.0.0.0
 
     deploy:
       resources:
@@ -25,6 +27,7 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: 3000
+      DETECTOR_HOST: aidetector
     ports:
       - "80:3000"
     volumes_from:

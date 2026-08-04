@@ -1,14 +1,19 @@
 {
   "$defs": {
     "ChatConfig": {
+      "additionalProperties": false,
       "properties": {
         "confidence": {
           "anyOf": [
             {
+              "maximum": 1,
+              "minimum": 0,
               "type": "number"
             },
             {
               "additionalProperties": {
+                "maximum": 1,
+                "minimum": 0,
                 "type": "number"
               },
               "type": "object"
@@ -22,6 +27,7 @@
         },
         "crop_padding": {
           "default": 0.1,
+          "minimum": 0,
           "title": "Crop Padding",
           "type": "number"
         },
@@ -29,19 +35,6 @@
           "default": false,
           "title": "Export Rejected",
           "type": "boolean"
-        },
-        "token": {
-          "title": "Token",
-          "type": "string"
-        },
-        "chat": {
-          "title": "Chat",
-          "type": "string"
-        },
-        "alert_every": {
-          "default": 1,
-          "title": "Alert Every",
-          "type": "integer"
         },
         "include_image": {
           "default": false,
@@ -66,6 +59,7 @@
         "video_width": {
           "anyOf": [
             {
+              "exclusiveMinimum": 0,
               "type": "integer"
             },
             {
@@ -77,8 +71,32 @@
         },
         "video_crf": {
           "default": 28,
+          "maximum": 51,
+          "minimum": 0,
           "title": "Video Crf",
           "type": "integer"
+        },
+        "token": {
+          "minLength": 1,
+          "title": "Token",
+          "type": "string"
+        },
+        "chat": {
+          "minLength": 1,
+          "title": "Chat",
+          "type": "string"
+        },
+        "alert_every": {
+          "default": 1,
+          "exclusiveMinimum": 0,
+          "title": "Alert Every",
+          "type": "integer"
+        },
+        "timeout": {
+          "default": 30,
+          "exclusiveMinimum": 0,
+          "title": "Timeout",
+          "type": "number"
         }
       },
       "required": [
@@ -89,16 +107,20 @@
       "type": "object"
     },
     "DetectionConfig": {
+      "additionalProperties": false,
       "properties": {
         "source": {
           "anyOf": [
             {
+              "minLength": 1,
               "type": "string"
             },
             {
               "items": {
+                "minLength": 1,
                 "type": "string"
               },
+              "minItems": 1,
               "type": "array"
             }
           ],
@@ -106,16 +128,19 @@
         },
         "interval": {
           "default": 0,
+          "minimum": 0,
           "title": "Interval",
           "type": "number"
         },
         "frame_retention": {
           "default": 15,
+          "exclusiveMinimum": 0,
           "title": "Frame Retention",
           "type": "integer"
         },
         "frames_width": {
           "default": 1280,
+          "exclusiveMinimum": 0,
           "title": "Frames Width",
           "type": "integer"
         }
@@ -127,6 +152,7 @@
       "type": "object"
     },
     "DetectorConfig": {
+      "additionalProperties": false,
       "properties": {
         "detection": {
           "$ref": "#/$defs/DetectionConfig"
@@ -135,6 +161,17 @@
           "anyOf": [
             {
               "$ref": "#/$defs/YoloConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "identity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IdentityConfig"
             },
             {
               "type": "null"
@@ -179,14 +216,19 @@
       "type": "object"
     },
     "DiskConfig": {
+      "additionalProperties": false,
       "properties": {
         "confidence": {
           "anyOf": [
             {
+              "maximum": 1,
+              "minimum": 0,
               "type": "number"
             },
             {
               "additionalProperties": {
+                "maximum": 1,
+                "minimum": 0,
                 "type": "number"
               },
               "type": "object"
@@ -200,6 +242,7 @@
         },
         "crop_padding": {
           "default": 0.1,
+          "minimum": 0,
           "title": "Crop Padding",
           "type": "number"
         },
@@ -235,6 +278,7 @@
       "type": "object"
     },
     "ExportersConfig": {
+      "additionalProperties": false,
       "properties": {
         "disk": {
           "anyOf": [
@@ -289,14 +333,34 @@
           ],
           "default": null,
           "title": "Webhook"
+        },
+        "sse": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SSEConfig"
+            },
+            {
+              "items": {
+                "$ref": "#/$defs/SSEConfig"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sse"
         }
       },
       "title": "ExportersConfig",
       "type": "object"
     },
     "HealthcheckConfig": {
+      "additionalProperties": false,
       "properties": {
         "url": {
+          "minLength": 1,
           "title": "Url",
           "type": "string"
         },
@@ -315,8 +379,9 @@
         },
         "timeout": {
           "default": 5,
+          "exclusiveMinimum": 0,
           "title": "Timeout",
-          "type": "integer"
+          "type": "number"
         },
         "headers": {
           "anyOf": [
@@ -347,8 +412,9 @@
         },
         "interval": {
           "default": 60,
+          "exclusiveMinimum": 0,
           "title": "Interval",
-          "type": "integer"
+          "type": "number"
         }
       },
       "required": [
@@ -357,7 +423,36 @@
       "title": "HealthcheckConfig",
       "type": "object"
     },
+    "IdentityConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "database": {
+          "format": "path",
+          "title": "Database",
+          "type": "string"
+        },
+        "target_label": {
+          "minLength": 1,
+          "title": "Target Label",
+          "type": "string"
+        },
+        "margin": {
+          "exclusiveMaximum": 0.5,
+          "minimum": 0,
+          "title": "Margin",
+          "type": "number"
+        }
+      },
+      "required": [
+        "database",
+        "target_label",
+        "margin"
+      ],
+      "title": "IdentityConfig",
+      "type": "object"
+    },
     "OnnxConfig": {
+      "additionalProperties": false,
       "properties": {
         "provider": {
           "anyOf": [
@@ -378,6 +473,7 @@
         },
         "opset": {
           "default": 20,
+          "exclusiveMinimum": 0,
           "title": "Opset",
           "type": "integer"
         }
@@ -385,21 +481,85 @@
       "title": "OnnxConfig",
       "type": "object"
     },
+    "SSEConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "confidence": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "additionalProperties": {
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confidence"
+        },
+        "crop_padding": {
+          "default": 0.1,
+          "minimum": 0,
+          "title": "Crop Padding",
+          "type": "number"
+        },
+        "export_rejected": {
+          "default": false,
+          "title": "Export Rejected",
+          "type": "boolean"
+        },
+        "port": {
+          "default": 8765,
+          "maximum": 65535,
+          "minimum": 1,
+          "title": "Port",
+          "type": "integer"
+        },
+        "endpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Endpoint"
+        }
+      },
+      "title": "SSEConfig",
+      "type": "object"
+    },
     "VLMConfig": {
+      "additionalProperties": false,
       "properties": {
         "prompt": {
+          "minLength": 1,
           "title": "Prompt",
           "type": "string"
         },
         "model": {
           "anyOf": [
             {
+              "minLength": 1,
               "type": "string"
             },
             {
               "items": {
+                "minLength": 1,
                 "type": "string"
               },
+              "minItems": 1,
               "type": "array"
             }
           ],
@@ -440,7 +600,14 @@
         },
         "crop_padding": {
           "default": 0.1,
+          "minimum": 0,
           "title": "Crop Padding",
+          "type": "number"
+        },
+        "timeout": {
+          "default": 30,
+          "exclusiveMinimum": 0,
+          "title": "Timeout",
           "type": "number"
         }
       },
@@ -452,8 +619,10 @@
       "type": "object"
     },
     "WebhookConfig": {
+      "additionalProperties": false,
       "properties": {
         "url": {
+          "minLength": 1,
           "title": "Url",
           "type": "string"
         },
@@ -473,7 +642,8 @@
         "timeout": {
           "anyOf": [
             {
-              "type": "integer"
+              "exclusiveMinimum": 0,
+              "type": "number"
             },
             {
               "type": "null"
@@ -512,10 +682,14 @@
         "confidence": {
           "anyOf": [
             {
+              "maximum": 1,
+              "minimum": 0,
               "type": "number"
             },
             {
               "additionalProperties": {
+                "maximum": 1,
+                "minimum": 0,
                 "type": "number"
               },
               "type": "object"
@@ -529,6 +703,7 @@
         },
         "crop_padding": {
           "default": 0.1,
+          "minimum": 0,
           "title": "Crop Padding",
           "type": "number"
         },
@@ -536,6 +711,46 @@
           "default": false,
           "title": "Export Rejected",
           "type": "boolean"
+        },
+        "include_image": {
+          "default": false,
+          "title": "Include Image",
+          "type": "boolean"
+        },
+        "include_plot": {
+          "default": false,
+          "title": "Include Plot",
+          "type": "boolean"
+        },
+        "include_crop": {
+          "default": true,
+          "title": "Include Crop",
+          "type": "boolean"
+        },
+        "include_video": {
+          "default": false,
+          "title": "Include Video",
+          "type": "boolean"
+        },
+        "video_width": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": 1280,
+          "title": "Video Width"
+        },
+        "video_crf": {
+          "default": 28,
+          "maximum": 51,
+          "minimum": 0,
+          "title": "Video Crf",
+          "type": "integer"
         },
         "token": {
           "anyOf": [
@@ -562,6 +777,7 @@
         "data_max": {
           "anyOf": [
             {
+              "exclusiveMinimum": 0,
               "type": "integer"
             },
             {
@@ -570,43 +786,6 @@
           ],
           "default": null,
           "title": "Data Max"
-        },
-        "include_image": {
-          "default": false,
-          "title": "Include Image",
-          "type": "boolean"
-        },
-        "include_plot": {
-          "default": false,
-          "title": "Include Plot",
-          "type": "boolean"
-        },
-        "include_crop": {
-          "default": true,
-          "title": "Include Crop",
-          "type": "boolean"
-        },
-        "include_video": {
-          "default": false,
-          "title": "Include Video",
-          "type": "boolean"
-        },
-        "video_width": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": 1280,
-          "title": "Video Width"
-        },
-        "video_crf": {
-          "default": 28,
-          "title": "Video Crf",
-          "type": "integer"
         }
       },
       "required": [
@@ -616,8 +795,10 @@
       "type": "object"
     },
     "YoloConfig": {
+      "additionalProperties": false,
       "properties": {
         "model": {
+          "minLength": 1,
           "title": "Model",
           "type": "string"
         },
@@ -633,10 +814,14 @@
         "confidence": {
           "anyOf": [
             {
+              "maximum": 1,
+              "minimum": 0,
               "type": "number"
             },
             {
               "additionalProperties": {
+                "maximum": 1,
+                "minimum": 0,
                 "type": "number"
               },
               "type": "object"
@@ -652,21 +837,25 @@
         },
         "time_max": {
           "default": 60,
+          "minimum": 0,
           "title": "Time Max",
-          "type": "integer"
+          "type": "number"
         },
         "timeout": {
           "default": 5,
+          "minimum": 0,
           "title": "Timeout",
-          "type": "integer"
+          "type": "number"
         },
         "cooldown": {
           "anyOf": [
             {
+              "minimum": 0,
               "type": "number"
             },
             {
               "additionalProperties": {
+                "minimum": 0,
                 "type": "number"
               },
               "type": "object"
@@ -677,17 +866,34 @@
         },
         "include_trailing_time": {
           "default": 1,
+          "minimum": 0,
           "title": "Include Trailing Time",
-          "type": "integer"
+          "type": "number"
         },
         "frames_min": {
+          "default": 3,
+          "exclusiveMinimum": 0,
           "title": "Frames Min",
           "type": "integer"
         },
         "imgsz": {
           "default": 640,
+          "exclusiveMinimum": 0,
           "title": "Imgsz",
           "type": "integer"
+        },
+        "iou": {
+          "default": 0.7,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Iou",
+          "type": "number"
+        },
+        "tracker": {
+          "default": "bytetrack.yaml",
+          "minLength": 1,
+          "title": "Tracker",
+          "type": "string"
         }
       },
       "required": [
@@ -697,11 +903,13 @@
       "type": "object"
     }
   },
+  "additionalProperties": false,
   "properties": {
     "detectors": {
       "items": {
         "$ref": "#/$defs/DetectorConfig"
       },
+      "minItems": 1,
       "title": "Detectors",
       "type": "array"
     },

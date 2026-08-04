@@ -1,6 +1,7 @@
 import { command, form, query } from '$app/server';
 import { redirect } from '@sveltejs/kit';
-import { getConfig, saveConfig } from './config.remote';
+import { getConfig } from './config.remote';
+import { updateConfigState } from '$lib/server/config-store';
 import * as v from 'valibot';
 
 function getRedirectTarget(next: string | undefined, fallback: string) {
@@ -21,21 +22,21 @@ export const saveTelegram = form(
 		next: v.optional(v.string())
 	}),
 	async ({ label, token, chat, original, next }) => {
-		const { config, app } = await getConfig();
-		let found = false;
-		app.telegrams.forEach((telegram) => {
-			if (telegram.label === original) {
-				telegram.label = label;
-				telegram.token = token;
-				telegram.chat = chat;
-				found = true;
+		await updateConfigState(({ app }) => {
+			let found = false;
+			app.telegrams.forEach((telegram) => {
+				if (telegram.label === original) {
+					telegram.label = label;
+					telegram.token = token;
+					telegram.chat = chat;
+					found = true;
+				}
+			});
+			if (!found) {
+				app.telegrams.push({ label, token, chat });
 			}
 		});
-		if (!found) {
-			app.telegrams.push({ label, token, chat });
-		}
-		await saveConfig({ config, app });
-		redirect(302, getRedirectTarget(next, '/notifications'));
+		redirect(302, getRedirectTarget(next, '/setup/notifications'));
 	}
 );
 
@@ -44,19 +45,19 @@ export const deleteTelegram = command(
 		label: v.string()
 	}),
 	async ({ label }) => {
-		const { config, app } = await getConfig();
-		const telegram = app.telegrams.find((telegram) => telegram.label === label);
-		app.telegrams = app.telegrams.filter((telegram) => telegram.label !== label);
-		if (telegram) {
-			config.detectors.forEach((detector) => {
-				if (detector.exporters?.telegram) {
-					detector.exporters.telegram = detector.exporters.telegram.filter(
-						(t) => t.token !== telegram.token || t.chat !== telegram.chat
-					);
-				}
-			});
-		}
-		await saveConfig({ config, app });
+		await updateConfigState(({ config, app }) => {
+			const telegram = app.telegrams.find((telegram) => telegram.label === label);
+			app.telegrams = app.telegrams.filter((telegram) => telegram.label !== label);
+			if (telegram) {
+				config.detectors.forEach((detector) => {
+					if (detector.exporters?.telegram) {
+						detector.exporters.telegram = detector.exporters.telegram.filter(
+							(t) => t.token !== telegram.token || t.chat !== telegram.chat
+						);
+					}
+				});
+			}
+		});
 	}
 );
 

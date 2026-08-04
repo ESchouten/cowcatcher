@@ -4,15 +4,14 @@ import logging
 import os
 import sys
 import tempfile
-from dataclasses import field
+from dataclasses import dataclass, field
 from importlib import util
 from pathlib import Path
 from typing import Any
 
-from aidetector.utils.config import Config
+from aidetector.utils.config import Config, config_list
 from aidetector.utils.version import TYPE
-from aidetector.utils.winml import WinML
-from pydantic.dataclasses import dataclass
+from aidetector.utils.winml import WinMLRuntime
 
 LOGGER = logging.getLogger(__name__)
 
@@ -22,6 +21,7 @@ class OrtState:
     devices: list[tuple[Any, dict]] = field(default_factory=list)
     providers: list[str] = field(default_factory=list)
     dll_dirs: list[Any] = field(default_factory=list)
+    winml: WinMLRuntime | None = None
     is_available: bool = False
 
     @property
@@ -82,7 +82,7 @@ def _patch_ultralytics_requirements() -> None:
     for module_name in ("ultralytics.nn.autobackend", "ultralytics.engine.exporter"):
         module = sys.modules.get(module_name)
         if module is not None and hasattr(module, "check_requirements"):
-            module.check_requirements = _check_requirements
+            setattr(module, "check_requirements", _check_requirements)
 
 
 def _candidate_windows_dll_dirs(root: Path) -> list[Path]:
@@ -142,96 +142,109 @@ def _add_windows_dll_directories() -> None:
                 )
 
 
-def setup_ort(config: Config) -> bool:
+def _register_winml(config: Config) -> list[str]:
+    if not _should_auto_install_windows_ml_ep(config):
+        LOGGER.info("Not registering WinML execution provider.")
+        return []
+
+    LOGGER.info("Registering WinML execution provider...")
     try:
-        import onnxruntime as ort
+        runtime = WinMLRuntime()
+        providers = runtime.register_execution_providers_to_ort()
+    except Exception as error:
+        LOGGER.warning("Failed to register WinML execution provider: %s", error)
+        return []
 
-        if _STATE.is_available:
-            return True
+    _STATE.winml = runtime
+    LOGGER.info("Registered WinML providers: %s", providers)
+    return providers
 
-        LOGGER.info("Setup ORT")
 
-        _patch_ultralytics_requirements()
-        _add_windows_dll_directories()
+def _select_execution_providers(
+    ort, config: Config, winml_providers: list[str]
+) -> None:
+    selected_devices = [
+        device
+        for device in ort.get_ep_devices()
+        if device.ep_name in winml_providers
+        and (config.onnx.provider is None or config.onnx.provider == device.ep_name)
+    ]
+    _STATE.devices = get_devices(config, selected_devices)
+    _STATE.providers = (
+        ort.get_available_providers()
+        if config.onnx.provider is None
+        else [config.onnx.provider]
+    )
 
-        if TYPE in ("cuda", "tensorrt") and hasattr(ort, "preload_dlls"):
-            ort.preload_dlls(directory="")
 
-        registered_winml_providers: list[str] = []
-        if _should_auto_install_windows_ml_ep(config):
-            LOGGER.info("Registering WinML execution provider...")
-            try:
-                registered_winml_providers = (
-                    WinML().register_execution_providers_to_ort()
-                )
-                LOGGER.info(
-                    "Registered WinML providers: %s", registered_winml_providers
-                )
-            except Exception as e:
-                LOGGER.warning("Failed to register WinML execution provider: %s", e)
-        else:
-            LOGGER.info("Not registering WinML execution provider.")
+def _patch_inference_session(ort, config: Config) -> None:
+    original_inference_session = ort.InferenceSession
 
-        def init_devices_and_providers(
-            config: Config, registered_winml_providers: list[str]
-        ):
-            selected_devices = [
-                ep_device
-                for ep_device in ort.get_ep_devices()
-                if ep_device.ep_name in registered_winml_providers
-                and (
-                    config.onnx.provider is None
-                    or config.onnx.provider == ep_device.ep_name
-                )
-            ]
-            _STATE.devices = get_devices(config, selected_devices)
-            _STATE.providers = (
-                ort.get_available_providers()
-                if config.onnx.provider is None
-                else [config.onnx.provider]
+    def configured_inference_session(
+        path_or_bytes,
+        sess_options=None,
+        providers=None,
+        **kwargs,
+    ):
+        # Ultralytics only selects providers it knows. Our configured provider wins.
+        if providers is not None:
+            LOGGER.debug("Overriding requested ORT providers: %s", providers)
+        kwargs.pop("provider_options", None)
+
+        if _STATE.devices:
+            LOGGER.info(
+                "Selected ORT EP devices: %s",
+                [device.ep_name for device, _ in _STATE.devices],
             )
-
-        init_devices_and_providers(config, registered_winml_providers)
-
-        _original_InferenceSession = ort.InferenceSession
-
-        def InferenceSession(
-            path_or_bytes, sess_options=None, providers=None, **kwargs
-        ):
-            if _STATE.devices:
-                LOGGER.info(
-                    "Selected ORT EP devices: %s",
-                    [device.ep_name for device, _ in _STATE.devices],
-                )
-                if sess_options is None:
-                    sess_options = ort.SessionOptions()
-
-                for device, options in _STATE.devices:
-                    sess_options.add_provider_for_devices([device], options)
-
-                return _original_InferenceSession(
-                    path_or_bytes, sess_options=sess_options, **kwargs
-                )
-
-            LOGGER.info("ORT providers configured for session: %s", _STATE.providers)
-            configured_providers = [
-                (provider, get_provider_options(config, provider))
-                for provider in _STATE.providers
-            ]
-            return _original_InferenceSession(
+            if sess_options is None:
+                sess_options = ort.SessionOptions()
+            for device, options in _STATE.devices:
+                if (
+                    device.ep_name == "NvTensorRTRTXExecutionProvider"
+                    and not _uses_yolo_profile(path_or_bytes)
+                ):
+                    options = {}
+                sess_options.add_provider_for_devices([device], options)
+            return original_inference_session(
                 path_or_bytes,
                 sess_options=sess_options,
-                providers=configured_providers,
                 **kwargs,
             )
 
-        ort.InferenceSession = InferenceSession  # ty: ignore[invalid-assignment]
-        _STATE.is_available = True
+        configured_providers = [
+            (provider, get_provider_options(config, provider))
+            for provider in _STATE.providers
+        ]
+        LOGGER.info("ORT providers configured for session: %s", _STATE.providers)
+        return original_inference_session(
+            path_or_bytes,
+            sess_options=sess_options,
+            providers=configured_providers,
+            **kwargs,
+        )
 
-    except Exception as e:
-        LOGGER.error("Failed to setup ORT: %s", e)
-        return False
-    return True
+    ort.InferenceSession = configured_inference_session
+
+
+def setup_ort(config: Config) -> None:
+    """Configure ORT when available, otherwise leave Ultralytics' fallback intact."""
+    if _STATE.is_available:
+        return
+
+    try:
+        import onnxruntime as ort
+
+        LOGGER.info("Setup ORT")
+        _patch_ultralytics_requirements()
+        _add_windows_dll_directories()
+        if TYPE in ("cuda", "tensorrt") and hasattr(ort, "preload_dlls"):
+            ort.preload_dlls(directory="")
+        winml_providers = _register_winml(config)
+        _select_execution_providers(ort, config, winml_providers)
+        _patch_inference_session(ort, config)
+        _STATE.is_available = True
+    except Exception:
+        LOGGER.exception("Failed to setup ORT; continuing without provider override")
 
 
 def get_device_options(config: Config, device) -> dict:
@@ -246,6 +259,13 @@ def get_provider_options(config: Config, provider: str) -> dict:
     if provider == "CoreMLExecutionProvider":
         return _coreml_options()
     return {}
+
+
+def _uses_yolo_profile(path_or_bytes: Any) -> bool:
+    return (
+        not isinstance(path_or_bytes, (str, os.PathLike))
+        or Path(path_or_bytes).name != "miewid.onnx"
+    )
 
 
 def sort_devices_by_provider(devices: list) -> list:
@@ -288,21 +308,18 @@ def get_devices(config: Config, devices: list) -> list[tuple]:
 def _nvtensorrtx_options(config: Config):
     input_name = "images"
     colors = 3
-    yolo_detectors = [detector for detector in config.detectors if detector.yolo]
-    if not yolo_detectors:
+    configured_detectors = [
+        (detector.yolo, len(config_list(detector.detection.source)))
+        for detector in config.detectors
+        if detector.yolo is not None
+    ]
+    if not configured_detectors:
         return {}
 
-    size_min = min(detector.yolo.imgsz for detector in yolo_detectors)
-    size_max = max(detector.yolo.imgsz for detector in yolo_detectors)
-    streams_max = max(
-        [1]
-        + [
-            len(detector.detection.source)
-            for detector in yolo_detectors
-            if isinstance(detector.detection.source, list)
-        ]
-    )
-    streams_max = max(streams_max, 1)
+    yolo_configs = [yolo for yolo, _ in configured_detectors]
+    size_min = min(yolo.imgsz for yolo in yolo_configs)
+    size_max = max(yolo.imgsz for yolo in yolo_configs)
+    streams_max = max(source_count for _, source_count in configured_detectors)
     return {
         "nv_profile_min_shapes": f"{input_name}:1x{colors}x{size_min}x{size_min}",
         "nv_profile_opt_shapes": f"{input_name}:{streams_max}x{colors}x{size_max}x{size_max}",

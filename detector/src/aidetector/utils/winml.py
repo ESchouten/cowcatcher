@@ -1,61 +1,51 @@
 import logging
+from importlib import import_module
 from pathlib import Path
 
 LOGGER = logging.getLogger(__name__)
 
-_winml_instance = None
 
-
-class WinML:
-    def __new__(cls, *args, **kwargs):
-        global _winml_instance
-        if _winml_instance is None:
-            _winml_instance = super(WinML, cls).__new__(cls, *args, **kwargs)
-            _winml_instance._initialized = False
-        return _winml_instance
-
+class WinMLRuntime:
     def __init__(self):
-        if self._initialized:
-            return
-        self._initialized = True
-
         self._fix_winrt_runtime()
-        import winui3.microsoft.windows.ai.machinelearning as winml
-        from winui3.microsoft.windows.applicationmodel.dynamicdependency.bootstrap import (
-            InitializeOptions,
-            initialize,
+        winml = import_module("winui3.microsoft.windows.ai.machinelearning")
+        bootstrap = import_module(
+            "winui3.microsoft.windows.applicationmodel.dynamicdependency.bootstrap"
         )
 
-        self._win_app_sdk_handle = initialize(
-            options=InitializeOptions.ON_NO_MATCH_SHOW_UI
+        handle = bootstrap.initialize(
+            options=bootstrap.InitializeOptions.ON_NO_MATCH_SHOW_UI
         )
-        self._win_app_sdk_handle.__enter__()
-        catalog = winml.ExecutionProviderCatalog.get_default()
-        self._providers = catalog.find_all_providers()
-        LOGGER.info(
-            "Found %d execution providers: %s",
-            len(self._providers),
-            [p.name for p in self._providers],
-        )
-        self._ep_paths: dict[str, str] = {}
-        for provider in self._providers:
-            LOGGER.info("Ensuring ready: %s", provider.name)
-            operation = provider.ensure_ready_async()
+        handle.__enter__()
+        try:
+            providers = (
+                winml.ExecutionProviderCatalog.get_default().find_all_providers()
+            )
+            LOGGER.info(
+                "Found %d execution providers: %s",
+                len(providers),
+                [provider.name for provider in providers],
+            )
+            ep_paths: dict[str, str] = {}
+            for provider in providers:
+                LOGGER.info("Ensuring ready: %s", provider.name)
+                operation = provider.ensure_ready_async()
 
-            def on_progress(async_info, progress_info):
-                LOGGER.info("Progress: %.0f%%", progress_info)
+                def on_progress(_async_info, progress_info):
+                    LOGGER.info("Progress: %.0f%%", progress_info)
 
-            operation.progress = on_progress
-            result = operation.get()
-            LOGGER.info("Result: %s", result)
-            if provider.library_path == "":
-                continue
-            self._ep_paths[provider.name] = provider.library_path
+                operation.progress = on_progress
+                LOGGER.info("Result: %s", operation.get())
+                if provider.library_path:
+                    ep_paths[provider.name] = provider.library_path
+        except Exception:
+            handle.__exit__(None, None, None)
+            raise
+
+        self._win_app_sdk_handle = handle
+        self._providers = providers
+        self._ep_paths = ep_paths
         self._registered_eps: list[str] = []
-
-    def __del__(self):
-        self._providers = None
-        self._win_app_sdk_handle.__exit__(None, None, None)
 
     def _fix_winrt_runtime(self):
         """

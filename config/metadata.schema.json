@@ -1,6 +1,242 @@
 {
-  "additionalProperties": {
-    "type": "string"
+  "$defs": {
+    "CropMetadata": {
+      "additionalProperties": false,
+      "properties": {
+        "x1": {
+          "title": "X1",
+          "type": "integer"
+        },
+        "y1": {
+          "title": "Y1",
+          "type": "integer"
+        },
+        "x2": {
+          "title": "X2",
+          "type": "integer"
+        },
+        "y2": {
+          "title": "Y2",
+          "type": "integer"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        },
+        "confidence": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confidence"
+        },
+        "track_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Track Id"
+        },
+        "identity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IdentityMetadata"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "x1",
+        "y1",
+        "x2",
+        "y2"
+      ],
+      "title": "CropMetadata",
+      "type": "object"
+    },
+    "IdentityMetadata": {
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "enum": [
+            "matched",
+            "unknown",
+            "ambiguous",
+            "insufficient_evidence",
+            "switch_risk"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "visual_identity_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Visual Identity Id"
+        },
+        "official_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Official Id"
+        },
+        "similarity": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Similarity"
+        },
+        "margin": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Margin"
+        }
+      },
+      "required": [
+        "status",
+        "visual_identity_id",
+        "official_id",
+        "similarity",
+        "margin"
+      ],
+      "title": "IdentityMetadata",
+      "type": "object"
+    }
   },
+  "additionalProperties": false,
+  "properties": {
+    "event_id": {
+      "title": "Event Id",
+      "type": "string"
+    },
+    "source": {
+      "title": "Source",
+      "type": "string"
+    },
+    "timestamp": {
+      "title": "Timestamp",
+      "type": "string"
+    },
+    "validated": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Validated"
+    },
+    "confidence": {
+      "title": "Confidence",
+      "type": "number"
+    },
+    "confidences": {
+      "additionalProperties": {
+        "type": "number"
+      },
+      "title": "Confidences",
+      "type": "object"
+    },
+    "identity_results": {
+      "items": {
+        "$ref": "#/$defs/IdentityMetadata"
+      },
+      "title": "Identity Results",
+      "type": "array"
+    },
+    "observations": {
+      "title": "Observations",
+      "type": "integer"
+    },
+    "start": {
+      "title": "Start",
+      "type": "string"
+    },
+    "end": {
+      "title": "End",
+      "type": "string"
+    },
+    "duration": {
+      "title": "Duration",
+      "type": "number"
+    },
+    "crop": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CropMetadata"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "crops": {
+      "items": {
+        "$ref": "#/$defs/CropMetadata"
+      },
+      "title": "Crops",
+      "type": "array"
+    }
+  },
+  "required": [
+    "event_id",
+    "source",
+    "timestamp",
+    "validated",
+    "confidence",
+    "confidences",
+    "identity_results",
+    "observations",
+    "start",
+    "end",
+    "duration"
+  ],
+  "title": "DetectionMetadata",
   "type": "object"
 }

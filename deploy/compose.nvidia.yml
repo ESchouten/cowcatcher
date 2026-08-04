@@ -1,0 +1,10 @@
+services:
+  aidetector:
+    image: "${AI_DETECTOR_IMAGE:-ghcr.io/eschouten/ai-detector:latest}"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
